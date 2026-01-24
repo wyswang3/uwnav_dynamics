@@ -1,0 +1,15 @@
+\section{Heteroscedastic Uncertainty Modeling}
+
+Sensor noise and environmental disturbances are state-dependent and non-stationary.
+We therefore model predictive uncertainty explicitly.
+
+For a predicted variable $y$, the network outputs $(\hat{y}, \hat{\sigma}_y)$.
+Training minimizes the negative log-likelihood:
+\begin{equation}
+\mathcal{L}_{\mathrm{NLL}} =
+\frac{\|y - \hat{y}\|^2}{\hat{\sigma}_y^2}
++ \log \hat{\sigma}_y^2.
+\end{equation}
+
+This formulation allows the model to adaptively down-weight unreliable observations
+and provides uncertainty estimates usable by downstream controllers.

@@ -110,6 +110,7 @@ x = [v_x,\ v_y,\ \omega_z,\ a_x,\ a_y,\ \psi]
   * 重力补偿
   * 零偏估计与漂移控制
 * 姿态解算结果视为**观测量**，不在本项目中重复解算。
+* 在所有对齐与裁剪中，优先使用 MonoNS；EstNS 仅用于与外部系统对齐或可视化参考。
 
 ### 4.2 DVL
 
@@ -241,15 +242,205 @@ x = [v_x,\ v_y,\ \omega_z,\ a_x,\ a_y,\ \psi]
 
 ## 10. 项目目录职责总览
 
-| 目录         | 职责                       |
-| ---------- | ------------------------ |
-| `configs/` | 数据、模型、训练、评估配置            |
-| `data/`    | raw / processed / splits |
-| `src/`     | 核心算法与流水线                 |
-| `runs/`    | 实验输出（checkpoint、图、报告）    |
-| `docs/`    | 设计文档与论文材料                |
-| `scripts/` | 本地/服务器运行脚本               |
-| `tests/`   | 冒烟测试与稳定性检查               |
+---
+虚拟环境激活：conda activate offnav_env
+# Project Structure
+
+```text
+uwnav_dynamics/
+├── README.md
+├── LICENSE
+├── pyproject.toml                # Python 项目元信息（或 setup.cfg）
+├── requirements.txt              # 运行依赖
+├── requirements-dev.txt          # 开发/可视化/测试依赖
+├── .gitignore
+├── .editorconfig
+│
+├── configs/                      # 所有“可变因素”统一放在配置中
+│   ├── dataset/                  # 数据集构建规则
+│   │   ├── base.yaml              # 通用设置（频率、窗口长度等）
+│   │   └── pooltest.yaml          # 某次实验的数据选择与裁剪
+│   │
+│   ├── preprocess/               # 预处理参数（与算法解耦）
+│   │   ├── imu.yaml               # IMU 滤波、坐标、重力、bias
+│   │   ├── dvl.yaml               # DVL 质量门控、坐标变换
+│   │   ├── power.yaml             # 电压电流（训练期可选）
+│   │   └── alignment.yaml         # 多频率时间线对齐规则
+│   │
+│   ├── model/                    # 网络结构与组件组合
+│   │   ├── s1_u1_hyrossm.yaml     # S1 + U1 主模型
+│   │   └── ablations/             # 消融实验配置
+│   │       ├── no_damping.yaml
+│   │       ├── no_uncertainty.yaml
+│   │       └── no_hydro_memory.yaml
+│   │
+│   ├── loss/                     # 损失函数组合
+│   │   ├── base.yaml              # NLL + consistency
+│   │   └── robust.yaml            # 加强鲁棒性版本
+│   │
+│   ├── train/                    # 训练策略
+│   │   ├── local_cpu_smoke.yaml   # 本地 CPU 冒烟测试
+│   │   └── server_gpu.yaml        # 服务器 GPU 正式训练
+│   │
+│   ├── eval/                     # 评估与指标
+│   │   └── base.yaml
+│   │
+│   └── plot/                     # SCI 风格绘图参数
+│       └── sci.yaml
+│
+├── data/                         # 数据（默认不提交到 git）
+│   ├── raw/                      # 原始日志（不可修改）
+│   │   └── 2026-01-10_pooltest02/
+│   │       ├── imu/
+│   │       ├── dvl/
+│   │       ├── pwm/
+│   │       └── power/
+│   │
+│   ├── interim/                  # 中间产物（可删除重建）
+│   │   ├── aligned/
+│   │   └── qa_reports/
+│   │
+│   ├── processed/                # 网络可直接使用的数据集
+│   │   └── pooltest02_s1/
+│   │       ├── features.npz
+│   │       ├── labels.npz
+│   │       └── meta.yaml
+│   │
+│   └── splits/                   # 训练/验证/测试划分
+│       └── split_v1.yaml
+│
+├── src/
+│   └── uwnav_dynamics/
+│       ├── __init__.py
+│       │
+│       ├── core/                 # 全项目共享的数学与语义基础
+│       │   ├── timebase.py        # 时间轴抽象（50Hz 主轴）
+│       │   ├── frames.py          # 坐标系、旋转、ENU 约定
+│       │   ├── units.py           # 单位换算（g↔m/s² 等）
+│       │   └── typing.py          # S1 状态、数据结构定义
+│       │
+│       ├── io/                   # 数据 I/O（无算法）
+│       │   ├── readers/           # 原始数据读取
+│       │   │   ├── imu_reader.py
+│       │   │   ├── dvl_reader.py
+│       │   │   ├── pwm_reader.py
+│       │   │   └── power_reader.py
+│       │   ├── writers/           # 统一写盘接口
+│       │   │   └── writer.py
+│       │   └── dataset_index.py   # 数据集索引与元信息
+│       │
+│       ├── preprocess/           # 原始数据 → 物理一致数据
+│       │   ├── imu/
+│       │   │   ├── filter.py      # 滤波与去毛刺
+│       │   │   ├── bias.py        # 零偏估计与随机游走
+│       │   │   ├── gravity.py     # 重力补偿
+│       │   │   ├── transform.py   # 坐标变换
+│       │   │   └── pipeline.py
+│       │   │
+│       │   ├── dvl/
+│       │   │   ├── quality.py     # 质量门控
+│       │   │   ├── transform.py
+│       │   │   └── pipeline.py
+│       │   │
+│       │   ├── power/
+│       │   │   └── pipeline.py    # 仅训练增强使用
+│       │   │
+│       │   ├── align/
+│       │   │   ├── aligner.py     # 多频率对齐
+│       │   │   └── imu_50hz.py    # 100Hz→50Hz 聚合
+│       │   │
+│       │   └── build_dataset.py   # raw → processed 统一入口
+│       │
+│       ├── models/               # 网络与损失
+│       │   ├── blocks/            # 水下专用计算单元
+│       │   │   ├── thruster_lag.py
+│       │   │   ├── hydro_ssm_cell.py
+│       │   │   ├── damping_head.py
+│       │   │   └── uncertainty_head.py
+│       │   │
+│       │   ├── nets/
+│       │   │   ├── s1_predictor.py
+│       │   │   └── teacher_predictor.py
+│       │   │
+│       │   ├── losses/
+│       │   │   ├── nll.py
+│       │   │   ├── consistency.py
+│       │   │   ├── robust.py
+│       │   │   └── loss_builder.py
+│       │   │
+│       │   ├── metrics/
+│       │   │   ├── regression.py
+│       │   │   ├── calibration.py
+│       │   │   └── control_kpi.py
+│       │   │
+│       │   └── utils/
+│       │       └── rollout.py
+│       │
+│       ├── train/                # 训练流程
+│       │   ├── trainer.py
+│       │   ├── optim.py
+│       │   ├── callbacks.py
+│       │   └── logging.py
+│       │
+│       ├── eval/                 # 离线评估
+│       │   ├── evaluate.py
+│       │   ├── ablation.py
+│       │   └── reports.py
+│       │
+│       ├── viz/                  # SCI 风格绘图
+│       │   ├── sci_style.py
+│       │   ├── plot_raw.py
+│       │   ├── plot_proc.py
+│       │   ├── plot_fit.py
+│       │   └── plot_control.py
+│       │
+│       └── cli/                  # 命令行入口
+│           ├── preprocess.py
+│           ├── train.py
+│           ├── eval.py
+│           └── plot.py
+│
+├── scripts/                      # 运行脚本（非算法）
+│   ├── local_smoke.sh             # 本地快速跑通
+│   ├── server_train.sh            # 服务器 GPU 训练
+│   ├── sync_data.sh               # 数据同步
+│   └── pack_run.sh                # 打包实验结果
+│
+├── runs/                         # 所有实验输出（不进 git）
+│   └── 2026-01-23_s1u1_h40/
+│       ├── config_resolved.yaml
+│       ├── checkpoints/
+│       ├── logs/
+│       ├── metrics/
+│       ├── plots/
+│       └── report.md
+│
+├── docs/                         # 文档与论文材料
+│   ├── design/
+│   │   ├── platform_spec.md
+│   │   ├── dataset_spec.md
+│   │   └── model_spec.md
+│   └── figures/
+│
+└── tests/                        # 冒烟与稳定性测试
+    ├── test_timebase.py
+    ├── test_frames.py
+    ├── test_preprocess_smoke.py
+    └── test_rollout_stability.py
+```
+
+---
+
+## 目录设计原则总结（README 可附）
+
+* **configs 决定行为，src 不写死参数**
+* **data 分级：raw → interim → processed**
+* **preprocess 与 train 完全解耦**
+* **models 中只放“物理 + 学习”的核心逻辑**
+* **runs 是实验最小复现单元**
+* **viz 与 eval 独立，服务 SCI 与控制验证**
+
+---
 
 ---
 
@@ -268,7 +459,3 @@ x = [v_x,\ v_y,\ \omega_z,\ a_x,\ a_y,\ \psi]
 
 ---
 
-如果你愿意，下一步我可以直接帮你生成：
-
-* `docs/design/platform_spec.md`（更学术/方法论版本）
-* 或一份**SCI 论文 Methods 章节草稿**，与本 README 一一对应。

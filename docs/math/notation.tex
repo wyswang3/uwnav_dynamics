@@ -1,0 +1,45 @@
+\section{Notation}
+
+\subsection{Reference Frames}
+
+\begin{itemize}
+  \item $\mathcal{F}_b$: body-fixed frame attached to the robot.
+  \item $\mathcal{F}_n$: navigation frame, defined as ENU (East--North--Up).
+\end{itemize}
+
+$\bR_{nb} \in SO(3)$ denotes the rotation matrix from body frame to navigation frame.
+
+\subsection{State and Control}
+
+The control-oriented system state is defined as
+\begin{equation}
+\bx =
+\begin{bmatrix}
+v_x & v_y & v_z & \omega_z & a_x & a_y & a_z & \psi
+\end{bmatrix}^\top,
+\end{equation}
+where
+\begin{itemize}
+  \item $(v_x, v_y, v_z)$: linear velocity expressed in the navigation frame $\mathcal{F}_n$,
+  \item $\omega_z$: yaw angular rate,
+  \item $(a_x, a_y, a_z)$: linear acceleration,
+  \item $\psi$: yaw angle.
+\end{itemize}
+
+The control input is denoted by
+\begin{equation}
+\bu \in \mathbb{R}^m,
+\end{equation}
+representing normalized thruster commands.
+
+\subsection{Temporal Parameters}
+
+\begin{itemize}
+  \item Control frequency: $f_c = 50\,\mathrm{Hz}$.
+  \item History window length: $L$.
+  \item Prediction horizon: $H$.
+\end{itemize}
+
+\subsection{Uncertainty}
+
+For any predicted variable $y$, the model outputs both mean $\hat{y}$ and standard deviation $\hat{\sigma}_y$.

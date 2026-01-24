@@ -1,0 +1,6 @@
+{
+    "ROS2.distro": "noetic",
+    "json.validate.enable": true,
+    "json.trace.server": "messages",
+    "json.schemas": []
+}

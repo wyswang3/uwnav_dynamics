@@ -1,0 +1,15 @@
+\section{Control-Oriented Dynamics Abstraction}
+
+Rather than identifying full hydrodynamic parameters, we model the system response as
+\begin{equation}
+\bx_{k+1} = f_\theta(\bx_k, \bu_k, \bh_k),
+\end{equation}
+where $\bh_k$ represents latent hydrodynamic memory states.
+
+The latent dynamics are defined as
+\begin{equation}
+\bh_{k+1} = \bm{\alpha} \odot \bh_k + g_\theta(\bx_k, \bu_k),
+\end{equation}
+with element-wise decay factors $\bm{\alpha} \in (0,1)$ ensuring stability.
+
+This structure captures wake effects, added mass, and other unmodeled fluid interactions.

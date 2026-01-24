@@ -1,0 +1,25 @@
+\section{Sensor Models}
+
+\subsection{Inertial Measurement Unit (IMU)}
+
+The accelerometer measures the specific force:
+\begin{equation}
+\tilde{\ba} = \ba - \bR_{bn} \bg + \bb_a + \bn_a,
+\end{equation}
+where $\bg$ is the gravity vector, $\bb_a$ the accelerometer bias, and $\bn_a$ measurement noise.
+
+The gyroscope measurement is given by
+\begin{equation}
+\tilde{\bw} = \bw + \bb_\omega + \bn_\omega.
+\end{equation}
+
+Bias terms are modeled as random walks.
+
+\subsection{Doppler Velocity Log (DVL)}
+
+The DVL provides low-frequency planar velocity observations:
+\begin{equation}
+\tilde{\bv} = \bv + \bn_v,
+\end{equation}
+where $\bn_v$ is non-Gaussian and subject to dropouts.
+Quality indicators are used to gate valid observations.

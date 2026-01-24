@@ -1,0 +1,53 @@
+mode: baseline
+paths:
+  dvl_csv: /home/wys/水下机器人实验数据/2026-01-06/2026-01-06/dvl/dvl_speed_min_tb_20260104_195317.csv
+  imu_csv: /home/wys/水下机器人实验数据/2026-01-06/2026-01-06/imu/min_imu_tb_20260104_195323.csv
+static_window:
+  t0_s: 2210.936
+  t1_s: 2211.936
+  gyro_bias_rad_s:
+  - 0.007819614841486758
+  - -0.006612458763999137
+  - -0.014505125530878649
+  gyro_std_rad_s:
+  - 0.02071442769288654
+  - 0.013482913848422637
+  - 0.001947278764456484
+  acc_std_mps2:
+  - 0.02877262620642116
+  - 0.049727119530016774
+  - 0.021080977469806063
+algorithm:
+  type: baseline
+  baseline_cfg:
+    gravity_mps2:
+    - 0.0
+    - 0.0
+    - -9.80665
+    prefer_be: true
+    use_bi_if_no_be: true
+    R_bd_deg:
+    - 0.0
+    - 0.0
+    - 0.0
+    integrate: zoh
+    max_abs_speed_mps: 5.0
+diag_summary:
+  num_epochs: 1058
+  num_segments: 1057
+  num_model_A: 0
+  num_model_B: 0
+  num_model_C: 0
+  final_p_enu_m:
+  - 17.47960690637299
+  - 36.51135863338831
+  - 50.53963253807902
+outputs:
+  run_dir: /home/wys/水下机器人实验数据/2026-01-06/2026-01-06/offline_nav_outputs/20260107_161043
+  trajectory_csv: /home/wys/水下机器人实验数据/2026-01-06/2026-01-06/offline_nav_outputs/20260107_161043/trajectory.csv
+  plots:
+    trajectory_en: /home/wys/水下机器人实验数据/2026-01-06/2026-01-06/offline_nav_outputs/20260107_161043/plots/trajectory_en.png
+    up_vs_time: /home/wys/水下机器人实验数据/2026-01-06/2026-01-06/offline_nav_outputs/20260107_161043/plots/up_vs_time.png
+    speed_vs_time: /home/wys/水下机器人实验数据/2026-01-06/2026-01-06/offline_nav_outputs/20260107_161043/plots/speed_vs_time.png
+    yaw_vs_time: /home/wys/水下机器人实验数据/2026-01-06/2026-01-06/offline_nav_outputs/20260107_161043/plots/yaw_vs_time.png
+timestamp: '2026-01-07 16:10:52'

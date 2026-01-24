@@ -1,0 +1,35 @@
+# configs/dataset/pooltest02.yaml
+dataset:
+  name: "pooltest02"
+  dataset_id: "2026-01-10_pooltest02"
+
+  # 数据根目录：优先建议用环境变量 UW_DYN_DATA_ROOT 覆盖
+  # 若为空，默认使用仓库根目录下 ./data
+  data_root: ""
+
+  # raw 数据相对目录约定（不建议改）
+  raw_dir: "raw"
+
+  # 本次我们明确指定 run（之后可扩展为自动选择“最长/最新”）
+  selection:
+    imu:
+      file: "imu/min_imu_tb_20260110_192246.csv"
+      kind: "min_tb"
+    # 先预留，后续做交集时间窗时会逐步填充
+    dvl:
+      file: ""        # 例如 "dvl/dvl_parsed_20260110_192211.csv"
+      kind: ""
+    pwm:
+      file: ""        # 例如 "logs/pwm_log_20260110_192435.csv"
+      kind: ""
+    volt:
+      file: ""        # 例如 "volt/motor_data_20260110_192308.csv"
+      kind: ""
+
+  # 预留：后续你要做“有效工作时间交集”，这里会用到
+  valid_window:
+    # 是否以 IMU 为主轴
+    anchor: "imu"
+    # 交集时间窗裁剪 margin（秒）
+    margin_start_s: 3.0
+    margin_end_s: 3.0

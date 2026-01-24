@@ -1,0 +1,26 @@
+\section{Learning Objective}
+
+The model is trained for multi-step prediction over a horizon $H$.
+
+\subsection{Prediction Loss}
+
+\begin{equation}
+\mathcal{L}_{\mathrm{pred}} =
+\sum_{j=1}^{H} w_j \|\hat{\bx}_{k+j} - \bx_{k+j}\|^2.
+\end{equation}
+
+\subsection{Consistency Constraint}
+
+Velocity and acceleration predictions are constrained by
+\begin{equation}
+\hat{\bv}_{k+1} \approx \hat{\bv}_k + \hat{\ba}_k \Delta t.
+\end{equation}
+
+\subsection{Total Loss}
+
+\begin{equation}
+\mathcal{L} =
+\mathcal{L}_{\mathrm{pred}} +
+\lambda_c \mathcal{L}_{\mathrm{cons}} +
+\lambda_u \mathcal{L}_{\mathrm{NLL}}.
+\end{equation}

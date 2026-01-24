@@ -1,0 +1,39 @@
+# configs/preprocess/imu.yaml
+imu:
+  # 时间列优先级（第一阶段严格按此选择）
+  time_column_priority: ["MonoNS", "MonoS", "EstNS", "EstS"]
+
+  # 原始字段到 canonical 字段的映射（后续训练/绘图只认 canonical）
+  columns:
+    acc_x: "AccX"
+    acc_y: "AccY"
+    acc_z: "AccZ"
+
+    gyro_x: "GyroX"
+    gyro_y: "GyroY"
+    gyro_z: "GyroZ"
+
+    # 姿态角（原始单位为 deg；后续统一转 rad）
+    roll_deg:  "AngX"
+    pitch_deg: "AngY"
+    yaw_deg:   "AngZ"     # YawDeg 当前为空，暂不使用
+
+  # 单位与转换策略（先写规范，后续实现照做）
+  units:
+    # 加速度：原始为 g（从样例的 AccZ≈0.996 可推断）
+    acc_is_g: true
+    g_to_mps2: 9.78
+
+    # 陀螺：需明确原始单位；默认先按 deg/s 处理，并在 QA 报告中验证量级
+    gyro_unit: "deg/s"       # 可选 "rad/s"
+    deg_to_rad: 0.017453292519943295
+
+    angles_unit: "deg"
+    wrap_yaw: true           # 后续统一到 (-pi, pi]
+
+  # 基础 QA 规则（读取后立刻做，不涉及滤波器）
+  qa:
+    require_monotonic_time: true
+    max_nan_ratio_per_col: 0.05
+    expected_hz: 100.0
+    hz_tolerance: 10.0       # 允许 90~110Hz 的统计波动

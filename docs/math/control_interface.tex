@@ -1,0 +1,10 @@
+\section{Interface to Control Algorithms}
+
+At each control step, the model provides
+\begin{equation}
+(\hat{\bx}_{k+1:k+H}, \hat{\Sigma}_{k+1:k+H}),
+\end{equation}
+where $\hat{\Sigma}$ denotes predictive uncertainty.
+
+This interface is compatible with MPC and model-based RL algorithms,
+which may incorporate uncertainty for risk-sensitive decision making.

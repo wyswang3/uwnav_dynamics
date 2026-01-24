@@ -1,0 +1,19 @@
+\section{Modeling Assumptions}
+
+\subsection{Time-Scale Assumptions}
+
+The system is considered at a discrete-time resolution aligned with the control loop.
+Hydrodynamic effects are assumed to be locally stationary within a short prediction horizon.
+
+\subsection{Observability Assumptions}
+
+\begin{itemize}
+  \item Planar velocity is intermittently observable through DVL measurements.
+  \item Attitude and angular velocity are provided by the onboard IMU fusion algorithm.
+  \item Vertical motion and roll/pitch dynamics are not explicitly modeled.
+\end{itemize}
+
+\subsection{Applicability Domain}
+
+The proposed model targets low-to-moderate speed underwater robots operating in structured environments.
+Highly aggressive maneuvers and full 6-DOF coupling are outside the current scope.
