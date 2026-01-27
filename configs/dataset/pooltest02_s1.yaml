@@ -1,0 +1,92 @@
+dataset:
+  name: "2026-01-10_pooltest02_s1"
+
+  # 1) 训练基础表（已对齐到 100 Hz 主时间轴）
+  #
+  #   - t_s：主时间轴，dt = 0.01 s → 100 Hz
+  #   - ch1_cmd..ch8_cmd：PWM 占空比指令（约 5.0~10.0，7.5 为中位）
+  #   - Acc*_body_mps2：体坐标线加速度
+  #   - Gyro*_body_rad_s：体坐标角速度
+  #   - VelB*_body_mps：DVL BI 体坐标速度（10 Hz 稀疏 attach 到 100 Hz，缺失为 NaN）
+  #   - has_dvl：当前步是否有有效 DVL（0/1）
+  #   - P0_W..P7_W：电机功率（辅助量）
+  base_table:
+    csv: "out/train/2026-01-10_pooltest02_train_base.csv"
+    time_col: "t_s"
+
+  # 2) 滑动窗口配置
+  #
+  #   目标：用最近 L 步的「控制 + 观测状态(+功率)」，预测下一步的观测状态：
+  #
+  #     state_k_obs  = [a_body(k), ω_body(k), v_body(k)]   # 可观测状态
+  #     control_k    = [ch*_cmd(k)]                        # PWM 占空比
+  #     aux_k        = [P*_W(k)]                           # 功率辅助量（可选）
+  #
+  #   网络拟合：
+  #     state_{k+1}_obs = f( state_{k-L+1:k}_obs,
+  #                          control_{k-L+1:k},
+  #                          aux_{k-L+1:k}; θ )
+  #
+  #   这里 L=100（1 s 历史），H=10（预测 10 步，即 0.1 s 后的状态）。
+  sliding_window:
+    hist_len: 100
+    pred_len: 10
+    stride: 1
+
+    input_cols:
+      # --- 控制输入：PWM，占空比 ---
+      - ch1_cmd
+      - ch2_cmd
+      - ch3_cmd
+      - ch4_cmd
+      - ch5_cmd
+      - ch6_cmd
+      - ch7_cmd
+      - ch8_cmd
+
+      # --- 当前观测状态：IMU a / ω ---
+      - AccX_body_mps2
+      - AccY_body_mps2
+      - AccZ_body_mps2
+      - GyroX_body_rad_s
+      - GyroY_body_rad_s
+      - GyroZ_body_rad_s
+
+      # --- 当前观测状态：速度估计（DVL 前向填充）---
+      - VelX_state_mps
+      - VelY_state_mps
+      - VelZ_state_mps
+
+      # --- 辅助量：功率 ---
+      - P0_W
+      - P1_W
+      - P2_W
+      - P3_W
+      - P4_W
+      - P5_W
+      - P6_W
+      - P7_W
+
+    target_cols:
+      # 下一个时刻的观测状态（含真 DVL 速度，稀疏监督）
+      - AccX_body_mps2
+      - AccY_body_mps2
+      - AccZ_body_mps2
+      - GyroX_body_rad_s
+      - GyroY_body_rad_s
+      - GyroZ_body_rad_s
+      - VelBx_body_mps
+      - VelBy_body_mps
+      - VelBz_body_mps
+
+
+    # 目前不在滑窗阶段用掩码剔除样本，避免因为 DVL 稀疏导致几乎没有窗口。
+    # 后续在训练脚本中用 has_dvl 对速度维度做逐元素 loss masking。
+    valid_mask_col: null
+    min_valid_ratio: 1.0
+    drop_incomplete: true
+
+  # 3) 输出数据集配置
+  output:
+    dir: "data/processed/2026-01-10_pooltest02_s1"
+    normalize: "standard"    # "standard" | "none"

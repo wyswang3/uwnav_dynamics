@@ -73,19 +73,19 @@ def save_dvl_bi_be_vel_2rows(
     """
     绘制 DVL BI / BE 速度的两行子图：
 
-      Row 1: BI - body frame velocity v_body (m/s)
-      Row 2: BE - ENU frame velocity v_enu (m/s)
+      Row 1: $v_{body}$ (m/s)
+      Row 2: $v_{ENU}$  (m/s)
+
+    仅使用简短行标题，不使用纵轴文字。
     """
     setup_mpl()
     paths = _resolve_out_dirs(dvl, out_root)
 
-    # ---------- 时间轴 ----------
+    # ---------- 时间轴（底部统一用 Time (s)） ----------
     t_all = dvl.t_s
     if use_rel_time:
         t_all = t_all - float(t_all[0])
-        xlab = "Time (s)"
-    else:
-        xlab = f"Time (s) [{dvl.time_col}]"
+    xlab = "Time (s)"
 
     # ---------- 提取 BI / BE 子视图 ----------
     bi = dvl.view_kind("BI", require_valid=True)
@@ -96,9 +96,9 @@ def save_dvl_bi_be_vel_2rows(
     if be.t_s.size == 0:
         print("[DVL-PLOT] WARNING: no valid BE samples; bottom panel will be empty.")
 
-    # ---------- 创建 2x1 画布 ----------
+    # ---------- 创建 2x1 画布（适合论文单列） ----------
     fig_w = layout.fig_w_in
-    fig_h = layout.fig_h_in * 0.8  # 两行子图比三行略矮一点即可
+    fig_h = layout.fig_h_in * 0.8  # 两行略矮
 
     fig, axes = plt.subplots(
         2,
@@ -106,7 +106,7 @@ def save_dvl_bi_be_vel_2rows(
         sharex=True,
         figsize=(fig_w, fig_h),
         dpi=layout.dpi,
-        gridspec_kw={"hspace": 0.25},
+        gridspec_kw={"hspace": 0.22},
     )
 
     for i, ax in enumerate(axes):
@@ -137,17 +137,20 @@ def save_dvl_bi_be_vel_2rows(
     )
 
     # ------------------------------------------------------------------
-    # Row 1: BI 体坐标速度 v_body (FRD, m/s)
+    # Row 1: BI 体坐标速度 v_body (m/s)
     # ------------------------------------------------------------------
     ax1 = axes[0]
     if bi.t_s.size > 0 and bi.v_body_mps is not None:
-        t_bi = bi.t_s - (bi.t_s[0] if use_rel_time else 0.0)
+        t_bi = bi.t_s
+        if use_rel_time:
+            t_bi = t_bi - float(bi.t_s[0])
+
         v_body = np.asarray(bi.v_body_mps, dtype=float)
         lines = plot_xyz_lines(ax1, t_bi, v_body, linewidth=layout.lw())
-        ax1.set_title("DVL BI: body-frame velocity $v_{body}$ (m/s)", fontsize=layout.title_fs())
+        ax1.set_title(r"$v_{\mathrm{body}}$ (m/s)", fontsize=layout.title_fs())
         add_xyz_legend(ax1, lines, layout)  # 图例只在这一行
     else:
-        ax1.set_title("DVL BI: body-frame velocity (no valid samples)", fontsize=layout.title_fs())
+        ax1.set_title(r"$v_{\mathrm{body}}$ (no data)", fontsize=layout.title_fs())
 
     set_y_ticks_pretty_3(ax1, y_pad_frac=layout.y_pad_frac)
 
@@ -156,12 +159,15 @@ def save_dvl_bi_be_vel_2rows(
     # ------------------------------------------------------------------
     ax2 = axes[1]
     if be.t_s.size > 0 and be.v_enu_mps is not None:
-        t_be = be.t_s - (be.t_s[0] if use_rel_time else 0.0)
+        t_be = be.t_s
+        if use_rel_time:
+            t_be = t_be - float(be.t_s[0])
+
         v_enu = np.asarray(be.v_enu_mps, dtype=float)
         _ = plot_xyz_lines(ax2, t_be, v_enu, linewidth=layout.lw())
-        ax2.set_title("DVL BE: ENU-frame velocity $v_{ENU}$ (m/s)", fontsize=layout.title_fs())
+        ax2.set_title(r"$v_{\mathrm{ENU}}$ (m/s)", fontsize=layout.title_fs())
     else:
-        ax2.set_title("DVL BE: ENU-frame velocity (no valid samples)", fontsize=layout.title_fs())
+        ax2.set_title(r"$v_{\mathrm{ENU}}$ (no data)", fontsize=layout.title_fs())
 
     ax2.set_xlabel(xlab, fontsize=layout.label_fs())
     set_y_ticks_pretty_3(ax2, y_pad_frac=layout.y_pad_frac)
@@ -169,6 +175,7 @@ def save_dvl_bi_be_vel_2rows(
     fig.savefig(paths.dvl_vel_png)
     plt.close(fig)
     return paths.dvl_vel_png
+
 
 
 # ======================================================================
@@ -202,11 +209,12 @@ def save_dvl_proc_figures(
     """
     单张图包含 3 个子图：
 
-      (1) BI 体坐标速度 v_body (VelBx/VelBy/VelBz_body_mps)
-      (2) BE 垂向速度 VelU_enu_mps（若不存在则在子图中提示）
-      (3) BD 深度 Depth_m（若不存在则在子图中提示）
+      (1) Body velocity v_body (VelBx/VelBy/VelBz_body_mps)
+      (2) Vertical velocity VelU_enu_mps（若不存在则在子图中提示）
+      (3) Depth Depth_m（若不存在则在子图中提示）
 
-    返回：combined_png 路径
+    纵轴不写文字，仅用每一行简短标题说明物理量，
+    底部在最后一行给统一的 Time (s)。
     """
     setup_mpl()
     paths = _resolve_proc_out_dirs(proc_csv, out_root)
@@ -222,15 +230,14 @@ def save_dvl_proc_figures(
 
     if use_rel_time:
         t_plot = t - float(t[0])
-        xlab = "Time (s)"
     else:
         t_plot = t
-        xlab = "Time (s) [t_s]"
+    # 为了简洁，统一写 Time (s)
+    xlab = "Time (s)"
 
     layout = Imu3RowLayout()
 
     # ---------- 创建 3x1 画布 ----------
-    # 稍微宽一点、略扁一点，更接近论文版面
     fig_w = layout.fig_w_in * 1.3
     fig_h = layout.fig_h_in * 0.9
 
@@ -278,20 +285,16 @@ def save_dvl_proc_figures(
         ax_bi.text(
             0.5,
             0.5,
-            "No BI body velocity columns\n"
+            "Body velocity missing\n"
             f"({', '.join(bi_cols)})",
             transform=ax_bi.transAxes,
             ha="center",
             va="center",
         )
-        ax_bi.set_title(
-            "DVL BI: body-frame velocity (missing)",
-            fontsize=layout.title_fs(),
-        )
+        ax_bi.set_title("Body velocity (missing)", fontsize=layout.title_fs())
     else:
         v_body = df[list(bi_cols)].to_numpy(dtype=float)
 
-        # 使用 IMU 统一轴颜色（IMU_AXIS_COLORS 是序列，用 0/1/2 下标）
         c_x = IMU_AXIS_COLORS[0] if len(IMU_AXIS_COLORS) > 0 else None
         c_y = IMU_AXIS_COLORS[1] if len(IMU_AXIS_COLORS) > 1 else None
         c_z = IMU_AXIS_COLORS[2] if len(IMU_AXIS_COLORS) > 2 else None
@@ -300,8 +303,7 @@ def save_dvl_proc_figures(
         ax_bi.plot(t_plot, v_body[:, 1], label="Vy", color=c_y)
         ax_bi.plot(t_plot, v_body[:, 2], label="Vz", color=c_z)
 
-        ax_bi.set_ylabel("Body velocity (m/s)", fontsize=layout.label_fs())
-        ax_bi.set_title("DVL BI: body-frame velocity", fontsize=layout.title_fs())
+        ax_bi.set_title("Body velocity (m/s)", fontsize=layout.title_fs())
         ax_bi.legend(fontsize=layout.legend_fs(), loc="upper right")
         ax_bi.grid(True, which="both", alpha=0.3)
 
@@ -317,20 +319,16 @@ def save_dvl_proc_figures(
         ax_be.text(
             0.5,
             0.5,
-            f"No BE vertical velocity\n('{be_col}' missing)",
+            f"Vertical velocity missing\n('{be_col}')",
             transform=ax_be.transAxes,
             ha="center",
             va="center",
         )
-        ax_be.set_title(
-            "DVL BE: vertical ENU velocity (missing)",
-            fontsize=layout.title_fs(),
-        )
+        ax_be.set_title("Vertical velocity (missing)", fontsize=layout.title_fs())
     else:
         vup = df[be_col].to_numpy(dtype=float)
-        ax_be.plot(t_plot, vup, label="Vertical")
-        ax_be.set_ylabel("Vertical velocity (m/s)", fontsize=layout.label_fs())
-        ax_be.set_title("DVL BE: vertical ENU velocity", fontsize=layout.title_fs())
+        ax_be.plot(t_plot, vup, label="Vz")
+        ax_be.set_title("Vertical velocity (m/s)", fontsize=layout.title_fs())
         ax_be.legend(fontsize=layout.legend_fs(), loc="upper right")
         ax_be.grid(True, which="both", alpha=0.3)
 
@@ -346,23 +344,21 @@ def save_dvl_proc_figures(
         ax_bd.text(
             0.5,
             0.5,
-            f"No BD depth\n('{depth_col}' missing)",
+            f"Depth missing\n('{depth_col}')",
             transform=ax_bd.transAxes,
             ha="center",
             va="center",
         )
-        ax_bd.set_title("DVL BD: depth (missing)", fontsize=layout.title_fs())
+        ax_bd.set_title("Depth (missing)", fontsize=layout.title_fs())
     else:
         depth = df[depth_col].to_numpy(dtype=float)
         ax_bd.plot(t_plot, depth)
-        ax_bd.set_ylabel("Depth (m)", fontsize=layout.label_fs())
-        ax_bd.set_title("DVL BD: depth", fontsize=layout.title_fs())
+        ax_bd.set_title("Depth (m)", fontsize=layout.title_fs())
         ax_bd.grid(True, which="both", alpha=0.3)
 
-    # ---------- 统一 y 轴标签对齐 + x 轴标签 ----------
+    # ---------- 底部统一 x 轴标签 ----------
     ax_bd.set_xlabel(xlab, fontsize=layout.label_fs())
 
-    # 先根据布局预留边距，再对齐 ylabels
     fig.subplots_adjust(
         left=layout.left,
         right=layout.right,
@@ -370,8 +366,6 @@ def save_dvl_proc_figures(
         top=layout.top,
         hspace=0.28,
     )
-    # 关键一步：让三个 y 轴标签在同一 x 位置
-    fig.align_ylabels(axes)
 
     fig.savefig(paths.combined_png)
     plt.close(fig)

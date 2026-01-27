@@ -15,7 +15,7 @@ All figures follow:
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Sequence
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -54,7 +54,6 @@ def _resolve_out_dirs(imu: ImuFrame, out_root: str | Path) -> ImuPlotPaths:
         imu_dt_png=plots_dir / "imu_dt.png",
     )
 
-
 def save_imu_raw_9axis(
     imu: ImuFrame,
     *,
@@ -65,41 +64,44 @@ def save_imu_raw_9axis(
     """
     Save 3-row raw IMU figure (acc/gyro/attitude).
 
-    Parameters
-    ----------
-    imu : ImuFrame
-    out_root : output root directory
-    layout : anchored layout policy
-    use_rel_time : if True, x-axis uses t_rel_s; else uses absolute t_s
+    Row 1: Acceleration (g)
+    Row 2: Angular rate (deg/s)
+    Row 3: Attitude (deg)
+
+    纵轴不写任何文字，仅通过每一行的标题说明物理量，
+    底部只在最后一行给一个统一的 Time (s)。
     """
     setup_mpl()
 
     paths = _resolve_out_dirs(imu, out_root)
 
     t = imu.t_rel_s if use_rel_time else imu.t_s
-    xlab = "Time (s)" if use_rel_time else f"Time (s) [{imu.time_col}]"
+    # 为了简洁，绝对时间也统一写 Time (s)
+    xlab = "Time (s)"
 
     fig, axes, layout = make_imu_3rows_canvas(layout)
+    # 适合作为论文单列图的比例
+    fig.set_size_inches(5.0, 4.0)
+
     lw = layout.lw()
 
-    # Row 1: Acc (g) —— 只在这一行加图例
+    # Row 1: Acceleration (g) —— 带图例，无 y label
     ax = axes[0]
     lines_acc = plot_xyz_lines(ax, t, imu.acc_g, linewidth=lw)
     ax.set_title("Acceleration (g)", fontsize=layout.title_fs())
-    add_xyz_legend(ax, lines_acc, layout)  # legend only here
+    add_xyz_legend(ax, lines_acc, layout)
 
-    # Row 2: Gyro (deg/s) —— 不再重复图例
+    # Row 2: Angular rate (deg/s) —— 无图例、无 y label
     ax = axes[1]
-    lines_gyro = plot_xyz_lines(ax, t, imu.gyro_deg_s, linewidth=lw)
+    plot_xyz_lines(ax, t, imu.gyro_deg_s, linewidth=lw)
     ax.set_title("Angular rate (deg/s)", fontsize=layout.title_fs())
 
-    # Row 3: Attitude (deg) —— 不再重复图例
+    # Row 3: Attitude (deg) —— 无 y label，仅 x 轴标签
     ax = axes[2]
-    lines_att = plot_xyz_lines(ax, t, imu.ang_deg, linewidth=lw)
+    plot_xyz_lines(ax, t, imu.ang_deg, linewidth=lw)
     ax.set_title("Attitude (deg)", fontsize=layout.title_fs())
     ax.set_xlabel(xlab, fontsize=layout.label_fs())
 
-    # Apply y-tick policy after plotting
     finalize_imu_axes(axes, y_pad_frac=layout.y_pad_frac)
 
     fig.savefig(paths.imu_raw_9axis_png)
@@ -187,7 +189,6 @@ def _pick_vec3(
     print(f"[IMU-PROC-PLOT] WARNING: no valid columns found for {desc}, using empty array.")
     return np.full((df.shape[0], 3), np.nan, dtype=float)
 
-
 def save_imu_proc_3rows_from_csv(
     proc_csv: str | Path,
     *,
@@ -196,13 +197,14 @@ def save_imu_proc_3rows_from_csv(
     use_rel_time: bool = False,
 ) -> Path:
     """
-    使用与原始 IMU 相同的 3 行布局，对“预处理后的 IMU CSV”绘制一张图：
+    预处理后的 IMU 三行图：
 
-      Row 1: 体坐标线加速度（优先 body FRD m/s²；若全 NaN，退回原始 AccX/AccY/AccZ）
-      Row 2: 体坐标角速度（优先 body FRD rad/s）
-      Row 3: 姿态角（优先 roll_rad/pitch_rad/yaw_rad，否则退回 AngX/AngY/AngZ）
+      Row 1: Acceleration (m/s²)
+      Row 2: Angular rate (rad/s)
+      Row 3: Attitude (deg)
 
-    仅在第一行显示 X/Y/Z 图例，避免信息重复。
+    不使用任何 y 轴文字，只在每一行上方给简短标题，
+    底部仅在最后一行给统一的 Time (s)。
     """
     setup_mpl()
 
@@ -217,7 +219,9 @@ def save_imu_proc_3rows_from_csv(
     df = pd.read_csv(proc_path)
 
     if "t_s" not in df.columns:
-        raise ValueError(f"{proc_path} 缺少列 't_s'，请确认是否为 pipeline 输出的 *_proc.csv")
+        raise ValueError(
+            f"{proc_path} 缺少列 't_s'，请确认是否为 pipeline 输出的 *_proc.csv"
+        )
 
     t = df["t_s"].to_numpy(dtype=float)
     if use_rel_time:
@@ -225,30 +229,31 @@ def save_imu_proc_3rows_from_csv(
         xlab = "Time (s)"
     else:
         t_plot = t
-        xlab = "Time (s) [t_s]"
+        # 为了简洁，绝对时间也统一写 Time (s)
+        xlab = "Time (s)"
 
-    # ---------- 1) 体坐标线加速度：优先用已处理后的 body m/s² ----------
+    # ---------- 1) 体坐标线加速度 ----------
     acc_body = _pick_vec3(
         df,
         cand_triplets=[
-            ("AccX_body_mps2", "AccY_body_mps2", "AccZ_body_mps2"),  # 理想：重力补偿+去 bias+滤波
-            ("AccE_enu_mps2", "AccN_enu_mps2", "AccU_enu_mps2"),      # 次选：ENU 加速度
-            ("AccX", "AccY", "AccZ"),                                # 兜底：原始 g 单位（只是看形状）
+            ("AccX_body_mps2", "AccY_body_mps2", "AccZ_body_mps2"),
+            ("AccE_enu_mps2", "AccN_enu_mps2", "AccU_enu_mps2"),
+            ("AccX", "AccY", "AccZ"),
         ],
         desc="body linear acceleration",
     )
 
-    # ---------- 2) 体坐标角速度：优先 body rad/s ----------
+    # ---------- 2) 体坐标角速度 ----------
     gyro_body = _pick_vec3(
         df,
         cand_triplets=[
             ("GyroX_body_rad_s", "GyroY_body_rad_s", "GyroZ_body_rad_s"),
-            ("GyroX", "GyroY", "GyroZ"),  # 兜底：原始 deg/s（只看趋势）
+            ("GyroX", "GyroY", "GyroZ"),
         ],
         desc="body angular rate",
     )
 
-    # ---------- 3) 姿态角：优先 roll/pitch/yaw(rad) ----------
+    # ---------- 3) 姿态角（绘图用 deg） ----------
     if all(c in df.columns for c in ("roll_rad", "pitch_rad", "yaw_rad")):
         roll_rad = df["roll_rad"].to_numpy(dtype=float)
         pitch_rad = df["pitch_rad"].to_numpy(dtype=float)
@@ -258,37 +263,35 @@ def save_imu_proc_3rows_from_csv(
         )
         print("[IMU-PROC-PLOT] use attitude from roll_rad/pitch_rad/yaw_rad")
     elif all(c in df.columns for c in ("AngX", "AngY", "AngZ")):
-        # 兜底：直接用原始姿态 AngX/AngY/AngZ（deg）
         att_deg = df[["AngX", "AngY", "AngZ"]].to_numpy(dtype=float)
         print("[IMU-PROC-PLOT] use attitude from AngX/AngY/AngZ (deg)")
     else:
-        # 再兜底：全 NaN
         att_deg = np.full((df.shape[0], 3), np.nan, dtype=float)
         print("[IMU-PROC-PLOT] WARNING: no columns for attitude, using NaN")
 
     fig, axes, layout = make_imu_3rows_canvas(layout)
+    # 适合论文单列的比例：比之前略扁一些
+    fig.set_size_inches(5.0, 4.0)
     lw = layout.lw()
 
-    # Row 1: a_body —— 带图例
+    # Row 1: Acceleration —— 带图例，无 y label
     ax = axes[0]
     lines_acc = plot_xyz_lines(ax, t_plot, acc_body, linewidth=lw)
-    ax.set_title("Linear acceleration (body/ENU)", fontsize=layout.title_fs())
-    ax.set_ylabel("a (arb. units)", fontsize=layout.label_fs())
+    ax.set_title("Acceleration (m/s$^2$)", fontsize=layout.title_fs())
     add_xyz_legend(ax, lines_acc, layout)
 
-    # Row 2: gyro_body —— 无图例
+    # Row 2: Angular rate —— 无图例，无 y label
     ax = axes[1]
-    lines_gyro = plot_xyz_lines(ax, t_plot, gyro_body, linewidth=lw)
-    ax.set_title("Angular rate (body)", fontsize=layout.title_fs())
-    ax.set_ylabel("$\\omega$ (arb. units)", fontsize=layout.label_fs())
+    plot_xyz_lines(ax, t_plot, gyro_body, linewidth=lw)
+    ax.set_title("Angular rate (rad/s)", fontsize=layout.title_fs())
 
-    # Row 3: attitude deg —— 无图例
+    # Row 3: Attitude —— 无图例，只有 x 轴标签
     ax = axes[2]
-    lines_att = plot_xyz_lines(ax, t_plot, att_deg, linewidth=lw)
-    ax.set_title("Attitude (roll/pitch/yaw, deg)", fontsize=layout.title_fs())
+    plot_xyz_lines(ax, t_plot, att_deg, linewidth=lw)
+    ax.set_title("Attitude (deg)", fontsize=layout.title_fs())
     ax.set_xlabel(xlab, fontsize=layout.label_fs())
-    ax.set_ylabel("angle (deg)", fontsize=layout.label_fs())
 
+    # 不再设置任何 ax.set_ylabel(...)
     finalize_imu_axes(axes, y_pad_frac=layout.y_pad_frac)
 
     fig.savefig(out_png)

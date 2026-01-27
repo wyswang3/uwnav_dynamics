@@ -1,0 +1,16 @@
+align:
+  imu_proc_csv: "out/imu_proc/min_imu_tb_20260110_193348_proc.csv"
+  pwm_csv: "out/pwm/2026-01-10_pooltest02/pwm_log_20260110_193725_cmd_aligned.csv"
+  dvl_proc_csv: "out/dvl_proc/dvl_nav_state_tb_20260110_193538_proc.csv"
+  power_csv: "out/aux_power/motor_data_20260110_193455_power8.csv"
+
+  out_csv: "out/train/2026-01-10_pooltest02_train_base.csv"
+
+  dt_main_s: 0.01
+  t_margin_s: 0.0
+  dvl_max_dt_s: 0.10
+  power_max_dt_s: 0.25
+
+  require_pwm: true
+  require_dvl: false
+  require_power: false
