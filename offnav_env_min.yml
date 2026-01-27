@@ -1,0 +1,12 @@
+name: offnav_env
+channels:
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+dependencies:
+  - python=3.10
+  - tabulate
+  - matplotlib
+  - numpy
+  - pandas
+  - pyyaml
+prefix: /home/wys/anaconda3/envs/offnav_env
