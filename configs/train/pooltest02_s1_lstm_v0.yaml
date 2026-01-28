@@ -1,89 +1,92 @@
 run:
-  name: "pooltest02_s1_lstm_v0"
-  seed: 0
-  device: "cpu"
-  amp: false
-  out_dir: "out/ckpts/pooltest02_s1_lstm_v0/B0_baseline"
-  variant: "B0_baseline"
+  name: "pooltest02_s1_lstm_v0"              # 本次实验/训练任务名称（用于日志与输出目录标识）
+  seed: 0                                   # 随机种子：影响 split、DataLoader shuffle、初始化等；复现实验用
+  device: "cpu"                             # 训练设备：本地先 cpu；上服务器改 "cuda"
+  amp: false                                # 混合精度：仅在 cuda 时建议 true（可提速、降显存）
+  out_dir: "out/ckpts/pooltest02_s1_lstm_v0/B0_baseline"   # checkpoint 根目录（建议不要把 variant 再重复写进去）
+  variant: "B0_baseline"                    # 结构/消融版本标识：B0/B1/B4/U1...（用于 pipeline 自动定位产物）
 
 data:
-  data_dir: "data/processed/2026-01-10_pooltest02_s1"
-  batch_size: 256
-  num_workers: 4
-  pin_memory: false
+  data_dir: "data/processed/2026-01-10_pooltest02_s1"  # 数据集目录（期望存在 features.npz / labels.npz）
+  batch_size: 256                          # batch：越大越稳定但越吃显存；4090 可尝试 512/1024
+  num_workers: 4                           # DataLoader workers：CPU 预取；服务器通常 8~16 更合适
+  pin_memory: false                        # 仅 cuda 推荐 true（提升 H2D 拷贝效率）；cpu 设 true 反而警告/无效
   split:
-    train_ratio: 0.70
-    val_ratio: 0.15
+    train_ratio: 0.70                      # 连续切分比例：训练段占比（避免 stride=1 窗口随机切分泄漏）
+    val_ratio: 0.15                        # 验证段占比；test = 1 - train - val
 
 model:
-  name: "s1_predictor"
-  din: 25
-  dout: 9
-  pred_len: 10
-  rnn_hidden: 256
-  rnn_layers: 2
-  dropout: 0.0
+  name: "s1_predictor"                     # 模型类型：当前只支持 s1_predictor（baseline + blocks）
+  din: 25                                  # X 特征维度：PWM8 + IMU6 + Vel_state3 + Power8 = 25
+  dout: 9                                  # Y 目标维度：Acc3 + Gyro3 + Vel_state3 = 9
+  pred_len: 10                             # 预测 horizon H（步数）；dt=0.01 时等价 0.1s 预测窗
+  rnn_hidden: 256                          # LSTM 隐层维度：表达力 vs 速度/显存；常见 128/256/512
+  rnn_layers: 2                            # LSTM 层数：更深更强但更难训；2 是常用折中
+  dropout: 0.0                             # LSTM dropout（仅 layers>1 生效）；过拟合时可试 0.1~0.3
 
-  # X: PWM8 + IMU6 + Vel_state3 + Power8
-  u_in_idx: [0,1,2,3,4,5,6,7]
-  y_in_idx: [8,9,10,11,12,13,14,15,16]
+  # ===== 强制写死字段切片，防 silent bug（非常重要）=====
+  # X layout: [PWM8] + [IMU6] + [Vel_state3] + [Power8]
+  u_in_idx: [0,1,2,3,4,5,6,7]              # u_seq：推进器输入（PWM duty or normalized）索引
+  y_in_idx: [8,9,10,11,12,13,14,15,16]     # y_seq：目标状态在输入中的对应列（Acc/Gyro/Vel_state）
 
-  use_thruster_as_replacement: true
-  use_hydro_feat: true
+  # ===== 模块融合策略（即使 blocks.enabled=false，也建议写清楚）=====
+  use_thruster_as_replacement: true        # thruster_lag 开启时：用 u_eff 替换原 u 输入给 backbone（不改 din）
+  use_hydro_feat: true                     # hydro_ssm 开启时：把 h_last 拼进 head 特征（提升表达力）
 
+  # ===== blocks：默认全关（B0 baseline）；做消融时只改 enabled 与少量关键超参 =====
   blocks:
     thruster_lag:
-      enabled: false
-      normalize_input: true
-      pwm_center: 7.5
-      pwm_half_range: 2.5
-      deadzone: 0.05
-      sat_gain: 2.0
-      learn_tau: true
-      tau_init: 0.08
-      tau_min: 0.01
-      per_channel_tau: true
-      dt: 0.01
+      enabled: false                       # 推进器微动力单元开关（deadzone/sat/一阶滞后）
+      normalize_input: true                # 是否将 PWM 映射到近似 [-1,1] 区间再做 deadzone/sat（建议 true）
+      pwm_center: 7.5                      # PWM 中值（与归一化定义相关；按你数据的编码方式来）
+      pwm_half_range: 2.5                  # 半量程（center±half_range -> [-1,1]）；需要与你日志一致
+      deadzone: 0.05                       # 死区阈值（归一化后）；可扫 0.02~0.10
+      sat_gain: 2.0                        # 饱和/非线性增益（越大越“硬”）；可扫 1.0~4.0
+      learn_tau: true                      # 是否学习一阶滞后时间常数 tau
+      tau_init: 0.08                       # tau 初值（秒）；经验上推进器响应 0.05~0.20s
+      tau_min: 0.01                        # tau 下限（防数值不稳/梯度爆）
+      per_channel_tau: true                # 是否每个推进器独立 tau（更灵活但参数更多）
+      dt: 0.01                             # 采样周期（秒）；必须与数据窗口 dt 一致
 
     hydro_ssm:
-      enabled: false
-      hidden_dim: 64
-      lambda_init: 0.85
-      act: "tanh"
-      per_dim_lambda: true
+      enabled: false                       # Hydro-SSM 隐状态单元开关（流体记忆/附加质量/尾流等）
+      hidden_dim: 64                       # 隐状态维度：越大越强但更难稳定；可扫 32/64/128
+      lambda_init: 0.85                    # 稳定递推因子初值（越接近1记忆越长）；可扫 0.7~0.98
+      act: "tanh"                          # 激活函数：tanh 通常更稳；也可试 relu/gelu（需 blocks 支持）
+      per_dim_lambda: true                 # 是否每个隐状态维度独立 lambda（更灵活）
 
     damping:
-      enabled: false
-      v_start: 6
-      v_dim: 3
-      mode: "simple"
-      d_init: 0.5
-      mlp_hidden: 16
+      enabled: false                       # 阻尼一致性输出头开关（显式速度相关耗散项）
+      v_start: 6                           # 在 y(9) 中速度分量起始索引（Acc0-2, Gyro3-5, Vel6-8）
+      v_dim: 3                             # 速度维度数
+      mode: "simple"                       # 模式：simple 表示简单速度比例阻尼；后续可扩展 nonlinear/mlp
+      d_init: 0.5                          # 阻尼系数初值（尺度需结合单位）；可扫 0.1~2.0
+      mlp_hidden: 16                       # 若 mode 用 mlp/非线性时的隐层宽度（simple 下可忽略）
 
     uncertainty:
-      enabled: false
-      feat_dim: 128
-      hidden: 64
-      logvar_min: -10.0
-      logvar_max: 6.0
+      enabled: false                       # 不确定度输出头 U1 开关（替代 baseline 的 logvar）
+      feat_dim: 128                        # uncertainty 特征维度（由 [h_last,y_last,u_last] 投影而来）
+      hidden: 64                           # U-head 内部隐层宽度（小一点更稳：32/64/128）
+      logvar_min: -10.0                    # logvar 下界（对应最小方差 exp(-10)）
+      logvar_max: 6.0                      # logvar 上界（对应最大方差 exp(6)）
 
 rollout:
-  y0_source: "x_last_state"
-  mode: "delta_cumsum"
+  y0_source: "x_last_state"                # y0 来源：从输入最后一步抽取 y_seq 作为初值（保持与训练一致）
+  mode: "delta_cumsum"                     # y_hat = y0 + cumsum(dY)（模型预测增量 dY）
 
 loss:
-  type: "nll_diag"
-  logvar_clip: [-10.0, 6.0]
+  type: "nll_diag"                         # 负对数似然（对角高斯），适配 (y_hat, logvar)
+  logvar_clip: [-10.0, 6.0]                # 训练时对 logvar clamp（与 uncertainty.logvar_min/max 对齐更好）
 
 optim:
-  name: "adamw"
-  lr: 1.0e-3
-  weight_decay: 1.0e-4
-  grad_clip: 1.0
+  name: "adamw"                            # 优化器：AdamW（权重衰减更稳定）
+  lr: 1.0e-3                               # 学习率：baseline 常用；发散可降到 3e-4/1e-4
+  weight_decay: 1.0e-4                     # 权重衰减：抑制过拟合；可扫 0~1e-3
+  grad_clip: 1.0                           # 梯度裁剪：防 RNN 梯度爆；可扫 0.5~5.0
 
 train:
-  epochs: 3
-  eval_every: 1
-  save_best: true
-  save_last: true
-  metric: "val_loss"
+  epochs: 3                                # 本地冒烟测试；服务器上建议 >=30 起步，再配 early-stopping
+  eval_every: 1                            # 每多少 epoch 跑一次 val（1=每轮都跑）
+  save_best: true                          # 保存 val 最优 ckpt
+  save_last: true                          # 保存最后一轮 ckpt（便于中断续训）
+  metric: "val_loss"                       # best 的选择指标（当前用 val_loss）

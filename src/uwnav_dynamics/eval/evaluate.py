@@ -19,6 +19,7 @@ from uwnav_dynamics.viz.eval.plot_horizon_metrics import (
     plot_groups_vs_horizon,
     HorizonPlotCfg,
 )
+from uwnav_dynamics.viz.eval.plot_rollout_samples import plot_rollout_samples_from_npz
 
 # rollout 样例图我们这里内置一个轻量函数（后续可重构到 viz 脚本里）
 from uwnav_dynamics.viz.style.sci_style import setup_mpl
@@ -172,62 +173,6 @@ def _norm3(x: np.ndarray) -> np.ndarray:
     return np.sqrt(np.sum(x * x, axis=-1))
 
 
-def _plot_rollout_samples_from_npz(
-    pred_npz: Path,
-    out_dir: Path,
-    *,
-    dt_s: float,
-    n: int,
-    fmt: str,
-) -> None:
-    """
-    画检查图：||Acc||, ||Gyro||, ||Vel|| 的 true vs pred
-
-    业务逻辑：
-      - 对 rollout 稳定性/发散/相位滞后很敏感；
-      - 作为 baseline sanity check 很有用。
-    """
-    import matplotlib.pyplot as plt
-
-    z = np.load(pred_npz)
-    y_hat = z["y_hat"]   # (N,H,9)
-    y_true = z["y_true"] # (N,H,9)
-
-    setup_mpl()
-
-    N, H, D = y_hat.shape
-    nplot = min(int(n), int(N))
-    t = np.arange(1, H + 1) * float(dt_s)
-
-    for i in range(nplot):
-        yh = y_hat[i]
-        yt = y_true[i]
-
-        acc_h = _norm3(yh[:, 0:3]); acc_t = _norm3(yt[:, 0:3])
-        gyr_h = _norm3(yh[:, 3:6]); gyr_t = _norm3(yt[:, 3:6])
-        vel_h = _norm3(yh[:, 6:9]); vel_t = _norm3(yt[:, 6:9])
-
-        fig, ax = plt.subplots(1, 1)
-        ax.plot(t, acc_t, label="||Acc|| true")
-        ax.plot(t, acc_h, label="||Acc|| pred")
-        ax.plot(t, gyr_t, label="||Gyro|| true")
-        ax.plot(t, gyr_h, label="||Gyro|| pred")
-        ax.plot(t, vel_t, label="||Vel|| true")
-        ax.plot(t, vel_h, label="||Vel|| pred")
-
-        ax.set_xlabel("Prediction horizon (s)")
-        ax.set_ylabel("Magnitude")
-        ax.grid(False)
-        ax.legend(loc="best")
-
-        stem = f"rollout_sample_{i:03d}"
-        if fmt in ("png", "both"):
-            fig.savefig(out_dir / f"{stem}.png")
-        if fmt in ("pdf", "both"):
-            fig.savefig(out_dir / f"{stem}.pdf")
-        plt.close(fig)
-
-
 # =============================================================================
 # Main evaluation
 # =============================================================================
@@ -342,21 +287,38 @@ def main() -> int:
 
     cfg_y = _load_yaml(Path(args.yaml))
 
-    data_dir = Path(cfg_y["data"]["data_dir"])
-    split = cfg_y.get("data", {}).get("split", {})
+    # ---------- robust yaml reads ----------
+    data_y = cfg_y.get("data", {}) or {}
+    if not isinstance(data_y, dict):
+        raise TypeError("YAML key 'data' must be a dict")
+
+    data_dir = Path(data_y.get("data_dir", ""))
+    if not str(data_dir):
+        raise KeyError("Missing data.data_dir in train yaml")
+    split = data_y.get("split", {}) or {}
+    if not isinstance(split, dict):
+        raise TypeError("data.split must be a dict")
+
     train_ratio = float(split.get("train_ratio", 0.70))
     val_ratio = float(split.get("val_ratio", 0.15))
 
-    rollout = cfg_y.get("rollout", {})
+    rollout = cfg_y.get("rollout", {}) or {}
+    if not isinstance(rollout, dict):
+        raise TypeError("rollout must be a dict")
     y0_source = str(rollout.get("y0_source", "x_last_state"))
     mode = str(rollout.get("mode", "delta_cumsum"))
 
-    run = cfg_y.get("run", {})
-    default_out_dir = Path(run.get("out_dir", "out/eval")) / "eval"
+    run = cfg_y.get("run", {}) or {}
+    if not isinstance(run, dict):
+        raise TypeError("run must be a dict")
+
+    run_out_dir = Path(run.get("out_dir", "out/ckpts/_unknown"))
+    variant = str(run.get("variant", "default"))
+    default_out_dir = run_out_dir / variant / f"eval_{args.split}"
     out_dir = Path(args.out_dir) if args.out_dir is not None else default_out_dir
 
     device = args.device if args.device is not None else str(run.get("device", "cpu"))
-    batch_size = int(args.batch_size) if args.batch_size is not None else int(cfg_y["data"].get("batch_size", 512))
+    batch_size = int(args.batch_size) if args.batch_size is not None else int(data_y.get("batch_size", 512))
 
     cfg_eval = EvalConfig(
         data_dir=data_dir,
@@ -370,6 +332,8 @@ def main() -> int:
         y0_source=y0_source,
         mode=mode,
         save_samples=int(args.save_samples),
+
+        # plotting
         make_plots=bool(args.plots),
         plot_fmt=str(args.plot_fmt),
         dt_s=float(args.dt),
@@ -377,7 +341,10 @@ def main() -> int:
         n_plot_samples=int(args.n_plot_samples),
     )
 
-    m = cfg_y["model"]
+    m = cfg_y.get("model", {}) or {}
+    if not isinstance(m, dict):
+        raise TypeError("model must be a dict")
+
     cfg_model = S1PredictorConfig(
         din=int(m["din"]),
         dout=int(m["dout"]),
@@ -439,38 +406,47 @@ def main() -> int:
 
     # ---- optional plots ----
     if cfg_eval.make_plots:
+        # 延迟 import：避免无 matplotlib 环境也能跑数值评估
+        from uwnav_dynamics.viz.eval.plot_horizon_metrics import HorizonPlotCfg, plot_groups_vs_horizon
+        from uwnav_dynamics.viz.eval.plot_rollout_samples import plot_rollout_samples_from_npz
+
         plots_dir = cfg_eval.out_dir / "plots"
         _ensure_dir(plots_dir)
 
-        # 1) horizon 曲线：RMSE + MAE（复用 plot_horizon_metrics.py）
-        for metric_name in ("rmse", "mae"):
-            hp = HorizonPlotCfg(
-                dt_s=cfg_eval.dt_s,
-                use_seconds=(cfg_eval.x_axis == "sec"),
-                metric=metric_name,
-                out_name=f"{metric_name}_horizon_groups",
-                fmt=cfg_eval.plot_fmt,
-            )
-            plot_groups_vs_horizon(
-                eval_dirs=[cfg_eval.out_dir],
-                labels=[Path(cfg_eval.out_dir).name],
-                out_dir=plots_dir,
-                cfg=hp,
-            )
+        # 如果 fmt=both，而你的 viz 函数不支持 "both"，这里展开成两次
+        fmt_list = [cfg_eval.plot_fmt]
+        if cfg_eval.plot_fmt == "both":
+            fmt_list = ["png", "pdf"]
 
-        # 2) rollout 样例（内置轻量画法，后续可 refactor 到 plot_rollout_samples.py）
-        _plot_rollout_samples_from_npz(
-            pred_npz,
-            plots_dir,
-            dt_s=cfg_eval.dt_s,
-            n=cfg_eval.n_plot_samples,
-            fmt=cfg_eval.plot_fmt,
-        )
+        # 1) horizon 曲线：RMSE + MAE
+        for fmt in fmt_list:
+            for metric_name in ("rmse", "mae"):
+                hp = HorizonPlotCfg(
+                    dt_s=cfg_eval.dt_s,
+                    use_seconds=(cfg_eval.x_axis == "sec"),
+                    metric=metric_name,
+                    out_name=f"{metric_name}_horizon_groups",
+                    fmt=fmt,
+                )
+                plot_groups_vs_horizon(
+                    eval_dirs=[cfg_eval.out_dir],
+                    labels=[cfg_eval.split_name],
+                    out_dir=plots_dir,
+                    cfg=hp,
+                )
+
+            # 2) rollout 样例
+            plot_rollout_samples_from_npz(
+                pred_npz=pred_npz,
+                out_dir=plots_dir,
+                dt_s=cfg_eval.dt_s,
+                n=cfg_eval.n_plot_samples,
+                fmt=fmt,
+            )
 
         print(f"[EVAL] plots saved under: {plots_dir}")
 
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
