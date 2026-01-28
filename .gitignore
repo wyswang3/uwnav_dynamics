@@ -1,0 +1,5 @@
+# generated outputs / datasets
+out/
+data/processed/
+*.npy
+*.npz
