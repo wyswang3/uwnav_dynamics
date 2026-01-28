@@ -88,16 +88,27 @@ def load_dataset_config(yaml_path: Path) -> DatasetConfig:
 # ---------------------------------------------------------------------
 def _compute_zscore_stats(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
-    对 3D 数组 arr=(N, T, D) 做 z-score 所需的 (mean, std)，
-    统计维度是 (N,T)，对每个特征维度 D 分别算。
+    对 3D 数组 arr=(N, T, D) 计算 z-score 的 mean/std：
+      - 在 (N,T) 维度上统计
+      - 忽略 NaN（用于处理稀疏的 DVL / Power 等列）
     """
-    # 展平时间与样本维度
-    flat = arr.reshape(-1, arr.shape[-1])
-    mean = flat.mean(axis=0)
-    std = flat.std(axis=0)
-    # 防止除 0
+    flat = arr.reshape(-1, arr.shape[-1])  # (N*T, D)
+
+    # 忽略 NaN 计算统计量
+    mean = np.nanmean(flat, axis=0)
+    std = np.nanstd(flat, axis=0)
+
+    # 对「整列全是 NaN」的情况，nanmean/nanstd 仍会给 NaN；
+    # 这里可以按需处理：比如将 std 替换成 1.0，mean 替换成 0.0，
+    # 或者后续直接在训练阶段丢掉这些通道。
+    nan_mask = ~np.isfinite(std)
+    std[nan_mask] = 1.0
+    mean[~np.isfinite(mean)] = 0.0
+
+    # 再做一个防 0 保护
     std[std < 1e-8] = 1e-8
     return mean, std
+
 
 
 def _apply_zscore(arr: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:

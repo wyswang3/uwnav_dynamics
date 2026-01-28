@@ -1,0 +1,89 @@
+run:
+  name: "pooltest02_s1_lstm_v0"
+  seed: 0
+  device: "cpu"
+  amp: false
+  out_dir: "out/ckpts/pooltest02_s1_lstm_v0/B0_baseline"
+  variant: "B0_baseline"
+
+data:
+  data_dir: "data/processed/2026-01-10_pooltest02_s1"
+  batch_size: 256
+  num_workers: 4
+  pin_memory: false
+  split:
+    train_ratio: 0.70
+    val_ratio: 0.15
+
+model:
+  name: "s1_predictor"
+  din: 25
+  dout: 9
+  pred_len: 10
+  rnn_hidden: 256
+  rnn_layers: 2
+  dropout: 0.0
+
+  # X: PWM8 + IMU6 + Vel_state3 + Power8
+  u_in_idx: [0,1,2,3,4,5,6,7]
+  y_in_idx: [8,9,10,11,12,13,14,15,16]
+
+  use_thruster_as_replacement: true
+  use_hydro_feat: true
+
+  blocks:
+    thruster_lag:
+      enabled: false
+      normalize_input: true
+      pwm_center: 7.5
+      pwm_half_range: 2.5
+      deadzone: 0.05
+      sat_gain: 2.0
+      learn_tau: true
+      tau_init: 0.08
+      tau_min: 0.01
+      per_channel_tau: true
+      dt: 0.01
+
+    hydro_ssm:
+      enabled: false
+      hidden_dim: 64
+      lambda_init: 0.85
+      act: "tanh"
+      per_dim_lambda: true
+
+    damping:
+      enabled: false
+      v_start: 6
+      v_dim: 3
+      mode: "simple"
+      d_init: 0.5
+      mlp_hidden: 16
+
+    uncertainty:
+      enabled: false
+      feat_dim: 128
+      hidden: 64
+      logvar_min: -10.0
+      logvar_max: 6.0
+
+rollout:
+  y0_source: "x_last_state"
+  mode: "delta_cumsum"
+
+loss:
+  type: "nll_diag"
+  logvar_clip: [-10.0, 6.0]
+
+optim:
+  name: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+
+train:
+  epochs: 3
+  eval_every: 1
+  save_best: true
+  save_last: true
+  metric: "val_loss"

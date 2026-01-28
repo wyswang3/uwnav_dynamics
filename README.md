@@ -243,7 +243,7 @@ x = [v_x,\ v_y,\ \omega_z,\ a_x,\ a_y,\ \psi]
 ## 10. 项目目录职责总览
 
 ---
-虚拟环境激活：conda activate offnav_env
+虚拟环境激活：conda activate uwnav_train_cpu
 # Project Structure
 
 ```text
@@ -393,6 +393,9 @@ uwnav_dynamics/
 │       │   ├── plot_proc.py
 │       │   ├── plot_fit.py
 │       │   └── plot_control.py
+                eval/
+                     plot_horizon_metrics.py     # 画 RMSE/MAE vs horizon（Acc/Gyro/Vel 三组）
+                     plot_rollout_samples.py     # 画 y_hat vs y_true（若干样例）
 │       │
 │       └── cli/                  # 命令行入口
 │           ├── preprocess.py

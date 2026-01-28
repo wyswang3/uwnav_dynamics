@@ -75,9 +75,9 @@ dataset:
       - GyroX_body_rad_s
       - GyroY_body_rad_s
       - GyroZ_body_rad_s
-      - VelBx_body_mps
-      - VelBy_body_mps
-      - VelBz_body_mps
+      - VelX_state_mps
+      - VelY_state_mps
+      - VelZ_state_mps
 
 
     # 目前不在滑窗阶段用掩码剔除样本，避免因为 DVL 稀疏导致几乎没有窗口。
