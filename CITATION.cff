@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software in academic work, please cite it using this metadata."
+type: software
+title: "uwnav_dynamics: Control-Oriented Data-Driven Dynamics Modeling for Underwater Robots"
+abstract: >
+  Control-oriented, data-driven underwater robot dynamics modeling with short-horizon
+  multi-step prediction and heteroscedastic uncertainty estimation, designed for MPC/RL deployment.
+authors:
+  - family-names: "<Wang>"
+    given-names: "<YuShu>"
+    # orcid: "https://orcid.org/0000-0000-0000-0000"
+repository-code: "https://github.com/wyswang3/uwnav_dynamics"
+url: "https://github.com/wyswang3/uwnav_dynamics"
+license: "AGPL-3.0-or-later"
+keywords:
+  - underwater robotics
+  - data-driven dynamics
+  - system identification
+  - model predictive control
+  - reinforcement learning
+  - heteroscedastic uncertainty
+  - IMU
+  - DVL
+preferred-citation:
+  type: software
+  title: "uwnav_dynamics"
+  authors:
+    - family-names: "<Wang>"
+      given-names: "<YuShu>"
+  year: 2026
+  url: "https://github.com/wyswang3/uwnav_dynamics"

@@ -459,6 +459,42 @@ uwnav_dynamics/
 ## 12. 项目定位总结（一句话）
 
 > **这是一个“为控制而生”的水下机器人数据驱动动力学建模平台，而不是单纯的系统辨识或预测模型。**
+---
+
+## License (开源许可)
+
+This project is licensed under the **GNU Affero General Public License v3.0** (**AGPL-3.0-or-later**).
+
+- ✅ You may use, modify, and redistribute this project.
+- ✅ If you distribute modified versions, you must provide the corresponding source code under the same license.
+- ✅ If you run a modified version as a network service (e.g., SaaS / online inference / hosted training), you must also provide the corresponding source code to users of that service.
+
+If you want to use this project in a **closed-source** or **commercial** product/service without disclosing your modifications, please contact the author to discuss a **commercial license**.
+
+---
+
+## Citation (学术引用)
+
+If you use this repository in academic research, please cite it.
+
+- A ready-to-use citation metadata file is provided: **`CITATION.cff`** (GitHub will render it automatically).
+- When a paper/preprint becomes available, we will add DOI/arXiv information here.
+
+---
+
+## Data & Reproducibility (数据与复现)
+
+This repository is **code-only**. Large datasets, logs, and generated artifacts are not tracked in git.
+
+- `data/`, `out/`, `runs/` are treated as **generated / local-only** directories.
+- Please follow the dataset specs under `configs/` to build datasets reproducibly.
+- If you release a processed dataset snapshot later, we recommend publishing it via a separate data repository or an artifact host (e.g., releases / Zenodo / HuggingFace Datasets) and linking it here.
+
+---
+
+## Disclaimer
+
+This software is provided “as is”, without warranty of any kind. Use it at your own risk, especially in real-world underwater experiments.
 
 ---
 

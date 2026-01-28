@@ -1,5 +1,16 @@
-# generated outputs / datasets
+# datasets / logs / artifacts
+data/
 out/
-data/processed/
+runs/
+
+# numpy/torch artifacts
 *.npy
 *.npz
+*.pt
+*.pth
+
+# local env / caches
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
