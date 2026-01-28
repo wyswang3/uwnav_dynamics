@@ -1,0 +1,32 @@
+[project]
+name = "uwnav_dynamics"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "pyyaml>=6.0",
+  "tqdm>=4.66",
+  "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+# 训练/评估常用
+train = [
+  "pandas>=2.1",
+]
+
+# CPU 版本 torch（在 CPU 机器/容器上用）
+cpu = [
+  "torch>=2.3",
+]
+
+# CUDA 版本 torch：这里不直接写版本，实际安装用官方 index-url
+cuda = [
+  "torch>=2.3",
+]
+
+dev = [
+  "ruff>=0.4",
+  "black>=24.4",
+  "pytest>=8.0",
+]

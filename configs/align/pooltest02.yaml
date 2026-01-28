@@ -12,5 +12,5 @@ align:
   power_max_dt_s: 0.25
 
   require_pwm: true
-  require_dvl: false
-  require_power: false
+  require_dvl: true
+  require_power: true

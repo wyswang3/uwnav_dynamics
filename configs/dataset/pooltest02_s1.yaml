@@ -83,8 +83,8 @@ dataset:
     # 目前不在滑窗阶段用掩码剔除样本，避免因为 DVL 稀疏导致几乎没有窗口。
     # 后续在训练脚本中用 has_dvl 对速度维度做逐元素 loss masking。
     valid_mask_col: null
-    min_valid_ratio: 1.0
-    drop_incomplete: true
+    min_valid_ratio: 0.0
+    drop_incomplete: false
 
   # 3) 输出数据集配置
   output:

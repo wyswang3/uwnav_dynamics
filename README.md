@@ -244,6 +244,7 @@ x = [v_x,\ v_y,\ \omega_z,\ a_x,\ a_y,\ \psi]
 
 ---
 虚拟环境激活：conda activate uwnav_train_cpu
+source ~/venvs/uwnav_dynamics/bin/activate
 # Project Structure
 
 ```text
