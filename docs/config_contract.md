@@ -14,6 +14,16 @@
 - `src/uwnav_dynamics/train/runtime.py` 负责运行期 override 与最终快照落盘；
 - `src/uwnav_dynamics/eval/config.py` 只补评估运行时字段，不重新解释模型结构。
 
+这里的“评估运行时字段”仅指数值评估本身需要的参数，例如：
+- checkpoint 路径
+- 评估 split
+- batch size
+- split / scaler artifact 路径
+
+绘图相关参数不属于 `EvalConfig` 的职责范围。
+它们应由 `cli/eval.py`、`cli/pipeline.py` 与 `viz/*` 共同编排，
+而不是重新塞回数值评估配置契约。
+
 ## 2. train / eval 配置一致性的设计原则
 
 ### 2.1 单一真源
@@ -47,6 +57,11 @@
 - 评估输出目录等评估运行时参数。
 
 这些逻辑分别由 runtime 或 eval 侧处理。
+
+其中需要额外强调的是：
+- `eval/config.py` 只负责数值评估运行时；
+- `cli/eval.py` / `cli/pipeline.py` 负责是否进入 viz 阶段的 orchestration；
+- `viz/eval/*` 负责从已落盘 artifact 读盘绘图。
 
 ## 4. frozen 配置与 override 规则
 

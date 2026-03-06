@@ -1,10 +1,46 @@
-# src/uwnav_dynamics/eval/evaluate.py
+"""
+模块名称：离线数值评估主程序
+
+模块职责：
+负责加载训练阶段产出的数据划分、归一化器与 checkpoint，
+执行纯数值 rollout 评估并将指标与样例产物落盘。
+
+主要功能：
+1. 复用训练阶段的 split / scaler artifact，执行确定性的离线评估。
+2. 计算全局与 horizon 级 RMSE / MAE 指标并写出 metrics 与 CSV。
+3. 导出供 viz 层复用的 `pred_samples.npz`，但不直接执行绘图。
+
+数据流：
+train yaml + checkpoint + run_dir artifacts
+    ↓
+EvalConfig / S1PredictorConfig
+    ↓
+加载 features.npz / labels.npz / split_indices.npz / scalers
+    ↓
+model rollout + metric aggregation
+    ↓
+metrics.yaml + rmse_by_horizon.csv + mae_by_horizon.csv + pred_samples.npz
+    ↓
+cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
+
+依赖模块：
+- uwnav_dynamics.eval.config
+- uwnav_dynamics.dataset.normalize
+- uwnav_dynamics.dataset.split
+- uwnav_dynamics.models.nets.s1_predictor
+
+备注：
+- 本模块只负责数值评估与 artifact 落盘。
+- 旧 `--plots` 路径已显式弃用，正式用户入口为 `cli/eval.py` 与 `cli/pipeline.py`。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 from typing import Any, Dict, Tuple, List
 
 import numpy as np
@@ -87,14 +123,6 @@ def _write_csv_hd(path: Path, hd: np.ndarray, col_prefix: str = "d") -> None:
         row = ",".join([str(h + 1)] + [f"{hd[h, d]:.8f}" for d in range(D)])
         lines.append(row)
     path.write_text("\n".join(lines), encoding="utf-8")
-
-
-# =============================================================================
-# Plotting helpers (rollout samples)
-# =============================================================================
-
-def _norm3(x: np.ndarray) -> np.ndarray:
-    return np.sqrt(np.sum(x * x, axis=-1))
 
 
 # =============================================================================
@@ -212,14 +240,23 @@ def main() -> int:
     ap.add_argument("--out_dir", type=str, default=None, help="override output directory")
     ap.add_argument("--save_samples", type=int, default=256, help="save first N samples to npz for viz")
 
-    # 新增：一键画图
-    ap.add_argument("--plots", action="store_true", help="generate plots under <out_dir>/plots")
+    # 仅保留解析以给出明确迁移提示；evaluate.py 不再承载绘图执行。
+    ap.add_argument("--plots", action="store_true", help="deprecated: use cli/eval.py or cli/pipeline.py for plotting")
     ap.add_argument("--plot_fmt", type=str, default="png", choices=["png", "pdf", "both"])
     ap.add_argument("--dt", type=float, default=0.01)
     ap.add_argument("--x_axis", type=str, default="sec", choices=["sec", "step"])
     ap.add_argument("--n_plot_samples", type=int, default=8)
 
     args = ap.parse_args()
+
+    if args.plots:
+        print(
+            "[EVAL] `--plots` 已弃用：`evaluate.py` 现在只负责数值评估与 artifact 落盘。"
+            " 请改用 `python -m uwnav_dynamics.cli.eval ... --plots`"
+            " 或 `python -m uwnav_dynamics.cli.pipeline ... --plots`。",
+            file=sys.stderr,
+        )
+        return 2
 
     cfg_eval, cfg_model = build_eval_config(
         train_yaml=Path(args.yaml),
@@ -229,11 +266,6 @@ def main() -> int:
         batch_size=args.batch_size,
         out_dir=Path(args.out_dir) if args.out_dir is not None else None,
         save_samples=int(args.save_samples),
-        make_plots=bool(args.plots),
-        plot_fmt=str(args.plot_fmt),
-        dt_s=float(args.dt),
-        x_axis=str(args.x_axis),
-        n_plot_samples=int(args.n_plot_samples),
     )
 
     _ensure_dir(cfg_eval.out_dir)
@@ -258,8 +290,6 @@ def main() -> int:
             "y_scaler": str(cfg_eval.y_scaler_path),
             "y0_source": cfg_eval.y0_source,
             "mode": cfg_eval.mode,
-            "dt_s": cfg_eval.dt_s,
-            "x_axis": cfg_eval.x_axis,
         },
     }
     with open(cfg_eval.out_dir / "metrics.yaml", "w", encoding="utf-8") as f:
@@ -281,48 +311,6 @@ def main() -> int:
     print(f"[EVAL] split={res['split']}  n_eval={res['n_eval']}")
     print(f"[EVAL] RMSE(global)={res['rmse_global']:.6f}  MAE(global)={res['mae_global']:.6f}")
     print(f"[EVAL] wrote: {cfg_eval.out_dir / 'metrics.yaml'}")
-
-    # ---- optional plots ----
-    if cfg_eval.make_plots:
-        # 延迟 import：避免无 matplotlib 环境也能跑数值评估
-        from uwnav_dynamics.viz.eval.plot_horizon_metrics import HorizonPlotCfg, plot_groups_vs_horizon
-        from uwnav_dynamics.viz.eval.plot_rollout_samples import plot_rollout_samples_from_npz
-
-        plots_dir = cfg_eval.out_dir / "plots"
-        _ensure_dir(plots_dir)
-
-        # 如果 fmt=both，而你的 viz 函数不支持 "both"，这里展开成两次
-        fmt_list = [cfg_eval.plot_fmt]
-        if cfg_eval.plot_fmt == "both":
-            fmt_list = ["png", "pdf"]
-
-        # 1) horizon 曲线：RMSE + MAE
-        for fmt in fmt_list:
-            for metric_name in ("rmse", "mae"):
-                hp = HorizonPlotCfg(
-                    dt_s=cfg_eval.dt_s,
-                    use_seconds=(cfg_eval.x_axis == "sec"),
-                    metric=metric_name,
-                    out_name=f"{metric_name}_horizon_groups",
-                    fmt=fmt,
-                )
-                plot_groups_vs_horizon(
-                    eval_dirs=[cfg_eval.out_dir],
-                    labels=[cfg_eval.split_name],
-                    out_dir=plots_dir,
-                    cfg=hp,
-                )
-
-            # 2) rollout 样例
-            plot_rollout_samples_from_npz(
-                pred_npz=pred_npz,
-                out_dir=plots_dir,
-                dt_s=cfg_eval.dt_s,
-                n=cfg_eval.n_plot_samples,
-                fmt=fmt,
-            )
-
-        print(f"[EVAL] plots saved under: {plots_dir}")
 
     return 0
 

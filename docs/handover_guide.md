@@ -57,6 +57,11 @@ python -m uwnav_dynamics.cli.eval \
   --plot_fmt png
 ```
 
+说明：
+- `cli/eval.py` 是正式用户入口，会先执行数值评估，再按需调起 viz 层出图。
+- `src/uwnav_dynamics/eval/evaluate.py` 现在只负责数值评估与 artifact 落盘。
+- 若数值评估成功但绘图失败，CLI 会返回非零码，同时保留已生成的数值 artifact。
+
 产物（评估目录）通常包含：
 - `metrics.yaml`
 - `rmse_by_horizon.csv`
@@ -75,6 +80,10 @@ python -m uwnav_dynamics.cli.pipeline \
   --plots \
   --plot_fmt png
 ```
+
+这里的执行顺序是：
+
+`train -> cli/eval -> evaluate artifact -> viz plots`
 
 ## 6) 常见最小排查
 - 看配置是否指向了存在的数据路径：`configs/dataset/*.yaml`、`configs/align/*.yaml`

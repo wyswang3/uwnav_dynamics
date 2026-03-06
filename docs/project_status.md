@@ -31,6 +31,7 @@
 - `PR6` 后，`pytest -q` 的最小收集与对齐边界测试恢复
 - `PR1` 后，train / eval 配置 parity 已由自动化测试覆盖
 - `PR2` 后，train / eval 对 split / scaler artifact 的共享与复用已由自动化测试覆盖
+- `PR3` 后，数值评估与绘图编排职责已拆开，CLI 级编排与失败保留语义已有测试覆盖
 - `resolved_train.yaml` 已能记录训练最终执行配置、关键 artifact 路径与 `split_strategy`
 
 建议把以下类型的测试视为当前最小健康信号：
@@ -76,13 +77,23 @@
 
 - [pr2_split_scaler_single_source.md](/home/wys/uwnav_dynamics/docs/pr2_split_scaler_single_source.md)
 
+### 4.4 PR3：eval-viz 解耦
+
+已完成内容：
+
+- `evaluate.py` 收敛为纯数值评估与 artifact 落盘，不再直接执行绘图
+- `EvalConfig` 收缩为数值评估运行时配置，不再承载 plot runtime fields
+- `cli/eval.py` 成为正式用户入口，负责串联“数值评估 -> viz 出图”
+- `cli/pipeline.py` 通过 `cli/eval.py` 实现 `train -> eval -> viz` 组合调用
+- `evaluate.py --plots` 改为显式弃用，提示用户迁移到 CLI 入口
+- 增加 CLI 编排、显式弃用与“绘图失败但数值 artifact 保留”测试
+
 ## 5. 下一步升级顺序
 
 建议按以下顺序推进：
 
 1. `PR4`：rollout 索引契约
-2. `PR3`：eval-viz 解耦
-3. `PR5`：mask-aware 训练评估
+2. `PR5`：mask-aware 训练评估
 
 排序原则：
 

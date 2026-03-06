@@ -1,17 +1,37 @@
+"""
+模块名称：评估配置装配
+
+模块职责：
+负责从 train yaml 与评估 CLI override 中组装数值评估所需的运行时配置，
+并保证评估阶段继续复用训练侧 canonical parser，而不是重新解释模型结构。
+
+主要功能：
+1. 复用训练配置解析结果，得到与训练一致的模型拓扑配置。
+2. 解析 run-scoped split / scaler / eval 输出目录路径。
+3. 仅装配数值评估运行时字段，不承载绘图参数。
+
+数据流：
+train yaml
+    ↓
+train.config.load_train_config()
+    ↓
+RunLayout 解析 run_dir / split / scaler / eval_dir
+    ↓
+EvalConfig（数值评估运行时） + S1PredictorConfig
+    ↓
+eval.evaluate 数值评估主流程
+
+依赖模块：
+- uwnav_dynamics.train.config
+- uwnav_dynamics.experiment.layout
+- uwnav_dynamics.models.nets.s1_predictor
+
+备注：
+- EvalConfig 只描述数值评估运行时，不包含绘图 orchestration 参数。
+- 该模块必须保持 PR1 建立的 train/eval 单一配置真源关系。
+"""
+
 from __future__ import annotations
-
-"""
-Evaluation-side config assembly.
-
-The evaluator reads a train yaml plus a concrete checkpoint path and reconstructs
-the data/model/runtime settings needed for a deterministic offline evaluation.
-
-Design rule:
-  - Eval reuses the canonical training parser so model topology is guaranteed to
-    match training exactly.
-  - `EvalConfig` only carries evaluation runtime parameters; it must not become
-    a second place that re-explains the model schema.
-"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +44,7 @@ from uwnav_dynamics.train.config import load_train_config
 
 @dataclass(frozen=True)
 class EvalConfig:
-    """Resolved runtime config consumed by `evaluate.py`."""
+    """`evaluate.py` 使用的数值评估运行时配置。"""
     data_dir: Path
     ckpt: Path
     out_dir: Path
@@ -42,12 +62,6 @@ class EvalConfig:
 
     save_samples: int = 256
 
-    make_plots: bool = False
-    plot_fmt: str = "png"
-    dt_s: float = 0.01
-    x_axis: str = "sec"
-    n_plot_samples: int = 8
-
 
 def build_eval_config(
     *,
@@ -58,11 +72,6 @@ def build_eval_config(
     batch_size: int | None,
     out_dir: str | Path | None,
     save_samples: int,
-    make_plots: bool,
-    plot_fmt: str,
-    dt_s: float,
-    x_axis: str,
-    n_plot_samples: int,
 ) -> Tuple[EvalConfig, S1PredictorConfig]:
     """
     Resolve evaluation inputs from the train yaml and CLI overrides.
@@ -96,10 +105,5 @@ def build_eval_config(
         y0_source=str(cfg_train.rollout.y0_source),
         mode=str(cfg_train.rollout.mode),
         save_samples=int(save_samples),
-        make_plots=bool(make_plots),
-        plot_fmt=str(plot_fmt),
-        dt_s=float(dt_s),
-        x_axis=str(x_axis),
-        n_plot_samples=int(n_plot_samples),
     )
     return cfg_eval, cfg_train.model

@@ -165,12 +165,12 @@ run_dir = run.out_dir / run.variant
 
 - `PR6`：对齐边界修复与 pytest 冒烟恢复
 - `PR1`：配置契约收口与实验追溯增强
+- `PR2`：split / scaler 单一真源
+- `PR3`：eval-viz 解耦
 
 待推进：
 
-- `PR2`：split / scaler 单一真源
 - `PR4`：rollout 索引契约
-- `PR3`：eval-viz 解耦
 - `PR5`：mask-aware 训练评估
 
 ## 11. 当前限制

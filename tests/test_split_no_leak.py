@@ -1,3 +1,34 @@
+"""
+模块名称：split / scaler 真源与复用测试
+
+模块职责：
+验证 PR2 建立的 split / scaler 单一真源契约，
+并确保评估阶段继续复用训练阶段的 run-scoped artifact。
+
+主要功能：
+1. 验证 contiguous split 语义与 metadata 落盘。
+2. 验证 scaler 只由 train split 拟合。
+3. 验证 eval 侧复用训练产生的 split / scaler artifact。
+
+数据流：
+模拟数据集 + train yaml
+    ↓
+train.data_pipeline / build_eval_config / evaluate_once
+    ↓
+split/scaler/eval artifact
+    ↓
+契约断言
+
+依赖模块：
+- uwnav_dynamics.dataset.split
+- uwnav_dynamics.dataset.normalize
+- uwnav_dynamics.eval.config
+- uwnav_dynamics.eval.evaluate
+
+备注：
+- 本测试也作为 PR3 的回归保护，确保 eval 配置收缩后仍不破坏 PR2 契约。
+"""
+
 from __future__ import annotations
 
 import warnings
@@ -232,11 +263,6 @@ def test_eval_reuses_train_split_and_scaler_artifacts(tmp_path):
         batch_size=4,
         out_dir=tmp_path / "eval_test",
         save_samples=2,
-        make_plots=False,
-        plot_fmt="png",
-        dt_s=0.01,
-        x_axis="sec",
-        n_plot_samples=1,
     )
     res = evaluate_once(cfg_eval=cfg_eval, cfg_model=cfg_model)
 

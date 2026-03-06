@@ -16,8 +16,8 @@
 
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
-| `src/uwnav_dynamics/cli/eval.py` | 评估 CLI 包装器，自动从 run 目录选择 checkpoint 并调用评估模块。 | 输入：train YAML、可选 ckpt/split/device 等；输出：启动 `evaluate.py`，生成评估目录。 |
-| `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计指标并可直接画图。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`、`rmse_by_horizon.csv`、`mae_by_horizon.csv`、`pred_samples.npz`、`plots/*`。 |
+| `src/uwnav_dynamics/cli/eval.py` | 正式评估 CLI 入口，自动选择 checkpoint，并按需编排“数值评估 -> viz 出图”。 | 输入：train YAML、可选 ckpt/split/device/plot 参数；输出：评估目录与可选 `plots/*`。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计指标并落盘 artifact。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`、`rmse_by_horizon.csv`、`mae_by_horizon.csv`、`pred_samples.npz`。 |
 
 ## 3) 数据预处理入口（pipeline / align / build_dataset）
 
@@ -73,7 +73,7 @@
 
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
-| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：metrics/csv/npz/plots。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：metrics/csv/npz。 |
 | `src/uwnav_dynamics/models/utils/rollout.py` | rollout 辅助函数集合。 | 输入：`dY` 与初值；输出：未来状态序列。 |
 | `src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py` | 画 RMSE/MAE 随预测步长变化曲线。 | 输入：评估目录；输出：`rmse_horizon_*.png/pdf`、`mae_horizon_*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_rollout_samples.py` | 画 rollout 样例时域对比图。 | 输入：`pred_samples.npz`；输出：`rollout_sample_*.png/pdf`。 |

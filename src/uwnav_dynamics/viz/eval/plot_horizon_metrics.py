@@ -1,4 +1,36 @@
-# src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py
+"""
+模块名称：评估 horizon 指标绘图
+
+模块职责：
+从评估目录中读取数值评估阶段已经落盘的指标文件，
+并生成 horizon 维度上的 RMSE / MAE 曲线图。
+
+主要功能：
+1. 读取 `metrics.yaml` 与 horizon CSV artifact。
+2. 将 9 维输出按 Acc / Gyro / Vel 进行分组聚合并绘图。
+3. 支持单评估目录出图与多评估目录对比出图。
+
+数据流：
+eval_<split>/metrics.yaml + rmse_by_horizon.csv / mae_by_horizon.csv
+    ↓
+load + group aggregation
+    ↓
+matplotlib figure
+    ↓
+plots/rmse_horizon_*.png|pdf / mae_horizon_*.png|pdf
+
+依赖模块：
+- matplotlib
+- yaml
+- numpy
+- uwnav_dynamics.viz.style.sci_style
+
+备注：
+- 当前默认消费 PR3 保持稳定的 horizon CSV artifact。
+- 若未来 PR5 引入 mask-aware 指标，应通过新增可选 artifact / loader 扩展，
+  而不是替换现有 CSV 契约。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -65,6 +97,8 @@ def _metric_from_dir(eval_dir: Path, metric: str) -> Tuple[np.ndarray, Dict[str,
       hd: (H,D) 指标矩阵
       meta: metrics.yaml 解析结果
     """
+    # TODO(PR5): 未来如需接入 masked metrics，应以新增可选 loader 的方式扩展，
+    # 不覆盖当前 rmse/mae horizon CSV 的稳定读取契约。
     meta = _load_yaml(eval_dir / "metrics.yaml")
     if metric == "rmse":
         hd = _load_csv_hd(eval_dir / "rmse_by_horizon.csv")

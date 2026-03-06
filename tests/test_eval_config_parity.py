@@ -1,5 +1,36 @@
+"""
+模块名称：评估配置真源与职责边界测试
+
+模块职责：
+验证评估侧继续复用训练侧 canonical parser，
+并确保 EvalConfig 只承载数值评估运行时字段，不重新接管绘图编排职责。
+
+主要功能：
+1. 检查 build_eval_config 复用训练配置解释结果。
+2. 检查相同权重下 train / eval 模型前向结果一致。
+3. 显式验证 plot runtime fields 已从 EvalConfig / build_eval_config 移出。
+
+数据流：
+临时 train yaml + run artifact
+    ↓
+build_eval_config()
+    ↓
+EvalConfig / S1PredictorConfig
+    ↓
+配置真源与职责边界断言
+
+依赖模块：
+- uwnav_dynamics.eval.config
+- uwnav_dynamics.train.config
+- uwnav_dynamics.experiment.layout
+
+备注：
+- 该测试覆盖 PR1 与 PR3 的配置契约。
+"""
+
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -153,11 +184,6 @@ def test_eval_config_reuses_canonical_train_parser(tmp_path):
         batch_size=8,
         out_dir=eval_out_dir,
         save_samples=12,
-        make_plots=False,
-        plot_fmt="png",
-        dt_s=0.02,
-        x_axis="sec",
-        n_plot_samples=3,
     )
 
     # 评估侧只允许覆盖 runtime 参数；模型拓扑必须直接复用训练侧 canonical parser。
@@ -171,6 +197,19 @@ def test_eval_config_reuses_canonical_train_parser(tmp_path):
     assert cfg_eval.y_scaler_path == layout.y_scaler_path
     assert cfg_eval.y0_source == cfg_train.rollout.y0_source
     assert cfg_eval.mode == cfg_train.rollout.mode
+
+    assert "make_plots" not in cfg_eval.__dataclass_fields__
+    assert "plot_fmt" not in cfg_eval.__dataclass_fields__
+    assert "dt_s" not in cfg_eval.__dataclass_fields__
+    assert "x_axis" not in cfg_eval.__dataclass_fields__
+    assert "n_plot_samples" not in cfg_eval.__dataclass_fields__
+
+    sig = inspect.signature(build_eval_config)
+    assert "make_plots" not in sig.parameters
+    assert "plot_fmt" not in sig.parameters
+    assert "dt_s" not in sig.parameters
+    assert "x_axis" not in sig.parameters
+    assert "n_plot_samples" not in sig.parameters
 
 
 def test_eval_model_forward_matches_train_model_when_loading_same_weights(tmp_path):
@@ -192,11 +231,6 @@ def test_eval_model_forward_matches_train_model_when_loading_same_weights(tmp_pa
         batch_size=None,
         out_dir=None,
         save_samples=8,
-        make_plots=False,
-        plot_fmt="png",
-        dt_s=0.01,
-        x_axis="sec",
-        n_plot_samples=2,
     )
 
     torch.manual_seed(0)

@@ -59,12 +59,12 @@ Raw Logs
 
 - `PR6`：多频对齐边界修复与 pytest 冒烟恢复
 - `PR1`：配置契约收口、canonical parser、resolved config 快照
+- `PR2`：split / scaler 单一真源
+- `PR3`：eval-viz 解耦
 
 下一步按顺序推进：
 
-- `PR2`：split / scaler 单一真源
 - `PR4`：rollout 索引契约
-- `PR3`：eval-viz 解耦
 - `PR5`：mask-aware 训练评估
 
 详细说明见：

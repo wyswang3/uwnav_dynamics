@@ -1,4 +1,35 @@
-# src/uwnav_dynamics/cli/pipeline.py
+"""
+模块名称：训练-评估-绘图流水线入口
+
+模块职责：
+提供正式的一键流水线入口，按顺序串联训练、checkpoint 选择、数值评估与可选绘图，
+并复用各子模块已有的 CLI 契约，而不是在本模块内重写业务逻辑。
+
+主要功能：
+1. 调用训练入口生成 run-scoped artifact 与 checkpoint。
+2. 复用统一 helper 解析 run_dir，并选择本次评估使用的 checkpoint。
+3. 调用 `cli/eval.py` 完成 eval -> viz 编排，形成 train -> eval -> viz 全链路。
+
+数据流：
+train yaml + CLI runtime args
+    ↓
+train.run_train
+    ↓
+run_dir + checkpoint
+    ↓
+cli.eval
+    ↓
+eval artifact + plots artifact
+
+依赖模块：
+- uwnav_dynamics.cli.utils
+- uwnav_dynamics.train.run_train
+- uwnav_dynamics.cli.eval
+
+备注：
+- 本模块保持外部 CLI 参数语义稳定，不直接拼接 eval/plots 路径规则。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -50,11 +81,10 @@ def main() -> int:
 
     # 3) EVAL (+ optional plots)
     cmd_eval = [
-        sys.executable, "-m", "uwnav_dynamics.eval.evaluate",
+        sys.executable, "-m", "uwnav_dynamics.cli.eval",
         "--yaml", str(y),
         "--ckpt", str(ckpt),
         "--split", args.eval_split,
-        "--save_samples", "256",
     ]
     if args.eval_device is not None:
         cmd_eval += ["--device", args.eval_device]

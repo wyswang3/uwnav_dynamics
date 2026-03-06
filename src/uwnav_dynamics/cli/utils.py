@@ -1,7 +1,33 @@
 # src/uwnav_dynamics/cli/utils.py
-from __future__ import annotations
+"""
+模块名称：CLI 路径与 checkpoint 解析工具
 
-"""Shared helpers for CLI wrappers that need yaml and checkpoint resolution."""
+模块职责：
+为训练、评估与流水线 CLI 提供统一的 YAML、run 目录、eval 目录与 checkpoint
+路径解析能力，避免各入口重复拼接路径规则。
+
+主要功能：
+1. 从 train yaml 解析 canonical `run.out_dir / run.variant` 布局。
+2. 解析评估目录与 plots 目录路径，不引入创建目录或文件检查副作用。
+3. 在 run_dir 或显式 ckpt 路径下选择 best / last / latest checkpoint。
+
+数据流：
+train yaml 或 run_dir
+    ↓
+experiment.layout.RunLayout
+    ↓
+run_dir / eval_dir / plots_dir / ckpt_path
+    ↓
+cli/train.py / cli/eval.py / cli/pipeline.py
+
+依赖模块：
+- uwnav_dynamics.experiment.layout
+
+备注：
+- 本模块只做路径解析与 checkpoint 选择，不负责目录创建、日志与副作用。
+"""
+
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -41,6 +67,24 @@ def resolve_run_out_dir(train_yaml: Path) -> Tuple[Path, str]:
     """
     layout = run_layout_from_train_yaml(train_yaml)
     return layout.out_dir, layout.variant
+
+
+def resolve_eval_out_dir(
+    train_yaml: Path,
+    *,
+    split: str,
+    out_dir_override: Path | None,
+) -> Path:
+    """解析评估输出目录；若显式指定则直接复用，否则走 RunLayout 默认约定。"""
+    if out_dir_override is not None:
+        return Path(out_dir_override)
+    layout = run_layout_from_train_yaml(train_yaml)
+    return layout.eval_dir(split)
+
+
+def resolve_eval_plots_dir(eval_out_dir: Path) -> Path:
+    """解析评估目录下的 plots 子目录路径，不执行创建操作。"""
+    return Path(eval_out_dir) / "plots"
 
 
 def pick_ckpt(ckpt_or_run_dir: Path) -> Path:

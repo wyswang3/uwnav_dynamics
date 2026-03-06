@@ -45,9 +45,15 @@
 - `mae_by_horizon.csv`
 - `pred_samples.npz`
 
+以上四项属于数值评估主流程产物，
+应由 `src/uwnav_dynamics/eval/evaluate.py` 直接负责生成。
+
 若启用绘图，还应额外保存：
 
 - `plots/*.png` 或 `plots/*.pdf`
+
+这些 `plots/*` 属于 CLI / viz orchestration 触发的后处理产物，
+而不是数值评估配置契约的一部分。
 
 ## 5. 实验记录
 

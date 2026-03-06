@@ -61,7 +61,11 @@
 - 非默认列顺序测试通过
 - train / eval 对相同权重和输入给出一致 rollout 结果
 
-## 4. PR3：eval-viz 解耦
+## 4. PR3：eval-viz 解耦（已完成）
+
+### 状态
+
+- 已完成，收口日期：2026-03-06
 
 ### 目标
 
@@ -80,6 +84,14 @@
 - 评估主流程不再直接依赖绘图执行
 - `metrics.yaml`、CSV、`pred_samples.npz` 产物保持稳定
 - 单独绘图 smoke test 通过
+
+### 已完成内容
+
+- `evaluate.py` 收口为纯数值评估入口，内部 `--plots` 路径改为显式弃用
+- `EvalConfig` 只保留数值评估运行时字段，不再承载绘图参数
+- `cli/eval.py` 负责正式的 eval -> viz orchestration，并在绘图失败时保留数值 artifact
+- `cli/pipeline.py` 改为通过 `cli/eval.py` 完成 train -> eval -> viz 串联
+- 增加 CLI 编排、弃用路径与失败保留语义测试
 
 ## 5. PR5：mask-aware 训练评估
 
