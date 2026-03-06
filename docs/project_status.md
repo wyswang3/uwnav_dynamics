@@ -32,6 +32,7 @@
 - `PR1` 后，train / eval 配置 parity 已由自动化测试覆盖
 - `PR2` 后，train / eval 对 split / scaler artifact 的共享与复用已由自动化测试覆盖
 - `PR3` 后，数值评估与绘图编排职责已拆开，CLI 级编排与失败保留语义已有测试覆盖
+- `PR4` 后，train / eval / viz 的状态布局解释已统一收口为 execution / semantic 两层 contract
 - `resolved_train.yaml` 已能记录训练最终执行配置、关键 artifact 路径与 `split_strategy`
 
 建议把以下类型的测试视为当前最小健康信号：
@@ -92,8 +93,7 @@
 
 建议按以下顺序推进：
 
-1. `PR4`：rollout 索引契约
-2. `PR5`：mask-aware 训练评估
+1. `PR5`：mask-aware 训练评估
 
 排序原则：
 
@@ -106,7 +106,6 @@
 
 当前仍需重点跟踪的技术债：
 
-- rollout 索引仍存在历史硬编码风险
 - DVL 稀疏监督尚未正式进入 mask-aware 训练
 - 评估和绘图的职责边界仍不够清晰
 - 历史 `split_indices.npz` 可能缺少 `split_strategy` 元数据，当前仅通过 warning 做兼容提示

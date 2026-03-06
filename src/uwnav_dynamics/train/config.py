@@ -1,16 +1,35 @@
+"""
+模块名称：训练配置 canonical parser
+
+模块职责：
+作为 `configs/train/*.yaml` 的唯一解析真源，
+将实验定义严格转换为强类型 dataclass 配置，并为 train / eval 共享。
+
+主要功能：
+1. 解析 `run / data / model / rollout / loss / train` 配置段。
+2. 对模型 blocks、索引布局与 runtime schema 执行严格校验。
+3. 保证 train / eval 使用同一份模型结构解释结果，避免配置漂移。
+
+数据流：
+train yaml
+    ↓
+strict schema parsing
+    ↓
+TrainYamlConfig
+    ↓
+train.run_train / eval.config
+
+依赖模块：
+- yaml
+- uwnav_dynamics.models.nets.s1_predictor
+- uwnav_dynamics.models.utils.execution_layout
+
+备注：
+- 本模块只做配置解析与静态校验，不承担 rollout 数值执行。
+- `cfg_model.y_in_idx` 是 execution layout contract 的唯一执行真源。
+"""
+
 from __future__ import annotations
-
-"""
-Canonical train-yaml parser.
-
-Design intent:
-  - This module is the single source of truth for parsing `configs/train/*.yaml`.
-  - Train and eval must share the same schema contract so a checkpoint is always
-    reconstructed with the exact model topology used during training.
-  - The parser is intentionally strict: unknown keys fail fast, because silent
-    schema drift is far more dangerous than a loud configuration error in
-    research code and future open-source maintenance.
-"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +47,7 @@ from uwnav_dynamics.models.nets.s1_predictor import (
     DampingConfig,
     UncertaintyConfig,
 )
+from uwnav_dynamics.models.utils.execution_layout import validate_execution_layout, validate_feature_indices
 
 
 # =============================================================================
@@ -397,6 +417,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         use_hydro_feat=_as_bool(model_d.get("use_hydro_feat", True), where="model.use_hydro_feat"),
         blocks=blocks,
     )
+    validate_feature_indices(model.u_in_idx, upper_bound=model.din, name="model.u_in_idx")
+    validate_execution_layout(model.y_in_idx, din=model.din, dout=model.dout)
 
     # ---------------- rollout ----------------
     rollout_d = d.get("rollout", {}) or {}

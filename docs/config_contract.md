@@ -63,6 +63,46 @@
 - `cli/eval.py` / `cli/pipeline.py` 负责是否进入 viz 阶段的 orchestration；
 - `viz/eval/*` 负责从已落盘 artifact 读盘绘图。
 
+## 3.1 rollout layout contract 的分层
+
+PR4 之后，仓库对 rollout layout contract 做了明确分层：
+
+- `execution layout contract`
+  - 唯一执行真源是 `cfg_model.y_in_idx`
+  - 只负责：从 `X` 的最后一个历史时刻提取 `y0`
+  - 只服务于 train / eval rollout 数值路径
+- `semantic output layout contract`
+  - 只负责：9 维输出对应的组件标签与 `acc / gyro / vel` 分组语义
+  - 只服务于指标聚合、`metrics.yaml` metadata 与 viz 读盘解释
+
+这两个 contract 必须保持分层清晰：
+
+- train / eval 不得把物理语义分组反向用于执行索引裁决
+- viz 不得读取 `cfg_model.y_in_idx` 来推断画图分组
+- `target_cols` 不得成为主执行路径的第二真源
+
+当前实现中：
+
+- `src/uwnav_dynamics/models/utils/execution_layout.py`
+  负责 execution layout 校验与 `y0` 提取
+- `src/uwnav_dynamics/models/utils/semantic_output_layout.py`
+  负责 semantic metadata、分组解释与旧 artifact fallback
+
+## 3.2 `target_cols` 的职责边界
+
+`labels.npz` 与 `meta.yaml` 中的 `target_cols` 仍然保留，
+但它在 PR4 后只承担以下职责：
+
+- 作为 semantic output layout 的校验旁证
+- 作为 artifact 审计信息的辅助来源
+- 帮助确认当前数据集的监督目标顺序没有漂移
+
+它不承担以下职责：
+
+- 不裁决 `y0` 的执行索引
+- 不替代 `cfg_model.y_in_idx`
+- 不成为 viz 主逻辑的主消费契约
+
 ## 4. frozen 配置与 override 规则
 
 ### 4.1 哪些对象应该 frozen

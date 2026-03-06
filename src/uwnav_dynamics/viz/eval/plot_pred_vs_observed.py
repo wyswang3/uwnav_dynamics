@@ -6,7 +6,7 @@
 生成网络预测值与监督目标之间的对比图，为论文与汇报提供稳定图型。
 
 主要功能：
-1. 默认以 `group_norm` mode 绘制 Acc / Gyro / Vel 三组范数对比图。
+1. 默认以 `group_norm` mode 绘制 semantic layout 驱动的三组范数对比图。
 2. 明确将图中的 `observed` 解释为评估阶段监督目标 `y_true`。
 3. 为未来 `component` mode 与 uncertainty band 扩展保留接口。
 
@@ -27,6 +27,7 @@ plots/pred_vs_observed_group_norm_000.png|pdf
 备注：
 - 本模块中的 `observed` 指当前评估阶段使用的监督目标 `y_true`。
 - 它不等同于未经处理的原始 IMU / DVL / Power 传感器输出。
+- 若旧 artifact 缺少 layout metadata，则统一 warning 并回退到 canonical `acc/gyro/vel` 分组。
 """
 
 from __future__ import annotations
@@ -39,6 +40,11 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
+from uwnav_dynamics.models.utils.semantic_output_layout import (
+    SemanticOutputLayout,
+    canonical_semantic_output_layout,
+    load_semantic_layout_from_metrics_path,
+)
 from uwnav_dynamics.viz.style.sci_style import (
     apply_axes_style,
     apply_minimal_legend,
@@ -49,6 +55,18 @@ from uwnav_dynamics.viz.style.sci_style import (
     save_figure,
     setup_mpl,
 )
+
+
+_GROUP_DISPLAY_NAMES = {
+    "acc": "Acc",
+    "gyro": "Gyro",
+    "vel": "Vel",
+}
+_GROUP_YLABELS = {
+    "acc": r"||Acc||",
+    "gyro": r"||Gyro||",
+    "vel": r"||Vel||",
+}
 
 
 @dataclass(frozen=True)
@@ -76,9 +94,14 @@ def _load_pred_npz(pred_npz: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     if y_hat.ndim != 3 or y_true.ndim != 3 or y_hat.shape != y_true.shape:
         raise ValueError(f"Expect y_hat/y_true with identical shape (N,H,D), got {y_hat.shape} and {y_true.shape}")
-    if y_hat.shape[-1] != 9:
-        raise ValueError(f"Expect D=9 for current group_norm mode, got {y_hat.shape[-1]}")
     return y_hat, y_true, logvar
+
+
+def _group_specs(semantic_layout: SemanticOutputLayout) -> tuple[tuple[str, tuple[int, ...], str], ...]:
+    return tuple(
+        (group_key, semantic_layout.group_indices[group_key], _GROUP_YLABELS[group_key])
+        for group_key in ("acc", "gyro", "vel")
+    )
 
 
 def _build_group_norm_figure(
@@ -86,11 +109,19 @@ def _build_group_norm_figure(
     y_hat: np.ndarray,
     y_true: np.ndarray,
     dt_s: float,
+    semantic_layout: SemanticOutputLayout | None = None,
 ) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes, plt.Axes]]:
     setup_mpl()
 
     if y_hat.ndim != 2 or y_true.ndim != 2 or y_hat.shape != y_true.shape:
         raise ValueError(f"Expect sample arrays with shape (H, D), got {y_hat.shape} and {y_true.shape}")
+    if semantic_layout is None:
+        semantic_layout = canonical_semantic_output_layout(y_hat.shape[-1])
+    if y_hat.shape[-1] != len(semantic_layout.component_labels):
+        raise ValueError(
+            "Sample feature dim does not match semantic layout: "
+            f"{y_hat.shape[-1]} vs {len(semantic_layout.component_labels)}"
+        )
 
     H = y_hat.shape[0]
     t = np.arange(1, H + 1, dtype=float) * float(dt_s)
@@ -99,16 +130,12 @@ def _build_group_norm_figure(
     observed_style = get_observed_pred_styles()["observed"]
     pred_style = get_observed_pred_styles()["pred"]
     group_styles = get_group_styles()
-    group_specs = (
-        ("Acc", slice(0, 3), r"||Acc||"),
-        ("Gyro", slice(3, 6), r"||Gyro||"),
-        ("Vel", slice(6, 9), r"||Vel||"),
-    )
+    group_specs = _group_specs(semantic_layout)
 
-    for ax, (group_name, sl, ylabel) in zip(axes, group_specs):
-        obs = _norm3(y_true[:, sl])
-        pred = _norm3(y_hat[:, sl])
-        group_color = group_styles[group_name].color
+    for ax, (group_key, indices, ylabel) in zip(axes, group_specs):
+        obs = _norm3(y_true[:, list(indices)])
+        pred = _norm3(y_hat[:, list(indices)])
+        group_color = group_styles[_GROUP_DISPLAY_NAMES[group_key]].color
 
         ax.plot(
             t,
@@ -146,9 +173,15 @@ def build_pred_vs_observed_figure(
     y_hat: np.ndarray,
     y_true: np.ndarray,
     cfg: PredObservedPlotCfg,
+    semantic_layout: SemanticOutputLayout | None = None,
 ) -> Tuple[plt.Figure, Tuple[plt.Axes, ...]]:
     if cfg.mode == "group_norm":
-        return _build_group_norm_figure(y_hat=y_hat, y_true=y_true, dt_s=cfg.dt_s)
+        return _build_group_norm_figure(
+            y_hat=y_hat,
+            y_true=y_true,
+            dt_s=cfg.dt_s,
+            semantic_layout=semantic_layout,
+        )
     if cfg.mode == "component":
         raise NotImplementedError("component mode is reserved for a future patch")
     raise ValueError(f"Unknown mode: {cfg.mode}")
@@ -163,10 +196,16 @@ def plot_pred_vs_observed_from_npz(
 ) -> None:
     _ensure_dir(out_dir)
     y_hat, y_true, _ = _load_pred_npz(pred_npz)
+    semantic_layout = load_semantic_layout_from_metrics_path(pred_npz.parent / "metrics.yaml", dout=y_hat.shape[-1])
 
     nplot = min(int(n), int(y_hat.shape[0]))
     for idx in range(nplot):
-        fig, _ = build_pred_vs_observed_figure(y_hat=y_hat[idx], y_true=y_true[idx], cfg=cfg)
+        fig, _ = build_pred_vs_observed_figure(
+            y_hat=y_hat[idx],
+            y_true=y_true[idx],
+            cfg=cfg,
+            semantic_layout=semantic_layout,
+        )
         save_figure(fig, out_dir / f"pred_vs_observed_{cfg.mode}_{idx:03d}", fmt=cfg.fmt)
         plt.close(fig)
 

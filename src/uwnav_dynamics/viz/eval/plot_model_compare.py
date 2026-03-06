@@ -7,7 +7,7 @@
 
 主要功能：
 1. 第一版优先实现 horizon compare 主路径。
-2. 将 Acc / Gyro / Vel 三组误差拆成 3×1 共享 x 轴布局。
+2. 将 semantic layout 驱动的 Acc / Gyro / Vel 三组误差拆成 3×1 共享 x 轴布局。
 3. 自动根据标签或显式 role 推断视觉层级，突出 proposed / primary 方法。
 
 数据流：
@@ -28,6 +28,7 @@ plots/rmse_model_compare_horizon.png|pdf
 备注：
 - 第一版不实现 global summary 主路径，只在此处保留 TODO。
 - rollout compare 若后续接入，也应继续复用同一套 role-aware style token。
+- 若评估目录缺少 semantic layout metadata，则统一 warning 并回退到 canonical `acc/gyro/vel` 分组。
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ from typing import List, Optional, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-from uwnav_dynamics.viz.eval.plot_horizon_metrics import _group_slices, _metric_from_dir
+from uwnav_dynamics.viz.eval.plot_horizon_metrics import _metric_from_dir
 from uwnav_dynamics.viz.style.sci_style import (
     apply_axes_style,
     apply_minimal_legend,
@@ -91,22 +92,22 @@ def build_horizon_compare_figure(
     order = {"primary": 0, "ablation": 1, "baseline": 2}
     zipped = sorted(zip(eval_dirs, labels, resolved_roles), key=lambda item: order[item[2]])
 
-    hd0, _ = _metric_from_dir(Path(zipped[0][0]), cfg.metric)
+    hd0, _, semantic_layout0 = _metric_from_dir(Path(zipped[0][0]), cfg.metric)
     H = hd0.shape[0]
     x_steps = np.arange(1, H + 1)
     x = x_steps * cfg.dt_s if cfg.use_seconds else x_steps
 
     fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("compare_3row"))
     group_specs = (
-        ("Acc", slice(0, 3), f"Acc {cfg.metric.upper()}"),
-        ("Gyro", slice(3, 6), f"Gyro {cfg.metric.upper()}"),
-        ("Vel", slice(6, 9), f"Vel {cfg.metric.upper()}"),
+        ("acc", f"Acc {cfg.metric.upper()}"),
+        ("gyro", f"Gyro {cfg.metric.upper()}"),
+        ("vel", f"Vel {cfg.metric.upper()}"),
     )
 
-    for group_ax, (_, sl, ylabel) in zip(axes, group_specs):
+    for group_ax, (group_key, ylabel) in zip(axes, group_specs):
         for eval_dir, label, role in zipped:
-            hd, _ = _metric_from_dir(Path(eval_dir), cfg.metric)
-            curve = hd[:, sl].mean(axis=1)
+            hd, _, semantic_layout = _metric_from_dir(Path(eval_dir), cfg.metric)
+            curve = hd[:, list(semantic_layout.group_indices[group_key])].mean(axis=1)
             sty = get_model_role_style(role)
             group_ax.plot(
                 x,

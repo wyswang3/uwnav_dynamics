@@ -17,7 +17,7 @@
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
 | `src/uwnav_dynamics/cli/eval.py` | 正式评估 CLI 入口，自动选择 checkpoint，并按需编排“数值评估 -> viz 出图”。 | 输入：train YAML、可选 ckpt/split/device/plot 参数；输出：评估目录与可选 `plots/*`。 |
-| `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计指标并落盘 artifact。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`、`rmse_by_horizon.csv`、`mae_by_horizon.csv`、`pred_samples.npz`。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计指标并落盘 artifact。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`（含 layout metadata）、`rmse_by_horizon.csv`、`mae_by_horizon.csv`、`pred_samples.npz`。 |
 
 ## 3) 数据预处理入口（pipeline / align / build_dataset）
 
@@ -40,7 +40,9 @@
 | `src/uwnav_dynamics/models/blocks/hydro_ssm_cell.py` | Hydro-SSM 稳定递推隐状态模块，建模流体记忆效应。 | 输入：`u_eff_seq` 与 `y_seq`；输出：`h_seq`、`h_last`。 |
 | `src/uwnav_dynamics/models/blocks/damping_head.py` | 阻尼先验输出头，生成速度维的显式耗散增量。 | 输入：`y_last:(B,9)`；输出：`dY_damp:(B,H,9)`。 |
 | `src/uwnav_dynamics/models/blocks/uncertainty_head.py` | 异方差不确定度头，输出对角 log-variance。 | 输入：`feat:(B,feat_dim)`；输出：`logvar:(B,H,9)`。 |
-| `src/uwnav_dynamics/models/utils/rollout.py` | rollout 工具函数（从 `dY` 累加得到未来状态序列）。 | 输入：`y0`、`dY` 或 `x_last`；输出：`y_hat`。 |
+| `src/uwnav_dynamics/models/utils/execution_layout.py` | rollout 执行布局 helper，校验 `y_in_idx` 并从 `X` 提取 `y0`。 | 输入：`cfg_model.y_in_idx`、`X:(B,L,Din)`；输出：执行层索引 metadata 与 `y0:(B,Dout)`。 |
+| `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | 输出语义布局 helper，统一组件标签、`acc/gyro/vel` 分组与 legacy fallback。 | 输入：`metrics.yaml` 或 `target_cols`；输出：semantic layout metadata。 |
+| `src/uwnav_dynamics/models/utils/rollout.py` | rollout 工具函数（从 `dY` 累加得到未来状态序列）。 | 输入：`y0` 与 `dY`；输出：`y_hat`。 |
 | `src/uwnav_dynamics/models/losses/nll.py` | 对角高斯 NLL 损失定义。 | 输入：`y_hat/y_true/logvar`（同形状）；输出：标量 loss。 |
 | `src/uwnav_dynamics/models/blocks/__init__.py` | blocks 统一导出入口。 | 输入：无；输出：模块类与配置类命名空间。 |
 
@@ -63,7 +65,7 @@
 | `src/uwnav_dynamics/train/config.py` | 严格 schema 的 train YAML 解析器，构建 `TrainYamlConfig` 与各 block 配置。 | 输入：train YAML；输出：`run/data/model/rollout/loss/train` dataclass 配置对象。 |
 | `src/uwnav_dynamics/io/dataset_spec.py` | dataset YAML 强类型解析与数据路径解析中枢。 | 输入：`configs/dataset/*.yaml`；输出：`DatasetSpec`、各传感器绝对路径与 kwargs。 |
 | `src/uwnav_dynamics/preprocess/build_dataset.py` | 解析 dataset-building YAML 并映射为 `DatasetConfig`。 | 输入：`*_s1.yaml`；输出：滑窗配置与输出目录配置。 |
-| `src/uwnav_dynamics/eval/evaluate.py` | 定义 `EvalConfig` 并解析 train YAML 中 data/model/rollout/run 字段。 | 输入：train YAML；输出：评估配置与评估工件。 |
+| `src/uwnav_dynamics/eval/config.py` | 定义 `EvalConfig` 并复用 train YAML 的 canonical parser 结果。 | 输入：train YAML；输出：数值评估运行时配置与共享模型配置。 |
 | `src/uwnav_dynamics/preprocess/align/cli_align.py` | 解析 align YAML 并构造 `AlignConfig`。 | 输入：align YAML；输出：对齐调用参数。 |
 | `src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py` | 读取评估输出中的 `metrics.yaml` 与 horizon CSV 后生成图。 | 输入：`metrics.yaml` + `rmse/mae_by_horizon.csv`；输出：horizon 曲线图。 |
 | `src/uwnav_dynamics/cli/utils.py` | 提供通用 YAML 读取与 ckpt 解析工具。 | 输入：train YAML 或 run_dir；输出：`out_dir/variant`、ckpt 路径。 |
@@ -73,8 +75,10 @@
 
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
-| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：metrics/csv/npz。 |
-| `src/uwnav_dynamics/models/utils/rollout.py` | rollout 辅助函数集合。 | 输入：`dY` 与初值；输出：未来状态序列。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：metrics/csv/npz 与 layout metadata。 |
+| `src/uwnav_dynamics/models/utils/execution_layout.py` | rollout 执行索引 helper。 | 输入：`cfg_model.y_in_idx` 与 `X`；输出：`y0`。 |
+| `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | rollout 输出语义 helper。 | 输入：`metrics.yaml` 或 `target_cols`；输出：分组解释与 fallback 结果。 |
+| `src/uwnav_dynamics/models/utils/rollout.py` | rollout 纯数值辅助函数集合。 | 输入：`dY` 与初值；输出：未来状态序列。 |
 | `src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py` | 画 RMSE/MAE 随预测步长变化曲线。 | 输入：评估目录；输出：`rmse_horizon_*.png/pdf`、`mae_horizon_*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_rollout_samples.py` | 画 rollout 样例时域对比图。 | 输入：`pred_samples.npz`；输出：`rollout_sample_*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/plots/imu_plot.py` | 原始/预处理 IMU 绘图模块。 | 输入：`ImuFrame` 或 `*_proc.csv`；输出：`imu_raw_9axis.png`、`imu_dt.png`、`imu_proc_3rows.png`。 |

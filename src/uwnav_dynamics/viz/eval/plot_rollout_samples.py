@@ -7,7 +7,7 @@
 
 主要功能：
 1. 读取 `pred_samples.npz` 中的 `y_hat / y_true / logvar`。
-2. 默认将 9 维输出按 Acc / Gyro / Vel 分组，并在每个组内取三轴范数。
+2. 优先根据 `metrics.yaml.layout.semantic` 分组，并在每个组内取范数。
 3. 以 3×1 共享 x 轴布局输出 `rollout_sample_*.png|pdf`。
 
 数据流：
@@ -27,6 +27,7 @@ plots/rollout_sample_000.png|pdf
 备注：
 - 当前图中的 “observed/true” 来自评估监督目标 `y_true`，不等同于未经处理的原始传感器输出。
 - `logvar` 当前只保留供未来不确定度带扩展，不改变本次最小 patch 的默认显示。
+- 若旧 artifact 缺少 layout metadata，则统一 warning 并回退到 canonical `acc/gyro/vel` 分组。
 """
 
 from __future__ import annotations
@@ -38,6 +39,11 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
+from uwnav_dynamics.models.utils.semantic_output_layout import (
+    SemanticOutputLayout,
+    canonical_semantic_output_layout,
+    load_semantic_layout_from_metrics_path,
+)
 from uwnav_dynamics.viz.style.sci_style import (
     apply_axes_style,
     apply_minimal_legend,
@@ -48,6 +54,18 @@ from uwnav_dynamics.viz.style.sci_style import (
     save_figure,
     setup_mpl,
 )
+
+
+_GROUP_DISPLAY_NAMES = {
+    "acc": "Acc",
+    "gyro": "Gyro",
+    "vel": "Vel",
+}
+_GROUP_YLABELS = {
+    "acc": r"||Acc||",
+    "gyro": r"||Gyro||",
+    "vel": r"||Vel||",
+}
 
 
 def _ensure_dir(p: Path) -> None:
@@ -70,9 +88,14 @@ def _load_pred_npz(pred_npz: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         raise ValueError(f"Expect y_hat/y_true to be 3D, got {y_hat.shape}, {y_true.shape}")
     if y_hat.shape != y_true.shape:
         raise ValueError(f"Shape mismatch: y_hat={y_hat.shape}, y_true={y_true.shape}")
-    if y_hat.shape[-1] != 9:
-        raise ValueError(f"Expect last dim = 9 (Acc3+Gyro3+Vel3), got {y_hat.shape[-1]}")
     return y_hat, y_true, logvar
+
+
+def _group_specs(semantic_layout: SemanticOutputLayout) -> tuple[tuple[str, tuple[int, ...], str], ...]:
+    return tuple(
+        (group_key, semantic_layout.group_indices[group_key], _GROUP_YLABELS[group_key])
+        for group_key in ("acc", "gyro", "vel")
+    )
 
 
 def build_rollout_sample_figure(
@@ -80,11 +103,19 @@ def build_rollout_sample_figure(
     y_hat: np.ndarray,
     y_true: np.ndarray,
     dt_s: float,
+    semantic_layout: SemanticOutputLayout | None = None,
 ) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes, plt.Axes]]:
     setup_mpl()
 
     if y_hat.ndim != 2 or y_true.ndim != 2 or y_hat.shape != y_true.shape:
         raise ValueError(f"Expect sample arrays with shape (H, 9), got {y_hat.shape} and {y_true.shape}")
+    if semantic_layout is None:
+        semantic_layout = canonical_semantic_output_layout(y_hat.shape[-1])
+    if y_hat.shape[-1] != len(semantic_layout.component_labels):
+        raise ValueError(
+            "Sample feature dim does not match semantic layout: "
+            f"{y_hat.shape[-1]} vs {len(semantic_layout.component_labels)}"
+        )
 
     H = y_hat.shape[0]
     t = np.arange(1, H + 1, dtype=float) * float(dt_s)
@@ -93,16 +124,12 @@ def build_rollout_sample_figure(
     group_styles = get_group_styles()
 
     fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("rollout_3row"))
-    group_specs = (
-        ("Acc", slice(0, 3), r"||Acc||"),
-        ("Gyro", slice(3, 6), r"||Gyro||"),
-        ("Vel", slice(6, 9), r"||Vel||"),
-    )
+    group_specs = _group_specs(semantic_layout)
 
-    for ax, (group_name, sl, ylabel) in zip(axes, group_specs):
-        obs = _norm3(y_true[:, sl])
-        pred = _norm3(y_hat[:, sl])
-        group_color = group_styles[group_name].color
+    for ax, (group_key, indices, ylabel) in zip(axes, group_specs):
+        obs = _norm3(y_true[:, list(indices)])
+        pred = _norm3(y_hat[:, list(indices)])
+        group_color = group_styles[_GROUP_DISPLAY_NAMES[group_key]].color
 
         ax.plot(
             t,
@@ -146,11 +173,17 @@ def plot_rollout_samples_from_npz(
     _ensure_dir(out_dir)
 
     y_hat, y_true, _ = _load_pred_npz(pred_npz)
+    semantic_layout = load_semantic_layout_from_metrics_path(pred_npz.parent / "metrics.yaml", dout=y_hat.shape[-1])
     N = y_hat.shape[0]
     nplot = min(int(n), int(N))
 
     for i in range(nplot):
-        fig, _ = build_rollout_sample_figure(y_hat=y_hat[i], y_true=y_true[i], dt_s=dt_s)
+        fig, _ = build_rollout_sample_figure(
+            y_hat=y_hat[i],
+            y_true=y_true[i],
+            dt_s=dt_s,
+            semantic_layout=semantic_layout,
+        )
         save_figure(fig, out_dir / f"rollout_sample_{i:03d}", fmt=fmt)
         plt.close(fig)
 

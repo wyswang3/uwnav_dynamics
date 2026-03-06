@@ -1,24 +1,32 @@
+"""
+模块名称：rollout 数值辅助
+
+模块职责：
+提供 rollout 的纯数值运算，
+将 `y0` 与增量序列 `dY` 组合成未来状态预测 `y_hat`。
+
+主要功能：
+1. 执行 `y_hat = y0 + cumsum(dY)`。
+2. 保持 train / eval 共用的 rollout 数学实现。
+
+数据流：
+execution layout helper 提供 `y0`
+    ↓
+`rollout_from_delta(y0, dY)`
+    ↓
+future state sequence `y_hat`
+
+依赖模块：
+- torch
+
+备注：
+- 本模块不再负责从 `X` 中提取 `y0`。
+- 执行索引解释统一由 `execution_layout.py` 管理。
+"""
+
 from __future__ import annotations
 
 import torch
-
-
-def extract_y0_from_x_last(x: torch.Tensor) -> torch.Tensor:
-    """
-    X columns (by your YAML order):
-      0..7   : ch1..ch8
-      8..10  : Acc (3)
-      11..13 : Gyro (3)
-      14..16 : Vel_state (3)
-      17..24 : Power (8)
-
-    y0 = [Acc(3), Gyro(3), Vel(3)] => 9 dims
-    """
-    # (B, Din) take last timestep
-    xl = x[:, -1, :]  # (B,25)
-    idx = torch.tensor([8, 9, 10, 11, 12, 13, 14, 15, 16], device=x.device)
-    y0 = xl.index_select(dim=1, index=idx)
-    return y0
 
 
 def rollout_from_delta(y0: torch.Tensor, dY: torch.Tensor) -> torch.Tensor:

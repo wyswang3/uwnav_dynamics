@@ -1,3 +1,37 @@
+"""
+模块名称：S1 预测器
+
+模块职责：
+定义当前主模型 `S1Predictor`，
+将 LSTM backbone 与可选物理先验 blocks 组合为统一的多步增量预测器。
+
+主要功能：
+1. 根据 canonical `S1PredictorConfig` 构建 encoder、head 与可选 blocks。
+2. 使用 `u_in_idx / y_in_idx` 从输入特征中切出控制量与状态量。
+3. 在模型构造阶段校验 execution layout contract，并检查 damping 配置与输出语义的一致性。
+
+数据流：
+TrainYamlConfig.model
+    ↓
+S1PredictorConfig
+    ↓
+slice u / y from X
+    ↓
+encoder + optional blocks
+    ↓
+dY / logvar
+
+依赖模块：
+- torch
+- uwnav_dynamics.models.blocks.*
+- uwnav_dynamics.models.utils.execution_layout
+- uwnav_dynamics.models.utils.semantic_output_layout
+
+备注：
+- `cfg_model.y_in_idx` 只负责执行层索引解释。
+- 输出 9 维的物理语义分组由 semantic output layout contract 单独管理。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 from __future__ import annotations
 
@@ -17,6 +51,8 @@ from uwnav_dynamics.models.blocks import (
     UncertaintyHead,
     UncertaintyHeadConfig,
 )
+from uwnav_dynamics.models.utils.execution_layout import validate_execution_layout, validate_feature_indices
+from uwnav_dynamics.models.utils.semantic_output_layout import canonical_semantic_output_layout
 
 
 # =============================================================================
@@ -106,6 +142,9 @@ class S1Predictor(nn.Module):
     def __init__(self, cfg: S1PredictorConfig):
         super().__init__()
         self.cfg = cfg
+        validate_feature_indices(cfg.u_in_idx, upper_bound=cfg.din, name="model.u_in_idx")
+        validate_execution_layout(cfg.y_in_idx, din=cfg.din, dout=cfg.dout)
+        semantic_layout = canonical_semantic_output_layout(cfg.dout)
 
         # ---------------------------
         # Index buffers (avoid per-forward tensor creation)
@@ -145,6 +184,15 @@ class S1Predictor(nn.Module):
 
         # DampingHead：同样用 replace 补齐 pred_len / y_dim
         damp_cfg = replace(cfg.blocks.damping, pred_len=cfg.pred_len, y_dim=cfg.dout)
+        vel_indices = semantic_layout.group_indices["vel"]
+        if damp_cfg.enabled and (
+            damp_cfg.v_dim != len(vel_indices) or tuple(range(damp_cfg.v_start, damp_cfg.v_start + damp_cfg.v_dim)) != vel_indices
+        ):
+            raise ValueError(
+                "DampingHeadConfig must match semantic velocity group indices: "
+                f"expect start={vel_indices[0]}, dim={len(vel_indices)}, "
+                f"got start={damp_cfg.v_start}, dim={damp_cfg.v_dim}"
+            )
         self.damping = DampingHead(damp_cfg)
 
         # UncertaintyHead：同样补齐 pred_len / y_dim

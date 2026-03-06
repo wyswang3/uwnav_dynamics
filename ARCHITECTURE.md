@@ -127,7 +127,20 @@ y_hat = y0 + cumsum(dY)
 注意：
 
 - 当前实现已明确 train / eval 必须共享同一配置契约
-- rollout 的 `y0` 与 `y_in_idx` 契约仍需在 PR4 中继续收口
+- PR4 后 rollout layout 已明确分成两层：
+  - execution layout contract：唯一执行真源是 `cfg_model.y_in_idx`
+  - semantic output layout contract：`Acc / Gyro / Vel` 组件标签与分组语义
+
+当前系统级数据流为：
+
+```text
+train yaml
+-> cfg_model.y_in_idx
+-> execution_layout helper
+-> train rollout / eval rollout
+-> metrics.yaml.layout.semantic
+-> viz grouping / plotting
+```
 
 ## 8. 配置契约
 
@@ -167,10 +180,10 @@ run_dir = run.out_dir / run.variant
 - `PR1`：配置契约收口与实验追溯增强
 - `PR2`：split / scaler 单一真源
 - `PR3`：eval-viz 解耦
+- `PR4`：execution / semantic layout contract 收口
 
 待推进：
 
-- `PR4`：rollout 索引契约
 - `PR5`：mask-aware 训练评估
 
 ## 11. 当前限制
@@ -178,10 +191,13 @@ run_dir = run.out_dir / run.variant
 当前工程仍存在以下限制：
 
 - DVL 稀疏监督尚未在 loss / metric 层完整 mask-aware 化
-- rollout 索引契约尚未彻底去硬编码
 - eval 与 viz 的最终职责边界仍需继续收敛
 - 理论文档与工程实现仍需持续保持一致
 - 未来控制接口仍停留在模型输出可接入阶段，尚未落正式 MPC 实现
+
+已解决的相关限制：
+
+- train / eval / viz 对状态布局的解释已统一，不再由多处 rollout 硬编码副本分别维护
 
 ## 12. 阅读建议
 

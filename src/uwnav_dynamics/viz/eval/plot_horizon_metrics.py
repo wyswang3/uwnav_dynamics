@@ -7,7 +7,7 @@
 
 主要功能：
 1. 读取 `metrics.yaml` 与 horizon CSV artifact。
-2. 将 9 维输出按 Acc / Gyro / Vel 进行分组聚合并绘图。
+2. 优先根据 `metrics.yaml.layout.semantic` 对输出分组聚合并绘图。
 3. 支持单评估目录出图与多评估目录对比出图。
 
 数据流：
@@ -26,7 +26,8 @@ plots/rmse_horizon_*.png|pdf / mae_horizon_*.png|pdf
 - uwnav_dynamics.viz.style.sci_style
 
 备注：
-- 当前默认消费 PR3 保持稳定的 horizon CSV artifact。
+- 当前默认消费 PR3 保持稳定的 horizon CSV artifact，
+  并在旧 artifact 缺少 layout metadata 时统一 fallback 到 canonical `acc/gyro/vel` 分组。
 - 若未来 PR5 引入 mask-aware 指标，应通过新增可选 artifact / loader 扩展，
   而不是替换现有 CSV 契约。
 """
@@ -42,6 +43,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import yaml
 
+from uwnav_dynamics.models.utils.semantic_output_layout import (
+    SemanticOutputLayout,
+    load_semantic_layout_from_metrics_dict,
+)
 from uwnav_dynamics.viz.style.sci_style import (
     apply_axes_style,
     apply_minimal_legend,
@@ -52,6 +57,13 @@ from uwnav_dynamics.viz.style.sci_style import (
     save_figure,
     setup_mpl,
 )
+
+
+_GROUP_DISPLAY_NAMES = {
+    "acc": "Acc",
+    "gyro": "Gyro",
+    "vel": "Vel",
+}
 
 
 # -----------------------------
@@ -93,14 +105,7 @@ class HorizonPlotCfg:
     fmt: str = "png"       # "png" | "pdf" | "both"
 
 
-def _group_slices(dout: int = 9) -> Dict[str, slice]:
-    # S1 约定：0:3 acc, 3:6 gyro, 6:9 vel
-    if dout != 9:
-        raise ValueError("This plot assumes dout=9")
-    return {"Acc": slice(0, 3), "Gyro": slice(3, 6), "Vel": slice(6, 9)}
-
-
-def _metric_from_dir(eval_dir: Path, metric: str) -> Tuple[np.ndarray, Dict[str, Any]]:
+def _metric_from_dir(eval_dir: Path, metric: str) -> Tuple[np.ndarray, Dict[str, Any], SemanticOutputLayout]:
     """
     返回：
       hd: (H,D) 指标矩阵
@@ -115,7 +120,15 @@ def _metric_from_dir(eval_dir: Path, metric: str) -> Tuple[np.ndarray, Dict[str,
         hd = _load_csv_hd(eval_dir / "mae_by_horizon.csv")
     else:
         raise ValueError(metric)
-    return hd, meta
+    semantic_layout = load_semantic_layout_from_metrics_dict(meta, dout=hd.shape[1])
+    return hd, meta, semantic_layout
+
+
+def _group_curves(hd: np.ndarray, semantic_layout: SemanticOutputLayout) -> Dict[str, np.ndarray]:
+    curves: Dict[str, np.ndarray] = {}
+    for key, indices in semantic_layout.group_indices.items():
+        curves[key] = hd[:, list(indices)].mean(axis=1)
+    return curves
 
 
 def build_groups_vs_horizon_figure(
@@ -125,27 +138,25 @@ def build_groups_vs_horizon_figure(
 ) -> Tuple[plt.Figure, plt.Axes]:
     setup_mpl()
 
-    hd0, _ = _metric_from_dir(eval_dirs[0], cfg.metric)
+    hd0, _, semantic_layout0 = _metric_from_dir(eval_dirs[0], cfg.metric)
     H = hd0.shape[0]
     x_steps = np.arange(1, H + 1)
     x = x_steps * cfg.dt_s if cfg.use_seconds else x_steps
-    groups = _group_slices(9)
     fig, ax = plt.subplots(1, 1, figsize=get_figure_size("single"))
 
     group_styles = get_group_styles()
     for eval_dir, lab in zip(eval_dirs, labels):
-        hd, _ = _metric_from_dir(eval_dir, cfg.metric)
-        y_acc = hd[:, groups["Acc"]].mean(axis=1)
-        y_gyro = hd[:, groups["Gyro"]].mean(axis=1)
-        y_vel = hd[:, groups["Vel"]].mean(axis=1)
+        hd, _, semantic_layout = _metric_from_dir(eval_dir, cfg.metric)
+        curves = _group_curves(hd, semantic_layout)
 
         if len(eval_dirs) == 1:
-            for key, curve in (("Acc", y_acc), ("Gyro", y_gyro), ("Vel", y_vel)):
-                sty = group_styles[key]
+            for key in semantic_layout0.group_indices:
+                display_name = _GROUP_DISPLAY_NAMES[key]
+                sty = group_styles[display_name]
                 ax.plot(
                     x,
-                    curve,
-                    label=key,
+                    curves[key],
+                    label=display_name,
                     color=sty.color,
                     linestyle=sty.linestyle,
                     linewidth=sty.linewidth,
@@ -157,7 +168,7 @@ def build_groups_vs_horizon_figure(
             sty = get_model_role_style(role)
             ax.plot(
                 x,
-                y_vel,
+                curves["vel"],
                 label=lab,
                 color=sty.color,
                 linestyle=sty.linestyle,

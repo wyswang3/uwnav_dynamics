@@ -55,6 +55,60 @@
 这些 `plots/*` 属于 CLI / viz orchestration 触发的后处理产物，
 而不是数值评估配置契约的一部分。
 
+## 4.1 rollout layout metadata
+
+PR4 后，`metrics.yaml` 额外记录最小 layout metadata，
+用于统一 train / eval / viz 对状态布局的解释。
+
+推荐最小结构如下：
+
+```yaml
+layout:
+  schema_version: state_layout_v1
+  execution:
+    source: cfg_model.y_in_idx
+    y_in_idx: [8, 9, 10, 11, 12, 13, 14, 15, 16]
+  semantic:
+    source: canonical_acc_gyro_vel_v1
+    component_labels: [acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, vel_x, vel_y, vel_z]
+    group_indices:
+      acc: [0, 1, 2]
+      gyro: [3, 4, 5]
+      vel: [6, 7, 8]
+    validated_against_target_cols: true
+```
+
+这里必须明确区分两层语义：
+
+- `layout.execution`
+  - 只记录 rollout 执行真源
+  - 不供 viz 做物理语义分组
+- `layout.semantic`
+  - 只记录输出组件标签与 group 解释
+  - 供指标聚合与 viz 读盘使用
+
+`pred_samples.npz` 的 schema 在 PR4 中保持不变，
+仍只包含：
+
+- `y_hat`
+- `y_true`
+- `logvar`
+
+## 4.2 legacy artifact fallback
+
+对于 PR4 之前生成、缺少 `layout.semantic` 的旧评估产物，
+viz 层采用统一 fallback 规则：
+
+- 显式给出 warning
+- 回退到 canonical `acc / gyro / vel` 分组
+- 不修改旧 artifact 文件名与 `pred_samples.npz` schema
+
+当前 canonical fallback 为：
+
+- `acc = [0, 1, 2]`
+- `gyro = [3, 4, 5]`
+- `vel = [6, 7, 8]`
+
 ## 5. 实验记录
 
 一次实验最少应保存以下信息：

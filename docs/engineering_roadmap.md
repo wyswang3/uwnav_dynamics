@@ -44,22 +44,40 @@
 
 ## 3. PR4：rollout 索引契约
 
+### 状态
+
+- 已完成，收口日期：2026-03-06
+
 ### 目标
 
 - 去除 rollout 相关硬编码索引
-- 统一 train / eval 对 `y0` 与 `y_in_idx` 的解释
+- 统一 train / eval / viz 对状态布局的解释
 
 ### 影响模块
 
 - `src/uwnav_dynamics/models/utils/rollout.py`
+- `src/uwnav_dynamics/models/utils/execution_layout.py`
+- `src/uwnav_dynamics/models/utils/semantic_output_layout.py`
 - `src/uwnav_dynamics/train/run_train.py`
 - `src/uwnav_dynamics/eval/evaluate.py`
+- `src/uwnav_dynamics/viz/eval/*`
 
 ### 验收标准
 
-- rollout 只依赖显式配置索引
+- rollout 执行路径只依赖 `cfg_model.y_in_idx`
 - 非默认列顺序测试通过
 - train / eval 对相同权重和输入给出一致 rollout 结果
+- `metrics.yaml` 写出最小 layout metadata
+- 旧 artifact 缺少 layout metadata 时，viz 统一 warning + fallback
+
+### 已完成内容
+
+- 新增 execution layout helper，统一 `y0` 提取与索引合法性校验
+- 新增 semantic output layout helper，统一组件标签、group 语义与 legacy fallback
+- 训练 loss path 改为使用 `cfg_model.y_in_idx` 提取 `y0`
+- `evaluate.py` 改为写出 `metrics.yaml.layout.execution / semantic`
+- horizon / rollout / pred-vs-observed / model-compare 四条 viz 路径统一消费 `layout.semantic`
+- `pred_samples.npz` schema 保持不变
 
 ## 4. PR3：eval-viz 解耦（已完成）
 

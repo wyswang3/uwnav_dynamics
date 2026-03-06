@@ -28,11 +28,18 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 import yaml
 
+from uwnav_dynamics.models.utils.semantic_output_layout import (
+    SEMANTIC_LAYOUT_SCHEMA_VERSION,
+    build_semantic_layout_metadata,
+    canonical_semantic_output_layout,
+)
 from uwnav_dynamics.viz.eval.plot_horizon_metrics import HorizonPlotCfg, build_groups_vs_horizon_figure, plot_groups_vs_horizon
 from uwnav_dynamics.viz.eval.plot_model_compare import ModelCompareCfg, build_horizon_compare_figure, plot_horizon_compare
 from uwnav_dynamics.viz.eval.plot_pred_vs_observed import PredObservedPlotCfg, build_pred_vs_observed_figure, plot_pred_vs_observed_from_npz
+from uwnav_dynamics.viz.eval.plot_rollout_samples import plot_rollout_samples_from_npz
 
 
 def _write_metric_csv(path: Path, data: np.ndarray) -> None:
@@ -43,11 +50,30 @@ def _write_metric_csv(path: Path, data: np.ndarray) -> None:
     path.write_text("\n".join(rows), encoding="utf-8")
 
 
-def _make_eval_dir(root: Path, name: str, scale: float) -> Path:
+def _layout_meta(group_indices: dict[str, list[int]] | None = None) -> dict:
+    semantic = canonical_semantic_output_layout(9)
+    if group_indices is not None:
+        semantic = type(semantic)(
+            source=semantic.source,
+            component_labels=semantic.component_labels,
+            group_indices={key: tuple(indices) for key, indices in group_indices.items()},
+            validated_against_target_cols=semantic.validated_against_target_cols,
+        )
+    return {
+        "schema_version": SEMANTIC_LAYOUT_SCHEMA_VERSION,
+        "execution": {"source": "cfg_model.y_in_idx", "y_in_idx": list(range(8, 17))},
+        "semantic": build_semantic_layout_metadata(semantic),
+    }
+
+
+def _make_eval_dir(root: Path, name: str, scale: float, *, include_layout: bool = True, layout_meta: dict | None = None) -> Path:
     eval_dir = root / name
     eval_dir.mkdir(parents=True, exist_ok=True)
+    meta = {"name": name}
+    if include_layout:
+        meta["layout"] = _layout_meta() if layout_meta is None else layout_meta
     with (eval_dir / "metrics.yaml").open("w", encoding="utf-8") as f:
-        yaml.safe_dump({"name": name}, f, sort_keys=False)
+        yaml.safe_dump(meta, f, sort_keys=False)
 
     base = np.linspace(0.1, 0.5, 5, dtype=float).reshape(5, 1)
     dims = np.arange(1, 10, dtype=float).reshape(1, 9)
@@ -119,3 +145,46 @@ def test_horizon_groups_plot_keeps_no_title_contract(tmp_path):
 
     plot_groups_vs_horizon(eval_dirs=[eval_dir], labels=["single"], out_dir=tmp_path / "plots", cfg=cfg)
     assert (tmp_path / "plots" / "mae_horizon_groups.png").exists()
+
+
+def test_horizon_groups_plot_prefers_layout_metadata_over_canonical_slices(tmp_path):
+    eval_dir = _make_eval_dir(
+        tmp_path,
+        "layout_eval",
+        scale=1.0,
+        layout_meta=_layout_meta(
+            {
+                "acc": [6, 7, 8],
+                "gyro": [3, 4, 5],
+                "vel": [0, 1, 2],
+            }
+        ),
+    )
+    cfg = HorizonPlotCfg(dt_s=0.01, use_seconds=True, metric="rmse", out_name="rmse_horizon_groups", fmt="png")
+
+    fig, ax = build_groups_vs_horizon_figure(eval_dirs=[eval_dir], labels=["single"], cfg=cfg)
+
+    rmse = np.loadtxt(eval_dir / "rmse_by_horizon.csv", delimiter=",", skiprows=1)[:, 1:]
+    acc_line = next(line for line in ax.lines if line.get_label() == "Acc")
+    vel_line = next(line for line in ax.lines if line.get_label() == "Vel")
+    assert np.allclose(acc_line.get_ydata(), rmse[:, 6:9].mean(axis=1))
+    assert np.allclose(vel_line.get_ydata(), rmse[:, 0:3].mean(axis=1))
+
+
+def test_pred_vs_observed_falls_back_with_warning_when_layout_metadata_is_missing(tmp_path):
+    eval_dir = _make_eval_dir(tmp_path, "legacy_eval", scale=1.0, include_layout=False)
+    cfg = PredObservedPlotCfg(dt_s=0.02, mode="group_norm", fmt="png")
+
+    with pytest.warns(UserWarning, match="missing layout\\.semantic metadata"):
+        plot_pred_vs_observed_from_npz(eval_dir / "pred_samples.npz", eval_dir / "plots", n=1, cfg=cfg)
+
+    assert (eval_dir / "plots" / "pred_vs_observed_group_norm_000.png").exists()
+
+
+def test_rollout_samples_fall_back_with_warning_when_layout_metadata_is_missing(tmp_path):
+    eval_dir = _make_eval_dir(tmp_path, "legacy_rollout_eval", scale=1.0, include_layout=False)
+
+    with pytest.warns(UserWarning, match="missing layout\\.semantic metadata"):
+        plot_rollout_samples_from_npz(eval_dir / "pred_samples.npz", eval_dir / "plots", n=1, dt_s=0.02, fmt="png")
+
+    assert (eval_dir / "plots" / "rollout_sample_000.png").exists()

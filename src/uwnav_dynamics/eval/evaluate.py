@@ -8,7 +8,7 @@
 主要功能：
 1. 复用训练阶段的 split / scaler artifact，执行确定性的离线评估。
 2. 计算全局与 horizon 级 RMSE / MAE 指标并写出 metrics 与 CSV。
-3. 导出供 viz 层复用的 `pred_samples.npz`，但不直接执行绘图。
+3. 导出供 viz 层复用的 `pred_samples.npz`，并在 `metrics.yaml` 中写入最小 layout metadata。
 
 数据流：
 train yaml + checkpoint + run_dir artifacts
@@ -19,7 +19,7 @@ EvalConfig / S1PredictorConfig
     ↓
 model rollout + metric aggregation
     ↓
-metrics.yaml + rmse_by_horizon.csv + mae_by_horizon.csv + pred_samples.npz
+metrics.yaml(layout.execution + layout.semantic) + rmse_by_horizon.csv + mae_by_horizon.csv + pred_samples.npz
     ↓
 cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 
@@ -41,7 +41,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
-from typing import Any, Dict, Tuple, List
+from typing import Any, Dict, Tuple, List, Sequence
 
 import numpy as np
 import torch
@@ -51,6 +51,18 @@ from uwnav_dynamics.dataset.normalize import load_scaler, transform
 from uwnav_dynamics.dataset.split import load_split_indices
 from uwnav_dynamics.eval.config import EvalConfig, build_eval_config
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor, S1PredictorConfig
+from uwnav_dynamics.models.utils.execution_layout import (
+    build_execution_layout_metadata,
+    extract_y0_from_x_last,
+)
+from uwnav_dynamics.models.utils.rollout import rollout_from_delta
+from uwnav_dynamics.models.utils.semantic_output_layout import (
+    SEMANTIC_LAYOUT_SCHEMA_VERSION,
+    SemanticOutputLayout,
+    build_semantic_layout_metadata,
+    canonical_semantic_output_layout,
+    validate_target_cols_against_semantic_layout,
+)
 
 
 def _ensure_dir(p: Path) -> None:
@@ -70,27 +82,6 @@ def _load_checkpoint(ckpt_path: Path, device: torch.device) -> Dict[str, Any]:
 
 
 # =============================================================================
-# Rollout
-# =============================================================================
-
-def rollout_delta_cumsum(
-    *,
-    x: torch.Tensor,
-    dY: torch.Tensor,
-    cfg_model: S1PredictorConfig,
-    y0_source: str,
-) -> torch.Tensor:
-    if y0_source != "x_last_state":
-        raise NotImplementedError(f"Only y0_source='x_last_state' supported, got {y0_source!r}")
-
-    idx = torch.as_tensor(list(cfg_model.y_in_idx), device=x.device, dtype=torch.long)
-    y0 = x[:, -1, :].index_select(dim=-1, index=idx)  # (B,9)
-    y0 = y0.unsqueeze(1)  # (B,1,9)
-    y_hat = y0 + torch.cumsum(dY, dim=1)  # (B,H,9)
-    return y_hat
-
-
-# =============================================================================
 # Metrics
 # =============================================================================
 
@@ -102,16 +93,10 @@ def _rmse_mae_by_horizon(y_hat: torch.Tensor, y_true: torch.Tensor) -> Tuple[np.
     return rmse.detach().cpu().numpy(), mae.detach().cpu().numpy()
 
 
-def _group_indices(dout: int) -> Dict[str, slice]:
-    if dout != 9:
-        raise ValueError("Current grouping assumes dout=9")
-    return {"acc": slice(0, 3), "gyro": slice(3, 6), "vel": slice(6, 9)}
-
-
-def _aggregate_group_curve(metric_hd: np.ndarray, groups: Dict[str, slice]) -> Dict[str, List[float]]:
+def _aggregate_group_curve(metric_hd: np.ndarray, groups: Dict[str, Sequence[int]]) -> Dict[str, List[float]]:
     out: Dict[str, List[float]] = {}
-    for k, sl in groups.items():
-        out[k] = metric_hd[:, sl].mean(axis=1).tolist()
+    for key, indices in groups.items():
+        out[key] = metric_hd[:, list(indices)].mean(axis=1).tolist()
     return out
 
 
@@ -123,6 +108,23 @@ def _write_csv_hd(path: Path, hd: np.ndarray, col_prefix: str = "d") -> None:
         row = ",".join([str(h + 1)] + [f"{hd[h, d]:.8f}" for d in range(D)])
         lines.append(row)
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _extract_target_cols(label_npz: Dict[str, Any]) -> tuple[str, ...] | None:
+    if "target_cols" not in label_npz:
+        return None
+    target_cols = np.asarray(label_npz["target_cols"])
+    if target_cols.ndim == 0:
+        return (str(target_cols.item()),)
+    return tuple(str(x) for x in target_cols.tolist())
+
+
+def _resolve_semantic_layout(label_npz: Dict[str, Any], dout: int) -> SemanticOutputLayout:
+    layout = canonical_semantic_output_layout(dout)
+    target_cols = _extract_target_cols(label_npz)
+    if target_cols is None:
+        return layout
+    return validate_target_cols_against_semantic_layout(target_cols, layout)
 
 
 # =============================================================================
@@ -153,6 +155,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         raise ValueError(f"Din mismatch: data Din={Din}, cfg_model.din={cfg_model.din}")
     if Dout != cfg_model.dout or H != cfg_model.pred_len:
         raise ValueError(f"Y shape mismatch: data (H,D)={(H,Dout)} vs cfg {(cfg_model.pred_len,cfg_model.dout)}")
+    semantic_layout = _resolve_semantic_layout(lab, Dout)
 
     split_indices = load_split_indices(cfg_eval.split_indices_path)
     if cfg_eval.split_name not in split_indices:
@@ -191,7 +194,10 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
 
         if cfg_eval.mode != "delta_cumsum":
             raise NotImplementedError(f"Only mode='delta_cumsum' supported, got {cfg_eval.mode!r}")
-        y_hat = rollout_delta_cumsum(x=xb, dY=dY, cfg_model=cfg_model, y0_source=cfg_eval.y0_source)
+        if cfg_eval.y0_source != "x_last_state":
+            raise NotImplementedError(f"Only y0_source='x_last_state' supported, got {cfg_eval.y0_source!r}")
+        y0 = extract_y0_from_x_last(xb, cfg_model.y_in_idx)
+        y_hat = rollout_from_delta(y0, dY)
 
         yhat_list.append(y_hat.cpu())
         ytrue_list.append(yb.cpu())
@@ -202,9 +208,8 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     logvar_all = torch.cat(logvar_list, dim=0)
 
     rmse_hd, mae_hd = _rmse_mae_by_horizon(y_hat_all, y_true_all)
-    groups = _group_indices(cfg_model.dout)
-    rmse_groups = _aggregate_group_curve(rmse_hd, groups)
-    mae_groups = _aggregate_group_curve(mae_hd, groups)
+    rmse_groups = _aggregate_group_curve(rmse_hd, semantic_layout.group_indices)
+    mae_groups = _aggregate_group_curve(mae_hd, semantic_layout.group_indices)
     rmse_global = float(rmse_hd.mean())
     mae_global = float(mae_hd.mean())
 
@@ -225,6 +230,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         "mae_hd": mae_hd,
         "rmse_groups": rmse_groups,
         "mae_groups": mae_groups,
+        "semantic_layout": semantic_layout,
         "samples": samp,
     }
 
@@ -280,6 +286,11 @@ def main() -> int:
         "mae_global": res["mae_global"],
         "rmse_groups": res["rmse_groups"],
         "mae_groups": res["mae_groups"],
+        "layout": {
+            "schema_version": SEMANTIC_LAYOUT_SCHEMA_VERSION,
+            "execution": build_execution_layout_metadata(cfg_model.y_in_idx),
+            "semantic": build_semantic_layout_metadata(res["semantic_layout"]),
+        },
         "cfg": {
             "data_dir": str(cfg_eval.data_dir),
             "ckpt": str(cfg_eval.ckpt),

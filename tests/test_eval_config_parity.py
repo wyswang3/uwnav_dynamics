@@ -188,6 +188,7 @@ def test_eval_config_reuses_canonical_train_parser(tmp_path):
 
     # 评估侧只允许覆盖 runtime 参数；模型拓扑必须直接复用训练侧 canonical parser。
     assert cfg_model == cfg_train.model
+    assert cfg_model.y_in_idx == cfg_train.model.y_in_idx
     assert cfg_eval.data_dir == cfg_train.data.data_dir
     assert cfg_eval.device == "cpu"
     assert cfg_eval.batch_size == 8

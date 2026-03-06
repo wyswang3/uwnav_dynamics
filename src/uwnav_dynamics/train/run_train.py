@@ -1,3 +1,38 @@
+"""
+模块名称：训练主入口
+
+模块职责：
+负责加载训练配置、准备 run-scoped 数据 artifact、
+构建模型与损失函数，并调用 trainer 执行训练。
+
+主要功能：
+1. 复用 canonical train parser 与 runtime override 生成最终训练配置。
+2. 准备 split / scaler / DataLoader，并写出 `resolved_train.yaml`。
+3. 基于 execution layout contract 构建 rollout loss，保证 train / eval 对 `y0` 解释一致。
+
+数据流：
+train yaml + CLI override
+    ↓
+TrainYamlConfig / resolved_train.yaml
+    ↓
+prepare_train_data()
+    ↓
+S1Predictor + rollout loss
+    ↓
+fit()
+    ↓
+best.pth / last.pth
+
+依赖模块：
+- uwnav_dynamics.train.config
+- uwnav_dynamics.train.data_pipeline
+- uwnav_dynamics.models.utils.execution_layout
+- uwnav_dynamics.models.utils.rollout
+
+备注：
+- 本模块只接入 execution layout contract，不负责语义分组解释。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -20,11 +55,12 @@ from uwnav_dynamics.train.runtime import (
 )
 from uwnav_dynamics.train.trainer import fit
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor
-from uwnav_dynamics.models.utils.rollout import extract_y0_from_x_last, rollout_from_delta
+from uwnav_dynamics.models.utils.execution_layout import extract_y0_from_x_last
+from uwnav_dynamics.models.utils.rollout import rollout_from_delta
 from uwnav_dynamics.models.losses.nll import gaussian_nll_diag
 
 
-def build_loss_fn(logvar_clip_min: float, logvar_clip_max: float):
+def build_loss_fn(logvar_clip_min: float, logvar_clip_max: float, y_in_idx):
     """
     v0 loss:
       model(X) -> dY, logvar
@@ -34,7 +70,7 @@ def build_loss_fn(logvar_clip_min: float, logvar_clip_max: float):
     """
     def _loss(model, X, Y):
         dY, logvar = model(X)
-        y0 = extract_y0_from_x_last(X)
+        y0 = extract_y0_from_x_last(X, y_in_idx)
         y_hat = rollout_from_delta(y0, dY)
         logvar = torch.clamp(logvar, min=logvar_clip_min, max=logvar_clip_max)
         return gaussian_nll_diag(y_hat, Y, logvar)
@@ -138,7 +174,7 @@ def main() -> int:
 
     model = S1Predictor(cfg.model)
 
-    loss_fn = build_loss_fn(cfg.loss.logvar_clip_min, cfg.loss.logvar_clip_max)
+    loss_fn = build_loss_fn(cfg.loss.logvar_clip_min, cfg.loss.logvar_clip_max, cfg.model.y_in_idx)
 
     # ------------------------------
     # Fit (pipeline-style): pass device/run_dir/amp
