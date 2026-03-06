@@ -5,7 +5,11 @@
 本路线图只讨论工程实现层面的升级，不讨论更长期的数学建模扩展。
 当前优先级来自“先确保结果可信，再逐步提升研究表达能力”的原则。
 
-## 2. PR2：split / scaler 单一真源
+## 2. PR2：split / scaler 单一真源（已完成）
+
+### 状态
+
+- 已完成，收口日期：2026-03-06
 
 ### 目标
 
@@ -25,6 +29,18 @@
 - 训练与评估使用同一份 `split_indices.npz`
 - scaler 只由 train split 拟合
 - 相关 smoke test 与无泄漏测试通过
+
+### 已完成内容
+
+- 将 canonical split 语义明确为 `contiguous_v1`
+- 在 `split_indices.npz` 中写入 `split_strategy` 元数据
+- 训练阶段创建 run-scoped split / scaler artifact，评估阶段只复用
+- 将 `split_strategy` 写入 `resolved_train.yaml`
+- 增加 split contiguous / no-leak / eval artifact reuse 自动化测试
+
+### 说明文档
+
+- [pr2_split_scaler_single_source.md](/home/wys/uwnav_dynamics/docs/pr2_split_scaler_single_source.md)
 
 ## 3. PR4：rollout 索引契约
 

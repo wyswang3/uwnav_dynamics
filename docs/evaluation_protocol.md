@@ -16,8 +16,15 @@
 最低要求：
 
 - 使用同一份 `split_indices.npz`
+- 明确当前 `split_strategy`
 - 不在评估阶段重新计算 split
 - 明确记录当前评估使用的是 `train / val / test` 中哪一个 split
+
+当前仓库的默认策略是 `contiguous_v1`：
+
+- 它按时间顺序切分滑窗样本
+- 它不是随机打散窗口后的 permutation split
+- 对滑窗任务而言，这一策略属于实验语义，而不是单纯实现细节
 
 ## 3. scaler 规则
 

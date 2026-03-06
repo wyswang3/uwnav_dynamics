@@ -25,6 +25,7 @@ from uwnav_dynamics.dataset.normalize import (
     transform,
 )
 from uwnav_dynamics.dataset.split import (
+    DEFAULT_SPLIT_STRATEGY,
     load_split_indices,
     make_split_indices,
     save_split_indices,
@@ -137,6 +138,9 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
         split_indices = load_split_indices(split_path)
         print(f"[SPLIT] reuse: {split_path}")
     else:
+        # 对滑窗数据集而言，“索引不重叠”不等于“时间无泄漏”。
+        # 当前 canonical 策略使用 contiguous_v1：按时间顺序切 train/val/test，
+        # 再把确切索引落盘，供 train / eval 共享。
         split_indices = make_split_indices(
             n=n_total,
             seed=int(cfg.seed),
@@ -147,7 +151,7 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
             },
         )
         save_split_indices(split_path, split_indices)
-        print(f"[SPLIT] created: {split_path}")
+        print(f"[SPLIT] created: {split_path} strategy={DEFAULT_SPLIT_STRATEGY}")
 
     _validate_indices(split_indices, n_total)
     train_idx = np.asarray(split_indices["train"], dtype=np.int64)

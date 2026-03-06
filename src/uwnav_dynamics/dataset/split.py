@@ -9,11 +9,13 @@ evaluation can share the same subset boundaries without recomputing them.
 
 from pathlib import Path
 from typing import Dict, Mapping, Sequence
+import warnings
 
 import numpy as np
 
 
 SplitIndices = Dict[str, np.ndarray]
+DEFAULT_SPLIT_STRATEGY = "contiguous_v1"
 
 
 def _parse_ratios(ratios: Mapping[str, float] | Sequence[float]) -> tuple[float, float, float]:
@@ -46,7 +48,16 @@ def make_split_indices(
     ratios: Mapping[str, float] | Sequence[float],
 ) -> SplitIndices:
     """
-    Build deterministic disjoint split indices by a seeded permutation.
+    Build deterministic contiguous train/val/test splits on window indices.
+
+    Design note:
+      - For sliding-window datasets, random permutation is not equivalent to
+        "no leakage" because neighboring windows may still share most of their
+        time support.
+      - The current canonical experiment contract therefore uses a contiguous
+        split on the time-ordered window index axis.
+      - `seed` is kept only for API compatibility with older callers; in the
+        contiguous strategy it does not affect the result.
 
     Split sizes follow floor strategy:
       n_train = int(n * train_ratio)
@@ -58,6 +69,13 @@ def make_split_indices(
         raise ValueError(f"n must be positive, got {n}")
 
     tr, va, _te = _parse_ratios(ratios)
+    if int(seed) != 0:
+        warnings.warn(
+            "split seed is ignored by split_strategy='contiguous_v1'; "
+            "seed is kept only for API compatibility.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     n_train = int(n * tr)
     n_val = int(n * va)
@@ -65,12 +83,9 @@ def make_split_indices(
     if n_train <= 0 or n_test < 0:
         raise ValueError(f"invalid split sizes: train={n_train}, val={n_val}, test={n_test}, n={n}")
 
-    rng = np.random.default_rng(int(seed))
-    perm = rng.permutation(n).astype(np.int64, copy=False)
-
-    train_idx = perm[:n_train]
-    val_idx = perm[n_train:n_train + n_val]
-    test_idx = perm[n_train + n_val:]
+    train_idx = np.arange(0, n_train, dtype=np.int64)
+    val_idx = np.arange(n_train, n_train + n_val, dtype=np.int64)
+    test_idx = np.arange(n_train + n_val, n_train + n_val + n_test, dtype=np.int64)
 
     return {
         "train": train_idx,
@@ -80,7 +95,13 @@ def make_split_indices(
 
 
 def save_split_indices(path: str | Path, indices: SplitIndices) -> Path:
-    """Persist split indices as a compact `.npz` artifact under the run directory."""
+    """
+    Persist split indices as a compact `.npz` artifact under the run directory.
+
+    Besides the raw index arrays, we also write a minimal strategy marker so
+    future code can distinguish current contiguous semantics from older files
+    that may have been produced before the strategy was recorded explicitly.
+    """
     p = Path(path).expanduser().resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -88,16 +109,40 @@ def save_split_indices(path: str | Path, indices: SplitIndices) -> Path:
         train=np.asarray(indices["train"], dtype=np.int64),
         val=np.asarray(indices["val"], dtype=np.int64),
         test=np.asarray(indices["test"], dtype=np.int64),
+        split_strategy=np.asarray(DEFAULT_SPLIT_STRATEGY),
     )
     return p
 
 
 def load_split_indices(path: str | Path) -> SplitIndices:
-    """Load previously persisted split indices for exact train/eval reuse."""
+    """
+    Load previously persisted split indices for exact train/eval reuse.
+
+    Legacy artifacts may not carry `split_strategy` metadata. We keep them
+    loadable for compatibility, but warn so users know the file may predate the
+    current contiguous split contract.
+    """
     p = Path(path).expanduser().resolve()
     if not p.exists():
         raise FileNotFoundError(f"split indices not found: {p}")
     with np.load(p, allow_pickle=False) as z:
+        if "split_strategy" not in z:
+            warnings.warn(
+                f"legacy split artifact without split_strategy metadata: {p}. "
+                "It remains loadable, but its semantics may predate the current "
+                f"'{DEFAULT_SPLIT_STRATEGY}' contract.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        else:
+            split_strategy = str(np.asarray(z["split_strategy"]).item())
+            if split_strategy != DEFAULT_SPLIT_STRATEGY:
+                warnings.warn(
+                    f"split artifact {p} uses split_strategy={split_strategy!r}; "
+                    f"current default is {DEFAULT_SPLIT_STRATEGY!r}.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         out: SplitIndices = {
             "train": np.asarray(z["train"], dtype=np.int64),
             "val": np.asarray(z["val"], dtype=np.int64),

@@ -104,6 +104,7 @@ def save_resolved_train_config(
     runtime_device: str | None = None,
     run_dir: str | Path | None = None,
     split_indices_path: str | Path | None = None,
+    split_strategy: str | None = None,
     x_scaler_path: str | Path | None = None,
     y_scaler_path: str | Path | None = None,
 ) -> Path:
@@ -132,6 +133,8 @@ def save_resolved_train_config(
         payload["_meta"]["run_dir"] = str(Path(run_dir))
     if split_indices_path is not None:
         payload["_meta"]["split_indices_path"] = str(Path(split_indices_path))
+    if split_strategy is not None:
+        payload["_meta"]["split_strategy"] = str(split_strategy)
     if x_scaler_path is not None:
         payload["_meta"]["x_scaler_path"] = str(Path(x_scaler_path))
     if y_scaler_path is not None:

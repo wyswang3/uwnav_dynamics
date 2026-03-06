@@ -107,6 +107,7 @@
 - `runtime_device`: 实际运行设备
 - `run_dir`: 最终运行目录
 - `split_indices_path`: 本次训练/评估共享的 split 产物路径
+- `split_strategy`: 当前 split 语义版本
 - `x_scaler_path`: 输入 scaler 路径
 - `y_scaler_path`: 输出 scaler 路径
 
@@ -116,6 +117,10 @@
 - 复现实验时可直接核对最终执行配置，而不是推测 CLI 是否覆盖了 YAML；
 - 团队交接时可快速定位一次训练对应的 split/scaler/ckpt 产物；
 - 未来开源或论文补充材料中，可以更清晰地说明实验环境与配置来源。
+
+当前推荐将 `split_strategy` 视为实验语义的一部分，而不是实现细节。
+对于滑窗数据集，仓库当前默认使用 `contiguous_v1`，即按时间顺序切分窗口索引；
+这样做是为了降低相邻窗口跨 split 带来的时间泄漏风险。
 
 ## 6. `out_dir / variant` 契约及反例
 

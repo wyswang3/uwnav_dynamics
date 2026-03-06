@@ -30,7 +30,8 @@
 
 - `PR6` 后，`pytest -q` 的最小收集与对齐边界测试恢复
 - `PR1` 后，train / eval 配置 parity 已由自动化测试覆盖
-- `resolved_train.yaml` 已能记录训练最终执行配置与关键 artifact 路径
+- `PR2` 后，train / eval 对 split / scaler artifact 的共享与复用已由自动化测试覆盖
+- `resolved_train.yaml` 已能记录训练最终执行配置、关键 artifact 路径与 `split_strategy`
 
 建议把以下类型的测试视为当前最小健康信号：
 
@@ -38,6 +39,7 @@
 - CLI `--help`
 - layout / runtime config tests
 - eval config parity tests
+- split / scaler no-leak tests
 
 ## 4. 已完成升级
 
@@ -59,14 +61,28 @@
 - 扩展 `resolved_train.yaml`
 - 增加 train / eval parity test
 
+### 4.3 PR2：split / scaler 单一真源
+
+已完成内容：
+
+- 明确 `contiguous_v1` 为当前 canonical split 语义
+- `split_indices.npz` 写入 `split_strategy` 元数据
+- 训练运行目录内的 split / scaler artifact 由 train 创建后供 eval 复用
+- legacy `train.data.build_loaders()` 复用 canonical split builder，避免语义漂移
+- `resolved_train.yaml` 记录 `split_strategy`
+- 增加 split contiguous / no-leak / eval artifact reuse 测试
+
+详细说明见：
+
+- [pr2_split_scaler_single_source.md](/home/wys/uwnav_dynamics/docs/pr2_split_scaler_single_source.md)
+
 ## 5. 下一步升级顺序
 
 建议按以下顺序推进：
 
-1. `PR2`：split / scaler 单一真源
-2. `PR4`：rollout 索引契约
-3. `PR3`：eval-viz 解耦
-4. `PR5`：mask-aware 训练评估
+1. `PR4`：rollout 索引契约
+2. `PR3`：eval-viz 解耦
+3. `PR5`：mask-aware 训练评估
 
 排序原则：
 
@@ -79,10 +95,10 @@
 
 当前仍需重点跟踪的技术债：
 
-- split / scaler 契约尚未完全统一
 - rollout 索引仍存在历史硬编码风险
 - DVL 稀疏监督尚未正式进入 mask-aware 训练
 - 评估和绘图的职责边界仍不够清晰
+- 历史 `split_indices.npz` 可能缺少 `split_strategy` 元数据，当前仅通过 warning 做兼容提示
 - 理论文档需持续跟进工程真实状态
 
 ## 7. 新人建议入口

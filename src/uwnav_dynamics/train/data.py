@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple, Optional
+import warnings
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
+
+from uwnav_dynamics.dataset.split import make_split_indices
 
 
 @dataclass(frozen=True)
@@ -97,28 +100,21 @@ class WindowDataset(Dataset):
         return torch.from_numpy(x), torch.from_numpy(y)
 
 
-def _split_indices(n: int, train_ratio: float, val_ratio: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Time-ordered split by contiguous indices to avoid leakage.
-    """
-    if not (0.0 < train_ratio < 1.0):
-        raise ValueError("train_ratio must be in (0,1)")
-    if not (0.0 <= val_ratio < 1.0):
-        raise ValueError("val_ratio must be in [0,1)")
-    if train_ratio + val_ratio >= 1.0:
-        raise ValueError("train_ratio + val_ratio must be < 1.0")
-
-    n_train = int(n * train_ratio)
-    n_val = int(n * val_ratio)
-    n_test = n - n_train - n_val
-
-    train_idx = np.arange(0, n_train, dtype=np.int64)
-    val_idx = np.arange(n_train, n_train + n_val, dtype=np.int64)
-    test_idx = np.arange(n_train + n_val, n_train + n_val + n_test, dtype=np.int64)
-    return train_idx, val_idx, test_idx
-
-
 def build_loaders(cfg: DataConfig) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """
+    Legacy convenience loader.
+
+    This path intentionally stays compatibility-only:
+      - it now reuses the canonical split builder to avoid semantic drift,
+      - but it still does not persist split/scaler artifacts under a run dir.
+    Official train/eval flows should use `train.data_pipeline.prepare_train_data`.
+    """
+    warnings.warn(
+        "train.data.build_loaders is a legacy helper and does not persist "
+        "run-scoped split/scaler artifacts. Prefer train.data_pipeline.prepare_train_data.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     x_npy, y_npy = _maybe_build_memmap_cache(cfg.data_dir)
 
     # Determine N
@@ -126,7 +122,18 @@ def build_loaders(cfg: DataConfig) -> Tuple[DataLoader, DataLoader, DataLoader]:
     n = int(X.shape[0])
     del X
 
-    train_idx, val_idx, test_idx = _split_indices(n, cfg.train_ratio, cfg.val_ratio)
+    split_indices = make_split_indices(
+        n=n,
+        seed=int(cfg.seed),
+        ratios={
+            "train": float(cfg.train_ratio),
+            "val": float(cfg.val_ratio),
+            "test": float(1.0 - cfg.train_ratio - cfg.val_ratio),
+        },
+    )
+    train_idx = np.asarray(split_indices["train"], dtype=np.int64)
+    val_idx = np.asarray(split_indices["val"], dtype=np.int64)
+    test_idx = np.asarray(split_indices["test"], dtype=np.int64)
 
     train_ds = WindowDataset(x_npy, y_npy, train_idx)
     val_ds = WindowDataset(x_npy, y_npy, val_idx)

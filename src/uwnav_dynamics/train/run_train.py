@@ -7,6 +7,7 @@ from dataclasses import replace
 import torch
 
 from uwnav_dynamics.experiment.layout import RunLayout
+from uwnav_dynamics.dataset.split import DEFAULT_SPLIT_STRATEGY
 from uwnav_dynamics.train.config import load_train_config
 from uwnav_dynamics.train.data_pipeline import prepare_train_data
 from uwnav_dynamics.train.runtime import (
@@ -125,6 +126,7 @@ def main() -> int:
         runtime_device=str(device),
         run_dir=run_dir,
         split_indices_path=run_layout.split_indices_path,
+        split_strategy=DEFAULT_SPLIT_STRATEGY,
         x_scaler_path=run_layout.x_scaler_path,
         y_scaler_path=run_layout.y_scaler_path,
     )
