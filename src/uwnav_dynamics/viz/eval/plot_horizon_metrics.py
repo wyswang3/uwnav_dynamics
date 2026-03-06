@@ -42,7 +42,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import yaml
 
-from uwnav_dynamics.viz.style.sci_style import setup_mpl
+from uwnav_dynamics.viz.style.sci_style import (
+    apply_axes_style,
+    apply_minimal_legend,
+    get_figure_size,
+    get_group_styles,
+    get_model_role_style,
+    infer_model_role,
+    save_figure,
+    setup_mpl,
+)
 
 
 # -----------------------------
@@ -109,60 +118,70 @@ def _metric_from_dir(eval_dir: Path, metric: str) -> Tuple[np.ndarray, Dict[str,
     return hd, meta
 
 
+def build_groups_vs_horizon_figure(
+    eval_dirs: List[Path],
+    labels: List[str],
+    cfg: HorizonPlotCfg,
+) -> Tuple[plt.Figure, plt.Axes]:
+    setup_mpl()
+
+    hd0, _ = _metric_from_dir(eval_dirs[0], cfg.metric)
+    H = hd0.shape[0]
+    x_steps = np.arange(1, H + 1)
+    x = x_steps * cfg.dt_s if cfg.use_seconds else x_steps
+    groups = _group_slices(9)
+    fig, ax = plt.subplots(1, 1, figsize=get_figure_size("single"))
+
+    group_styles = get_group_styles()
+    for eval_dir, lab in zip(eval_dirs, labels):
+        hd, _ = _metric_from_dir(eval_dir, cfg.metric)
+        y_acc = hd[:, groups["Acc"]].mean(axis=1)
+        y_gyro = hd[:, groups["Gyro"]].mean(axis=1)
+        y_vel = hd[:, groups["Vel"]].mean(axis=1)
+
+        if len(eval_dirs) == 1:
+            for key, curve in (("Acc", y_acc), ("Gyro", y_gyro), ("Vel", y_vel)):
+                sty = group_styles[key]
+                ax.plot(
+                    x,
+                    curve,
+                    label=key,
+                    color=sty.color,
+                    linestyle=sty.linestyle,
+                    linewidth=sty.linewidth,
+                    alpha=sty.alpha,
+                    zorder=sty.zorder,
+                )
+        else:
+            role = infer_model_role(lab)
+            sty = get_model_role_style(role)
+            ax.plot(
+                x,
+                y_vel,
+                label=lab,
+                color=sty.color,
+                linestyle=sty.linestyle,
+                linewidth=sty.linewidth,
+                alpha=sty.alpha,
+                zorder=sty.zorder,
+            )
+
+    ax.set_xlabel("Prediction horizon (s)" if cfg.use_seconds else "Prediction step (k)")
+    ax.set_ylabel(cfg.metric.upper())
+    apply_axes_style(ax, grid=False)
+    apply_minimal_legend(ax.legend(loc="best"))
+    return fig, ax
+
+
 def plot_groups_vs_horizon(
     eval_dirs: List[Path],
     labels: List[str],
     out_dir: Path,
     cfg: HorizonPlotCfg,
 ) -> None:
-    setup_mpl()
-
-    # x 轴：步数 or 秒
-    # 读取第一个的 H
-    hd0, _ = _metric_from_dir(eval_dirs[0], cfg.metric)
-    H = hd0.shape[0]
-    x_steps = np.arange(1, H + 1)
-    x = x_steps * cfg.dt_s if cfg.use_seconds else x_steps
-
-    groups = _group_slices(9)
-
-    # --- 画三条曲线：Acc/Gyro/Vel，每个 eval_dir 一组（多模型对比）
-    fig, ax = plt.subplots(1, 1)
-
-    for eval_dir, lab in zip(eval_dirs, labels):
-        hd, meta = _metric_from_dir(eval_dir, cfg.metric)
-
-        # group 平均：对各自维度取 mean
-        y_acc = hd[:, groups["Acc"]].mean(axis=1)
-        y_gyro = hd[:, groups["Gyro"]].mean(axis=1)
-        y_vel = hd[:, groups["Vel"]].mean(axis=1)
-
-        # 业务逻辑：同一个模型三条线放同一张图会显得拥挤；
-        # 这里采用“每个模型画一条线”的策略（默认画 Vel），更适合多模型对比。
-        # 但你现在 B0 单模型阶段，建议画三条线。
-        # 因此：如果只有一个 eval_dir -> 画三条；多个 -> 默认只画 vel（更清晰）。
-        if len(eval_dirs) == 1:
-            ax.plot(x, y_acc, label="Acc")
-            ax.plot(x, y_gyro, label="Gyro")
-            ax.plot(x, y_vel, label="Vel")
-        else:
-            ax.plot(x, y_vel, label=lab)
-
-    # 坐标轴标签
-    if cfg.use_seconds:
-        ax.set_xlabel("Prediction horizon (s)")
-    else:
-        ax.set_xlabel("Prediction step (k)")
-    ax.set_ylabel(cfg.metric.upper())
-
-    ax.grid(False)
-    ax.legend(loc="best")
-
+    fig, _ = build_groups_vs_horizon_figure(eval_dirs=eval_dirs, labels=labels, cfg=cfg)
     _ensure_dir(out_dir)
-    if cfg.fmt in ("png", "both"):
-        fig.savefig(out_dir / f"{cfg.out_name}.png")
-    if cfg.fmt in ("pdf", "both"):
-        fig.savefig(out_dir / f"{cfg.out_name}.pdf")
+    save_figure(fig, out_dir / cfg.out_name, fmt=cfg.fmt)
     plt.close(fig)
 
 

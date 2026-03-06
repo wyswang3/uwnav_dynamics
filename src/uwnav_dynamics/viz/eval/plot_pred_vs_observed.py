@@ -1,23 +1,23 @@
 """
-模块名称：rollout 样例绘图
+模块名称：预测值与监督目标对比图
 
 模块职责：
-从评估阶段落盘的 `pred_samples.npz` 中读取模型预测与监督目标，
-生成论文友好的 rollout 样例图，用于快速检查时域拟合质量。
+从评估阶段落盘的 `pred_samples.npz` 中读取 `y_hat / y_true / logvar`，
+生成网络预测值与监督目标之间的对比图，为论文与汇报提供稳定图型。
 
 主要功能：
-1. 读取 `pred_samples.npz` 中的 `y_hat / y_true / logvar`。
-2. 默认将 9 维输出按 Acc / Gyro / Vel 分组，并在每个组内取三轴范数。
-3. 以 3×1 共享 x 轴布局输出 `rollout_sample_*.png|pdf`。
+1. 默认以 `group_norm` mode 绘制 Acc / Gyro / Vel 三组范数对比图。
+2. 明确将图中的 `observed` 解释为评估阶段监督目标 `y_true`。
+3. 为未来 `component` mode 与 uncertainty band 扩展保留接口。
 
 数据流：
 pred_samples.npz
     ↓
-按 [Acc3, Gyro3, Vel3] 分组
+mode dispatch (`group_norm` / future `component`)
     ↓
-3 行共享 x 轴 figure
+3×1 共享 x 轴 figure
     ↓
-plots/rollout_sample_000.png|pdf
+plots/pred_vs_observed_group_norm_000.png|pdf
 
 依赖模块：
 - numpy
@@ -25,13 +25,14 @@ plots/rollout_sample_000.png|pdf
 - uwnav_dynamics.viz.style.sci_style
 
 备注：
-- 当前图中的 “observed/true” 来自评估监督目标 `y_true`，不等同于未经处理的原始传感器输出。
-- `logvar` 当前只保留供未来不确定度带扩展，不改变本次最小 patch 的默认显示。
+- 本模块中的 `observed` 指当前评估阶段使用的监督目标 `y_true`。
+- 它不等同于未经处理的原始 IMU / DVL / Power 传感器输出。
 """
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple
 
@@ -50,6 +51,13 @@ from uwnav_dynamics.viz.style.sci_style import (
 )
 
 
+@dataclass(frozen=True)
+class PredObservedPlotCfg:
+    dt_s: float = 0.01
+    mode: str = "group_norm"
+    fmt: str = "png"
+
+
 def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
@@ -61,21 +69,19 @@ def _norm3(x: np.ndarray) -> np.ndarray:
 def _load_pred_npz(pred_npz: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     with np.load(pred_npz) as z:
         if "y_hat" not in z or "y_true" not in z:
-            raise ValueError(f"{pred_npz} must contain keys: y_hat, y_true (and optionally logvar)")
+            raise ValueError(f"{pred_npz} must contain y_hat / y_true")
         y_hat = z["y_hat"]
         y_true = z["y_true"]
         logvar = z["logvar"] if "logvar" in z else np.full_like(y_hat, np.nan)
 
-    if y_hat.ndim != 3 or y_true.ndim != 3:
-        raise ValueError(f"Expect y_hat/y_true to be 3D, got {y_hat.shape}, {y_true.shape}")
-    if y_hat.shape != y_true.shape:
-        raise ValueError(f"Shape mismatch: y_hat={y_hat.shape}, y_true={y_true.shape}")
+    if y_hat.ndim != 3 or y_true.ndim != 3 or y_hat.shape != y_true.shape:
+        raise ValueError(f"Expect y_hat/y_true with identical shape (N,H,D), got {y_hat.shape} and {y_true.shape}")
     if y_hat.shape[-1] != 9:
-        raise ValueError(f"Expect last dim = 9 (Acc3+Gyro3+Vel3), got {y_hat.shape[-1]}")
+        raise ValueError(f"Expect D=9 for current group_norm mode, got {y_hat.shape[-1]}")
     return y_hat, y_true, logvar
 
 
-def build_rollout_sample_figure(
+def _build_group_norm_figure(
     *,
     y_hat: np.ndarray,
     y_true: np.ndarray,
@@ -84,15 +90,15 @@ def build_rollout_sample_figure(
     setup_mpl()
 
     if y_hat.ndim != 2 or y_true.ndim != 2 or y_hat.shape != y_true.shape:
-        raise ValueError(f"Expect sample arrays with shape (H, 9), got {y_hat.shape} and {y_true.shape}")
+        raise ValueError(f"Expect sample arrays with shape (H, D), got {y_hat.shape} and {y_true.shape}")
 
     H = y_hat.shape[0]
     t = np.arange(1, H + 1, dtype=float) * float(dt_s)
+    fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("rollout_3row"))
+
     observed_style = get_observed_pred_styles()["observed"]
     pred_style = get_observed_pred_styles()["pred"]
     group_styles = get_group_styles()
-
-    fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("rollout_3row"))
     group_specs = (
         ("Acc", slice(0, 3), r"||Acc||"),
         ("Gyro", slice(3, 6), r"||Gyro||"),
@@ -127,54 +133,59 @@ def build_rollout_sample_figure(
         ax.set_ylabel(ylabel)
         apply_axes_style(ax, grid=False)
 
+        # TODO(PR-uncertainty): 若未来启用 uncertainty band，可在此处消费 logvar，
+        # 绘制 prediction mean ± sigma 的低饱和填充区域。
+
     apply_shared_xlabels(list(axes), "Prediction horizon (s)")
-    leg = axes[0].legend(loc="upper right")
-    apply_minimal_legend(leg)
+    apply_minimal_legend(axes[0].legend(loc="upper right"))
     return fig, (axes[0], axes[1], axes[2])
 
 
-def plot_rollout_samples_from_npz(
+def build_pred_vs_observed_figure(
+    *,
+    y_hat: np.ndarray,
+    y_true: np.ndarray,
+    cfg: PredObservedPlotCfg,
+) -> Tuple[plt.Figure, Tuple[plt.Axes, ...]]:
+    if cfg.mode == "group_norm":
+        return _build_group_norm_figure(y_hat=y_hat, y_true=y_true, dt_s=cfg.dt_s)
+    if cfg.mode == "component":
+        raise NotImplementedError("component mode is reserved for a future patch")
+    raise ValueError(f"Unknown mode: {cfg.mode}")
+
+
+def plot_pred_vs_observed_from_npz(
     pred_npz: Path,
     out_dir: Path,
     *,
-    dt_s: float = 0.01,
-    n: int = 8,
-    fmt: str = "png",
+    n: int = 4,
+    cfg: PredObservedPlotCfg = PredObservedPlotCfg(),
 ) -> None:
-    pred_npz = Path(pred_npz)
-    out_dir = Path(out_dir)
     _ensure_dir(out_dir)
-
     y_hat, y_true, _ = _load_pred_npz(pred_npz)
-    N = y_hat.shape[0]
-    nplot = min(int(n), int(N))
 
-    for i in range(nplot):
-        fig, _ = build_rollout_sample_figure(y_hat=y_hat[i], y_true=y_true[i], dt_s=dt_s)
-        save_figure(fig, out_dir / f"rollout_sample_{i:03d}", fmt=fmt)
+    nplot = min(int(n), int(y_hat.shape[0]))
+    for idx in range(nplot):
+        fig, _ = build_pred_vs_observed_figure(y_hat=y_hat[idx], y_true=y_true[idx], cfg=cfg)
+        save_figure(fig, out_dir / f"pred_vs_observed_{cfg.mode}_{idx:03d}", fmt=cfg.fmt)
         plt.close(fig)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser("uwnav_dynamics.viz.plot_rollout_samples")
+    ap = argparse.ArgumentParser("uwnav_dynamics.viz.plot_pred_vs_observed")
     ap.add_argument("--eval_dir", type=str, required=True, help="evaluation dir containing pred_samples.npz")
     ap.add_argument("--out_dir", type=str, default=None)
-    ap.add_argument("--n", type=int, default=8, help="number of sample windows to plot")
+    ap.add_argument("--n", type=int, default=4, help="number of sample windows to plot")
     ap.add_argument("--dt", type=float, default=0.01)
+    ap.add_argument("--mode", type=str, default="group_norm", choices=["group_norm", "component"])
     ap.add_argument("--fmt", type=str, default="png", choices=["png", "pdf", "both"])
     args = ap.parse_args()
 
     eval_dir = Path(args.eval_dir)
     out_dir = Path(args.out_dir) if args.out_dir else (eval_dir / "plots")
-
-    plot_rollout_samples_from_npz(
-        pred_npz=eval_dir / "pred_samples.npz",
-        out_dir=out_dir,
-        dt_s=float(args.dt),
-        n=int(args.n),
-        fmt=str(args.fmt),
-    )
-    print(f"[VIZ] wrote rollout sample plots to: {out_dir}")
+    cfg = PredObservedPlotCfg(dt_s=float(args.dt), mode=str(args.mode), fmt=str(args.fmt))
+    plot_pred_vs_observed_from_npz(eval_dir / "pred_samples.npz", out_dir, n=int(args.n), cfg=cfg)
+    print(f"[VIZ] wrote pred-vs-observed plots to: {out_dir}")
     return 0
 
 
