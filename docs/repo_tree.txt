@@ -1,0 +1,107 @@
+.
+├── .gitignore
+├── .vscode
+│   └── settings.json
+├── CITATION.cff
+├── LICENSE
+├── README.md
+├── apps
+│   ├── dev
+│   │   ├── test_dvl_plots.py
+│   │   ├── test_imu_pipeline.py
+│   │   └── test_power_plots.py
+│   └── tools
+│       └── pwm_preprocess_and_plot.py
+├── configs
+│   ├── align
+│   │   └── pooltest02.yaml
+│   ├── dataset
+│   │   ├── pooltest01.yaml
+│   │   ├── pooltest02.yaml
+│   │   └── pooltest02_s1.yaml
+│   ├── eval
+│   ├── loss
+│   ├── model
+│   │   ├── ablations
+│   │   └── s1_u1_hyrossm.yaml
+│   ├── plot
+│   ├── preprocess
+│   │   └── imu.yaml
+│   └── train
+│       └── pooltest02_s1_lstm_v0.yaml
+├── docs
+│   ├── design
+│   │   ├── dataset_spec.md
+│   │   ├── imu_plot_style.md
+│   │   └── plot_style_guide.md
+│   ├── math
+│   │   ├── appendix.tex
+│   │   ├── assumptions.tex
+│   │   ├── control_interface.tex
+│   │   ├── discussion.tex
+│   │   ├── dynamics.tex
+│   │   ├── learning.tex
+│   │   ├── macros.tex
+│   │   ├── main.aux
+│   │   ├── main.fdb_latexmk
+│   │   ├── main.fls
+│   │   ├── main.log
+│   │   ├── main.out
+│   │   ├── main.pdf
+│   │   ├── main.tex
+│   │   ├── main.toc
+│   │   ├── main.xdv
+│   │   ├── notation.tex
+│   │   ├── rollout.tex
+│   │   ├── sensors.tex
+│   │   └── uncertainty.tex
+│   ├── repo_tree.txt
+│   └── 快捷命令行.md
+├── scripts
+└── src
+    └── uwnav_dynamics
+        ├── analysis
+        │   ├── __init__.py
+        │   └── imu_stats.py
+        ├── cli
+        │   ├── __init__.py
+        │   ├── eval.py
+        │   ├── pipeline.py
+        │   ├── train.py
+        │   └── utils.py
+        ├── core
+        │   └── timebase.py
+        ├── eval
+        │   └── evaluate.py
+        ├── io
+        │   ├── __init__.py
+        │   ├── dataset_spec.py
+        │   ├── readers
+        │   ├── schema
+        │   ├── validators
+        │   └── writers
+        ├── models
+        │   ├── blocks
+        │   ├── losses
+        │   ├── metrics
+        │   ├── nets
+        │   └── utils
+        ├── preprocess
+        │   ├── __init__.py
+        │   ├── align
+        │   ├── build_dataset.py
+        │   ├── dvl
+        │   ├── imu
+        │   ├── power
+        │   └── sliding_window.py
+        ├── train
+        │   ├── __init__.py
+        │   ├── config.py
+        │   ├── data.py
+        │   ├── run_train.py
+        │   └── trainer.py
+        └── viz
+            ├── __init__.py
+            ├── eval
+            ├── plots
+            └── style

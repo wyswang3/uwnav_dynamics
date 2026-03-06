@@ -20,19 +20,24 @@ class AlignConfig:
     """
     多频率对齐配置（面向控制的训练用）：
 
-      - 主时间轴：50 Hz（dt_main_s=0.02）
-      - 主时间区间：IMU & PWM 时间轴的交集（可加 margin）
+      - 主时间轴：默认以 IMU 时间轴为参考（常见 100 Hz）
+      - 主时间区间：IMU 与 PWM 的有效交集（可加 margin）
       - DVL：作为稀疏监督，仅在接近主时间点时写入，其余为 NaN
-      - Power：低频辅助量，hold-last 对齐到主时间轴
+      - Power：低频辅助量，hold-last + 时间窗 gating 对齐到主时间轴
 
     通常在 configs/preprocess/alignment.yaml 或
     configs/dataset/<name>.yaml 中 YAML 化。
     """
-    # 主时间步长：控制频率 50 Hz
+    # 主时间步长（当与 IMU 采样间隔接近时会直接复用 IMU 时间轴）
     dt_main_s: float = 0.02
 
     # 裁剪边缘：避免刚启动/关停阶段的奇怪数据
     t_margin_s: float = 0.0
+
+    # 可选：若提供已有主时间轴 CSV，则优先使用该主轴
+    # 例如某些实验已经离线生成统一 t_s，可避免二次重建主轴。
+    main_axis_csv: Optional[str] = None
+    main_time_col: str = "t_s"
 
     # DVL 对齐的允许时间误差（主时间轴最近邻）
     dvl_max_dt_s: float = 0.10   # 10 Hz → 0.1 s；默认一整个周期
@@ -56,13 +61,17 @@ def _compute_main_grid(
     cfg: AlignConfig,
 ) -> np.ndarray:
     """
-    根据 IMU / PWM 时间范围生成主时间轴（100 Hz 等间距）：
+    根据 IMU / PWM 时间范围生成主时间轴：
 
-      - 主区间 = [max(t_imu0, t_pwm0) + margin, min(t_imu1, t_pwm1) - margin]
-      - 步长 = cfg.dt_main_s
+      1) 先确定主区间 = [max(t_imu0, t_pwm0) + margin, min(t_imu1, t_pwm1) - margin]
+      2) 若 cfg.dt_main_s 与 IMU 采样间隔接近（<=20% 相对误差），
+         则直接复用 IMU 时间戳（符合“以 IMU 为主轴”）
+      3) 否则回退为等间隔网格（保持历史配置兼容）
     """
-    if t_imu.size < 2 or t_pwm.size < 2:
-        raise ValueError("[ALIGN] IMU/PWM 样本太少，无法构建主时间轴。")
+    if t_imu.size < 2:
+        raise ValueError("[ALIGN] IMU 样本太少，无法构建主时间轴。")
+    if t_pwm.size < 2:
+        raise ValueError("[ALIGN] PWM 样本太少，无法构建主时间轴。")
 
     t0 = max(float(t_imu[0]), float(t_pwm[0])) + float(cfg.t_margin_s)
     t1 = min(float(t_imu[-1]), float(t_pwm[-1])) - float(cfg.t_margin_s)
@@ -73,15 +82,74 @@ def _compute_main_grid(
             "请检查 IMU / PWM 日志时间范围。"
         )
 
+    imu_slice = t_imu[(t_imu >= t0) & (t_imu <= t1)]
+    if imu_slice.size < 2:
+        raise ValueError(
+            "[ALIGN] 主区间内 IMU 样本不足，无法构建主时间轴。"
+        )
+
     dt = float(cfg.dt_main_s)
+    if dt <= 0.0:
+        raise ValueError(f"[ALIGN] dt_main_s must be > 0, got {dt}")
+
+    imu_dt = float(np.median(np.diff(imu_slice)))
+    tol = max(1e-6, 0.2 * max(abs(imu_dt), 1e-6))
+    if abs(dt - imu_dt) <= tol:
+        t_main = imu_slice.astype(float, copy=False)
+        print(
+            f"[ALIGN] main axis from IMU: t=[{t_main[0]:.3f}, {t_main[-1]:.3f}], "
+            f"N={t_main.size}, imu_dt~{imu_dt:.4f}s"
+        )
+        return t_main
+
     n = int(np.floor((t1 - t0) / dt)) + 1
     t_main = t0 + dt * np.arange(n, dtype=float)
 
     print(
-        f"[ALIGN] main time-grid: t=[{t_main[0]:.3f}, {t_main[-1]:.3f}], "
-        f"N={t_main.size}, dt={dt:.4f}s"
+        f"[ALIGN] main time-grid (uniform fallback): "
+        f"t=[{t_main[0]:.3f}, {t_main[-1]:.3f}], N={t_main.size}, "
+        f"cfg_dt={dt:.4f}s, imu_dt~{imu_dt:.4f}s"
     )
     return t_main
+
+
+def _load_main_grid_from_csv(main_axis_csv: str | Path, time_col: str) -> np.ndarray:
+    """
+    从已有 CSV 读取主时间轴。
+    """
+    p = Path(main_axis_csv).expanduser().resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"[ALIGN] main_axis_csv not found: {p}")
+    df = pd.read_csv(p)
+    if time_col not in df.columns:
+        raise KeyError(f"[ALIGN] main_axis_csv missing column {time_col!r}: {p}")
+    t_main = df[time_col].to_numpy(dtype=float).reshape(-1)
+    if t_main.size < 2:
+        raise ValueError(f"[ALIGN] main axis too short: {p}")
+    if not np.all(np.isfinite(t_main)):
+        raise ValueError(f"[ALIGN] main axis contains NaN/Inf: {p}")
+    if np.any(np.diff(t_main) <= 0):
+        raise ValueError(f"[ALIGN] main axis must be strictly increasing: {p}")
+    print(
+        f"[ALIGN] use existing main axis: {p} ({time_col}), "
+        f"N={t_main.size}, t=[{t_main[0]:.3f},{t_main[-1]:.3f}]"
+    )
+    return t_main
+
+
+def _resolve_main_grid(
+    t_imu: np.ndarray,
+    t_pwm: np.ndarray,
+    cfg: AlignConfig,
+) -> np.ndarray:
+    """
+    主轴解析：
+      1) 若配置了 main_axis_csv，则直接读取；
+      2) 否则按 IMU/PWM 交集重建网格。
+    """
+    if cfg.main_axis_csv:
+        return _load_main_grid_from_csv(cfg.main_axis_csv, cfg.main_time_col)
+    return _compute_main_grid(t_imu=t_imu, t_pwm=t_pwm, cfg=cfg)
 
 
 def _bin_average_multi(
@@ -176,6 +244,62 @@ def _sample_last_before(
     return out
 
 
+def _sample_last_before_with_max_dt(
+    t_src: np.ndarray,
+    values: np.ndarray,
+    t_main: np.ndarray,
+    max_dt: Optional[float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    hold-last + 最大时间差 gating。
+
+    返回：
+      aligned: (N,C)
+      mask:    (N,) bool，True 表示当前时刻存在“足够近”的历史样本
+    """
+    t_src = np.asarray(t_src, dtype=float).reshape(-1)
+    vals = np.asarray(values, dtype=float)
+    t_main = np.asarray(t_main, dtype=float).reshape(-1)
+    if vals.ndim == 1:
+        vals = vals.reshape(-1, 1)
+    if vals.shape[0] != t_src.size:
+        raise ValueError("[ALIGN] _sample_last_before_with_max_dt: time/value 长度不一致")
+
+    N = t_main.size
+    C = vals.shape[1]
+    out = np.full((N, C), np.nan, dtype=float)
+    mask = np.zeros(N, dtype=bool)
+    if t_src.size == 0:
+        return out, mask
+
+    # 浮点时间轴通常来自 np.arange / 插值 / 差分等计算，理论上相同的采样点
+    # 可能会表现成 0.6 与 0.6000000000000001 这种微小差异。
+    # 这里给一个“只吞掉舍入误差”的极小时间容差：
+    #   - 目的是修正二进制浮点表示误差；
+    #   - 不是为了扩大真实 max_dt 时间窗；
+    #   - 因此量级必须远小于任何实际采样周期。
+    TIME_CMP_EPS_S = 1e-12
+
+    i = 0
+    last = np.full(C, np.nan, dtype=float)
+    last_t = np.nan
+    for k in range(N):
+        tk = float(t_main[k])
+        while i < t_src.size and t_src[i] <= (tk + TIME_CMP_EPS_S):
+            last = vals[i]
+            last_t = float(t_src[i])
+            i += 1
+
+        if not np.isfinite(last_t):
+            continue
+        if max_dt is not None and (tk - last_t) > (float(max_dt) + TIME_CMP_EPS_S):
+            continue
+
+        out[k] = last
+        mask[k] = True
+    return out, mask
+
+
 def _attach_sparse_to_main(
     t_sparse: np.ndarray,
     values: np.ndarray,
@@ -213,14 +337,17 @@ def _attach_sparse_to_main(
     if t_sparse.size == 0:
         return out, np.zeros(N, dtype=bool)
 
-    t0 = float(t_main[0])
-    dt = float(t_main[1] - t_main[0]) if N >= 2 else 1.0
-
     for i in range(t_sparse.size):
         ti = t_sparse[i]
-        k = int(np.round((ti - t0) / dt))
-        if k < 0 or k >= N:
+        ins = int(np.searchsorted(t_main, ti, side="left"))
+        cand: list[int] = []
+        if ins < N:
+            cand.append(ins)
+        if ins - 1 >= 0:
+            cand.append(ins - 1)
+        if not cand:
             continue
+        k = min(cand, key=lambda kk: abs(ti - t_main[kk]))
         if abs(ti - t_main[k]) > max_dt:
             continue
         if count[k] == 0:
@@ -279,14 +406,15 @@ def build_training_table_imu_main(
     cfg: Optional[AlignConfig] = None,
 ) -> pd.DataFrame:
     """
-    构造「以 IMU+PWM 为主」的 50 Hz 训练表：
+    构造「以 IMU 主轴（或外部主轴）+ PWM」的训练表：
 
-      - 主时间轴 50 Hz：由 IMU & PWM 时间交集确定
+      - 主时间轴：优先外部 main_axis_csv；否则由 IMU/PWM 交集确定
+        （默认复用 IMU 时间轴；必要时回退等间隔网格）
       - 特征：
-          * IMU：a_body, gyro_body（bin-average 100→50 Hz）
+          * IMU：a_body, gyro_body（按主轴分箱平均）
           * PWM：ch1_cmd..ch8_cmd（hold-last）
-          * DVL：VelBx/VelBy/VelBz/Speed（稀疏 attach，+ has_dvl 掩码）
-          * Power：P0..P7（hold-last，仅作辅助，可在训练时屏蔽）
+          * DVL：VelBx/VelBy/VelBz/Speed（稀疏 attach，+ dvl_mask 掩码）
+          * Power：P0..P7（hold-last + max_dt gating，+ power_mask）
 
     输出 DataFrame 列的典型顺序：
 
@@ -295,7 +423,8 @@ def build_training_table_imu_main(
        'GyroX_body_rad_s', 'GyroY_body_rad_s', 'GyroZ_body_rad_s',
        'ch1_cmd', ..., 'ch8_cmd',
        'VelBx_body_mps', 'VelBy_body_mps', 'VelBz_body_mps', 'Speed_body_mps',
-       'has_dvl',
+       'dvl_mask', 'has_dvl',
+       'power_mask',
        'P0_W', ..., 'P7_W']
     """
     if cfg is None:
@@ -336,11 +465,11 @@ def build_training_table_imu_main(
         )
     pwm_vals = df_pwm[pwm_cols].to_numpy(dtype=float)
 
-    # ---------------- 3) 主时间轴（50 Hz） ----------------
-    t_main = _compute_main_grid(t_imu, t_pwm, cfg)
+    # ---------------- 3) 主时间轴 ----------------
+    t_main = _resolve_main_grid(t_imu=t_imu, t_pwm=t_pwm, cfg=cfg)
     N = t_main.size
 
-    # ---------------- 4) IMU 100 Hz → 50 Hz (bin-average) ----------------
+    # ---------------- 4) IMU -> 主时间轴（bin-average） ----------------
     acc_main = _bin_average_multi(
         t_src=t_imu,
         values=acc_imu,
@@ -373,7 +502,7 @@ def build_training_table_imu_main(
     # ---------------- 6) DVL 稀疏监督（可选） ----------------
     vel_body_main = np.full((N, 3), np.nan, dtype=float)
     speed_main = np.full(N, np.nan, dtype=float)  # 先显式用 1D
-    has_dvl = np.zeros(N, dtype=bool)
+    dvl_mask = np.zeros(N, dtype=bool)
 
     if dvl_path is not None and dvl_path.exists():
         df_dvl = pd.read_csv(dvl_path)
@@ -396,7 +525,7 @@ def build_training_table_imu_main(
                 raise KeyError(f"[ALIGN] DVL CSV 缺少列 {c!r}: {dvl_path}")
         vel_body = df_dvl_use[vel_cols].to_numpy(dtype=float)
 
-        vel_body_main, has_dvl = _attach_sparse_to_main(
+        vel_body_main, dvl_mask = _attach_sparse_to_main(
             t_sparse=t_dvl,
             values=vel_body,
             t_main=t_main,
@@ -407,7 +536,7 @@ def build_training_table_imu_main(
         # 否则在对齐后的 v_body 上现算。
         if "Speed_body_mps" in df_dvl_use.columns:
             speed_sparse = df_dvl_use["Speed_body_mps"].to_numpy(dtype=float)
-            speed_aligned, _ = _attach_sparse_to_main(
+            speed_aligned, speed_mask = _attach_sparse_to_main(
                 t_sparse=t_dvl,
                 values=speed_sparse,
                 t_main=t_main,
@@ -418,17 +547,26 @@ def build_training_table_imu_main(
                 speed_main = speed_aligned[:, 0]
             else:
                 speed_main = np.asarray(speed_aligned, dtype=float).reshape(-1)
+            # speed 与速度向量按“有效样本交集”保留
+            dvl_mask = dvl_mask & speed_mask
+            speed_main[~dvl_mask] = np.nan
         else:
             # 用对齐后的 v_body 算范数（如果 v_body_main 这一行是 NaN，norm 也会给 NaN）
             speed_main = np.linalg.norm(vel_body_main, axis=1)
+        vel_body_main[~dvl_mask, :] = np.nan
 
         print(
             f"[ALIGN] DVL attached: N_sparse={t_dvl.size}, "
-            f"N_main_with_dvl={int(has_dvl.sum())}"
+            f"N_main_with_dvl={int(dvl_mask.sum())}"
         )
+    else:
+        vel_body_main[:, :] = np.nan
+        speed_main[:] = np.nan
+        dvl_mask[:] = False
     # ---------------- 7) Power: hold-last（可选） ----------------
     power_cols: Sequence[str] = []
     power_main = None
+    power_mask = np.zeros(N, dtype=bool)
 
     if power_path is not None and power_path.exists():
         df_pw = pd.read_csv(power_path)
@@ -441,14 +579,16 @@ def build_training_table_imu_main(
             print(f"[ALIGN] WARNING: Power CSV 中未找到 P*_W 列: {power_path}")
         else:
             power_vals = df_pw[power_cols].to_numpy(dtype=float)
-            power_main = _sample_last_before(
+            power_main, power_mask = _sample_last_before_with_max_dt(
                 t_src=t_pw,
                 values=power_vals,
                 t_main=t_main,
+                max_dt=float(cfg.power_max_dt_s),
             )
+            power_main[~power_mask, :] = np.nan
             print(
                 f"[ALIGN] Power attached: cols={power_cols}, "
-                f"N={power_main.shape[0]}"
+                f"N={power_main.shape[0]}, N_main_with_power={int(power_mask.sum())}"
             )
     else:
         if cfg.require_power:
@@ -480,9 +620,11 @@ def build_training_table_imu_main(
     data["VelBy_body_mps"] = vel_body_main[:, 1]
     data["VelBz_body_mps"] = vel_body_main[:, 2]
     data["Speed_body_mps"] = speed_main
-    data["has_dvl"] = has_dvl.astype(int)  # 存成 0/1，便于训练中做 masking
+    data["dvl_mask"] = dvl_mask.astype(int)   # 新标准掩码列
+    data["has_dvl"] = dvl_mask.astype(int)    # 兼容旧代码
 
     # Power（可选）
+    data["power_mask"] = power_mask.astype(int)
     if power_main is not None and power_cols:
         for i, c in enumerate(power_cols):
             data[c] = power_main[:, i]

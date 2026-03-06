@@ -12,7 +12,7 @@ from uwnav_dynamics.preprocess.align.aligner import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Align IMU / PWM / DVL / Power logs to 50 Hz training base table."
+        description="Align IMU / PWM / DVL / Power logs to training base table."
     )
     parser.add_argument(
         "-y", "--yaml",
@@ -37,6 +37,8 @@ def main() -> int:
     align_cfg = AlignConfig(
         dt_main_s=float(a.get("dt_main_s", 0.02)),
         t_margin_s=float(a.get("t_margin_s", 0.0)),
+        main_axis_csv=a.get("main_axis_csv"),
+        main_time_col=str(a.get("main_time_col", "t_s")),
         dvl_max_dt_s=float(a.get("dvl_max_dt_s", 0.10)),
         power_max_dt_s=float(a.get("power_max_dt_s", 0.25)),
         require_pwm=bool(a.get("require_pwm", True)),

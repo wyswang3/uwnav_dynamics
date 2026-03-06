@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Tuple, List
 
@@ -12,70 +11,10 @@ import numpy as np
 import torch
 import yaml
 
+from uwnav_dynamics.dataset.normalize import load_scaler, transform
+from uwnav_dynamics.dataset.split import load_split_indices
+from uwnav_dynamics.eval.config import EvalConfig, build_eval_config
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor, S1PredictorConfig
-
-# 复用你已经写好的绘图模块（horizon 曲线）
-from uwnav_dynamics.viz.eval.plot_horizon_metrics import (
-    plot_groups_vs_horizon,
-    HorizonPlotCfg,
-)
-from uwnav_dynamics.viz.eval.plot_rollout_samples import plot_rollout_samples_from_npz
-
-# rollout 样例图我们这里内置一个轻量函数（后续可重构到 viz 脚本里）
-from uwnav_dynamics.viz.style.sci_style import setup_mpl
-
-
-# =============================================================================
-# Config
-# =============================================================================
-
-@dataclass
-class EvalConfig:
-    """
-    评估配置（升级版）
-
-    输出工件（供 viz 消费）：
-      - metrics.yaml
-      - rmse_by_horizon.csv
-      - mae_by_horizon.csv
-      - pred_samples.npz
-
-    可选（由 evaluate.py 直接触发）：
-      - plots/rmse_horizon_groups.(png/pdf)
-      - plots/mae_horizon_groups.(png/pdf)
-      - plots/rollout_sample_*.png/pdf
-    """
-    data_dir: Path
-    ckpt: Path
-    out_dir: Path
-
-    device: str = "cpu"
-    batch_size: int = 512
-
-    train_ratio: float = 0.70
-    val_ratio: float = 0.15
-    split_name: str = "test"  # "train" | "val" | "test"
-
-    y0_source: str = "x_last_state"
-    mode: str = "delta_cumsum"
-
-    save_samples: int = 256
-
-    # plotting
-    make_plots: bool = False
-    plot_fmt: str = "png"         # "png" | "pdf" | "both"
-    dt_s: float = 0.01
-    x_axis: str = "sec"           # "sec" | "step"
-    n_plot_samples: int = 8       # 画多少个 rollout sample
-
-
-# =============================================================================
-# IO helpers
-# =============================================================================
-
-def _load_yaml(path: Path) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
 
 
 def _ensure_dir(p: Path) -> None:
@@ -85,21 +24,6 @@ def _ensure_dir(p: Path) -> None:
 def _np_load_npz(path: Path) -> Dict[str, Any]:
     with np.load(path, allow_pickle=True) as z:
         return {k: z[k] for k in z.files}
-
-
-def _select_split_indices(n: int, train_ratio: float, val_ratio: float, split_name: str) -> np.ndarray:
-    n_train = int(round(n * train_ratio))
-    n_val = int(round(n * val_ratio))
-    n_train = max(0, min(n_train, n))
-    n_val = max(0, min(n_val, n - n_train))
-
-    if split_name == "train":
-        return np.arange(0, n_train, dtype=np.int64)
-    if split_name == "val":
-        return np.arange(n_train, n_train + n_val, dtype=np.int64)
-    if split_name == "test":
-        return np.arange(n_train + n_val, n, dtype=np.int64)
-    raise ValueError(f"Unknown split_name={split_name!r}")
 
 
 def _load_checkpoint(ckpt_path: Path, device: torch.device) -> Dict[str, Any]:
@@ -185,6 +109,10 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     lab = _np_load_npz(cfg_eval.data_dir / "labels.npz")
     X = feat["X"]  # (N,L,Din)
     Y = lab["Y"]   # (N,H,Dout)
+    mask_keys = [k for k in ("dvl_mask_hist", "power_mask_hist") if k in feat]
+    mask_keys += [k for k in ("dvl_mask", "power_mask") if k in lab]
+    if mask_keys:
+        print(f"[EVAL] found mask tensors: {mask_keys}")
 
     if X.ndim != 3 or Y.ndim != 3:
         raise ValueError(f"Expect X/Y to be 3D arrays, got X={X.shape}, Y={Y.shape}")
@@ -198,13 +126,21 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     if Dout != cfg_model.dout or H != cfg_model.pred_len:
         raise ValueError(f"Y shape mismatch: data (H,D)={(H,Dout)} vs cfg {(cfg_model.pred_len,cfg_model.dout)}")
 
-    idx = _select_split_indices(n, cfg_eval.train_ratio, cfg_eval.val_ratio, cfg_eval.split_name)
+    split_indices = load_split_indices(cfg_eval.split_indices_path)
+    if cfg_eval.split_name not in split_indices:
+        raise KeyError(f"split '{cfg_eval.split_name}' not found in {cfg_eval.split_indices_path}")
+    idx = np.asarray(split_indices[cfg_eval.split_name], dtype=np.int64)
     if idx.size == 0:
         raise RuntimeError(f"Split {cfg_eval.split_name} is empty. Check ratios.")
+    if np.any(idx < 0) or np.any(idx >= n):
+        raise ValueError(f"Split indices out of range for n={n}: {cfg_eval.split_indices_path}")
+
+    x_scaler = load_scaler(cfg_eval.x_scaler_path)
+    y_scaler = load_scaler(cfg_eval.y_scaler_path)
 
     # copy()：避免 torch.from_numpy 的只读 warning
-    Xs = np.array(X[idx], copy=True)
-    Ys = np.array(Y[idx], copy=True)
+    Xs = transform(np.array(X[idx], copy=True), x_scaler).astype(np.float32, copy=False)
+    Ys = transform(np.array(Y[idx], copy=True), y_scaler).astype(np.float32, copy=False)
 
     model = S1Predictor(cfg_model).to(device)
     ckpt = _load_checkpoint(cfg_eval.ckpt, device)
@@ -285,78 +221,19 @@ def main() -> int:
 
     args = ap.parse_args()
 
-    cfg_y = _load_yaml(Path(args.yaml))
-
-    # ---------- robust yaml reads ----------
-    data_y = cfg_y.get("data", {}) or {}
-    if not isinstance(data_y, dict):
-        raise TypeError("YAML key 'data' must be a dict")
-
-    data_dir = Path(data_y.get("data_dir", ""))
-    if not str(data_dir):
-        raise KeyError("Missing data.data_dir in train yaml")
-    split = data_y.get("split", {}) or {}
-    if not isinstance(split, dict):
-        raise TypeError("data.split must be a dict")
-
-    train_ratio = float(split.get("train_ratio", 0.70))
-    val_ratio = float(split.get("val_ratio", 0.15))
-
-    rollout = cfg_y.get("rollout", {}) or {}
-    if not isinstance(rollout, dict):
-        raise TypeError("rollout must be a dict")
-    y0_source = str(rollout.get("y0_source", "x_last_state"))
-    mode = str(rollout.get("mode", "delta_cumsum"))
-
-    run = cfg_y.get("run", {}) or {}
-    if not isinstance(run, dict):
-        raise TypeError("run must be a dict")
-
-    run_out_dir = Path(run.get("out_dir", "out/ckpts/_unknown"))
-    variant = str(run.get("variant", "default"))
-    default_out_dir = run_out_dir / variant / f"eval_{args.split}"
-    out_dir = Path(args.out_dir) if args.out_dir is not None else default_out_dir
-
-    device = args.device if args.device is not None else str(run.get("device", "cpu"))
-    batch_size = int(args.batch_size) if args.batch_size is not None else int(data_y.get("batch_size", 512))
-
-    cfg_eval = EvalConfig(
-        data_dir=data_dir,
+    cfg_eval, cfg_model = build_eval_config(
+        train_yaml=Path(args.yaml),
         ckpt=Path(args.ckpt),
-        out_dir=out_dir,
-        device=device,
-        batch_size=batch_size,
-        train_ratio=train_ratio,
-        val_ratio=val_ratio,
-        split_name=args.split,
-        y0_source=y0_source,
-        mode=mode,
+        split=args.split,
+        device=args.device,
+        batch_size=args.batch_size,
+        out_dir=Path(args.out_dir) if args.out_dir is not None else None,
         save_samples=int(args.save_samples),
-
-        # plotting
         make_plots=bool(args.plots),
         plot_fmt=str(args.plot_fmt),
         dt_s=float(args.dt),
         x_axis=str(args.x_axis),
         n_plot_samples=int(args.n_plot_samples),
-    )
-
-    m = cfg_y.get("model", {}) or {}
-    if not isinstance(m, dict):
-        raise TypeError("model must be a dict")
-
-    cfg_model = S1PredictorConfig(
-        din=int(m["din"]),
-        dout=int(m["dout"]),
-        pred_len=int(m["pred_len"]),
-        rnn_hidden=int(m["rnn_hidden"]),
-        rnn_layers=int(m["rnn_layers"]),
-        dropout=float(m.get("dropout", 0.0)),
-        u_in_idx=tuple(m.get("u_in_idx", list(range(0, 8)))),
-        y_in_idx=tuple(m.get("y_in_idx", list(range(8, 17)))),
-        use_thruster_as_replacement=bool(m.get("use_thruster_as_replacement", True)),
-        use_hydro_feat=bool(m.get("use_hydro_feat", True)),
-        # blocks 的详细配置你可以后面再补；B0 不影响评估
     )
 
     _ensure_dir(cfg_eval.out_dir)
@@ -376,8 +253,9 @@ def main() -> int:
             "ckpt": str(cfg_eval.ckpt),
             "device": cfg_eval.device,
             "batch_size": cfg_eval.batch_size,
-            "train_ratio": cfg_eval.train_ratio,
-            "val_ratio": cfg_eval.val_ratio,
+            "split_indices": str(cfg_eval.split_indices_path),
+            "x_scaler": str(cfg_eval.x_scaler_path),
+            "y_scaler": str(cfg_eval.y_scaler_path),
             "y0_source": cfg_eval.y0_source,
             "mode": cfg_eval.mode,
             "dt_s": cfg_eval.dt_s,

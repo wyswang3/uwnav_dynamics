@@ -6,6 +6,10 @@ align:
 
   out_csv: "out/train/2026-01-10_pooltest02_train_base.csv"
 
+  # 可选：复用已有主时间轴（若为 null 则按 IMU/PWM 自动构建主轴）
+  # main_axis_csv: "out/train/existing_main_axis.csv"
+  # main_time_col: "t_s"
+
   dt_main_s: 0.01
   t_margin_s: 0.0
   dvl_max_dt_s: 0.10

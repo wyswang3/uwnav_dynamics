@@ -2,25 +2,25 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import random
 
-import numpy as np
+from dataclasses import replace
 import torch
 
+from uwnav_dynamics.experiment.layout import RunLayout
 from uwnav_dynamics.train.config import load_train_config
-from uwnav_dynamics.train.data import build_loaders
+from uwnav_dynamics.train.data_pipeline import prepare_train_data
+from uwnav_dynamics.train.runtime import (
+    TrainCliOverrides,
+    apply_train_overrides,
+    reconcile_data_config_for_device,
+    resolve_runtime_device,
+    save_resolved_train_config,
+    set_global_seed,
+)
 from uwnav_dynamics.train.trainer import fit
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor
 from uwnav_dynamics.models.utils.rollout import extract_y0_from_x_last, rollout_from_delta
 from uwnav_dynamics.models.losses.nll import gaussian_nll_diag
-
-
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
 
 def build_loss_fn(logvar_clip_min: float, logvar_clip_max: float):
@@ -61,46 +61,37 @@ def main() -> int:
 
     cfg = load_train_config(Path(args.yaml))
 
-    # ------------------------------
-    # Apply overrides
-    # ------------------------------
-    if args.data_dir is not None:
-        cfg.data.data_dir = Path(args.data_dir)
-    if args.device is not None:
-        cfg.run.device = str(args.device)
-        cfg.train.device = str(args.device)
-    if args.epochs is not None:
-        cfg.train.epochs = int(args.epochs)
-    if args.batch_size is not None:
-        cfg.data.batch_size = int(args.batch_size)
-    if args.num_workers is not None:
-        cfg.data.num_workers = int(args.num_workers)
-    if args.pin_memory is not None:
-        cfg.data.pin_memory = (args.pin_memory.lower() == "true")
-    if args.out_dir is not None:
-        cfg.run.out_dir = Path(args.out_dir)
-        cfg.train.out_dir = Path(args.out_dir)
-    if args.variant is not None:
-        cfg.run.variant = str(args.variant)
-    if args.seed is not None:
-        cfg.run.seed = int(args.seed)
-        # DataConfig 的 seed 来自 run.seed，通常也同步一下更稳
-        cfg.data.seed = int(args.seed)
-
     if args.amp and args.no_amp:
         raise ValueError("Cannot set both --amp and --no_amp")
+
+    amp_override = None
     if args.amp:
-        cfg.run.amp = True
-        cfg.train.amp = True
+        amp_override = True
     if args.no_amp:
-        cfg.run.amp = False
-        cfg.train.amp = False
+        amp_override = False
+
+    cfg = apply_train_overrides(
+        cfg,
+        TrainCliOverrides(
+            data_dir=args.data_dir,
+            device=args.device,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=(args.pin_memory.lower() == "true") if args.pin_memory is not None else None,
+            out_dir=args.out_dir,
+            variant=args.variant,
+            seed=args.seed,
+            amp=amp_override,
+        ),
+    )
 
     # ------------------------------
     # Resolve run_dir = out_dir/variant
     # ------------------------------
-    variant = getattr(cfg.run, "variant", "default")
-    run_dir = Path(cfg.run.out_dir) / str(variant)
+    run_layout = RunLayout(out_dir=Path(cfg.run.out_dir), variant=str(getattr(cfg.run, "variant", "default")))
+    variant = run_layout.variant
+    run_dir = run_layout.run_dir
     run_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[RUN] name={cfg.run.name}")
@@ -111,23 +102,24 @@ def main() -> int:
     # ------------------------------
     # Seed / device
     # ------------------------------
-    set_seed(cfg.run.seed)
-
-    dev_str = str(cfg.run.device).lower()
-    if dev_str.startswith("cuda") and (not torch.cuda.is_available()):
-        print("[WARN] CUDA requested but not available -> fallback to CPU")
-        dev_str = "cpu"
-    device = torch.device(dev_str)
-
-    # CPU pin_memory 关闭，避免 warning
-    if device.type == "cpu" and cfg.data.pin_memory:
-        print("[INFO] CPU training: pin_memory=True is useless; auto set to False.")
-        cfg.data.pin_memory = False
+    set_global_seed(cfg.run.seed)
+    device = resolve_runtime_device(cfg.run.device)
+    data_cfg, pin_memory_note = reconcile_data_config_for_device(cfg.data, device)
+    if pin_memory_note is not None:
+        print(pin_memory_note)
+        cfg = replace(cfg, data=data_cfg)
+    print(f"[RUN] resolved_config={run_dir / 'resolved_train.yaml'}")
+    save_resolved_train_config(
+        run_dir / "resolved_train.yaml",
+        cfg,
+        source_yaml=args.yaml,
+        runtime_device=str(device),
+    )
 
     # ------------------------------
-    # Data / model / loss
+    # Data / split / scaler (no leakage)
     # ------------------------------
-    train_loader, val_loader, _test_loader = build_loaders(cfg.data)
+    prepared = prepare_train_data(cfg.data, run_layout)
 
     model = S1Predictor(cfg.model)
 
@@ -138,8 +130,8 @@ def main() -> int:
     # ------------------------------
     fit(
         model,
-        train_loader,
-        val_loader,
+        prepared.train_loader,
+        prepared.val_loader,
         cfg.train,
         loss_fn,
         device=device,

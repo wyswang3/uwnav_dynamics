@@ -9,8 +9,8 @@ uwnav_dynamics.preprocess.build_dataset
 用途：
   - 读取对齐好的 100 Hz 训练基础表（例如 *_train_base.csv）
   - 根据 YAML 中的滑动窗口配置构造 (X, Y) 数据集
-  - 可选对输入/输出做标准化（z-score）
   - 将结果写入 data/processed/<dataset_name>/ 下的 npz + meta.yaml
+  - 标准化参数拟合延后到训练阶段（基于 train split，避免泄漏）
 
 命令行示例：
   PYTHONPATH=src \\
@@ -21,7 +21,7 @@ uwnav_dynamics.preprocess.build_dataset
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
@@ -47,6 +47,53 @@ class DatasetConfig:
     time_col: str
     sliding_cfg: SlidingWindowConfig
     output: DatasetOutputConfig
+
+
+def _resolve_mask_series(
+    df: pd.DataFrame,
+    *,
+    candidates: tuple[str, ...],
+    name: str,
+) -> np.ndarray:
+    """
+    从 DataFrame 中解析 0/1 mask 序列；若找不到列则返回全 0。
+    """
+    for c in candidates:
+        if c in df.columns:
+            m = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
+            m = np.where(np.isfinite(m) & (m > 0.5), 1.0, 0.0)
+            print(f"[BUILD][MASK] use {name} from column: {c!r}")
+            return m.astype(np.float32, copy=False)
+
+    print(f"[BUILD][MASK] no column found for {name}, fallback to all-zero mask.")
+    return np.zeros(len(df), dtype=np.float32)
+
+
+def _build_mask_windows_from_idx0(
+    mask_1d: np.ndarray,
+    idx0: np.ndarray,
+    *,
+    hist_len: int,
+    pred_len: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    基于 sliding_window 输出的 idx0，构建历史窗与预测窗 mask。
+    """
+    m = np.asarray(mask_1d, dtype=np.float32).reshape(-1)
+    i0_arr = np.asarray(idx0, dtype=np.int64).reshape(-1)
+    n_win = int(i0_arr.shape[0])
+
+    mh = np.zeros((n_win, int(hist_len), 1), dtype=np.float32)
+    mp = np.zeros((n_win, int(pred_len), 1), dtype=np.float32)
+
+    for k, i0 in enumerate(i0_arr):
+        ih0 = int(i0)
+        ih1 = ih0 + int(hist_len)
+        ip0 = ih1
+        ip1 = ip0 + int(pred_len)
+        mh[k, :, 0] = m[ih0:ih1]
+        mp[k, :, 0] = m[ip0:ip1]
+    return mh, mp
 
 
 # ---------------------------------------------------------------------
@@ -85,38 +132,6 @@ def load_dataset_config(yaml_path: Path) -> DatasetConfig:
     )
 
 
-# ---------------------------------------------------------------------
-# 标准化工具
-# ---------------------------------------------------------------------
-def _compute_zscore_stats(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    对 3D 数组 arr=(N, T, D) 计算 z-score 的 mean/std：
-      - 在 (N,T) 维度上统计
-      - 忽略 NaN（用于处理稀疏的 DVL / Power 等列）
-    """
-    flat = arr.reshape(-1, arr.shape[-1])  # (N*T, D)
-
-    # 忽略 NaN 计算统计量
-    mean = np.nanmean(flat, axis=0)
-    std = np.nanstd(flat, axis=0)
-
-    # 对「整列全是 NaN」的情况，nanmean/nanstd 仍会给 NaN；
-    # 这里可以按需处理：比如将 std 替换成 1.0，mean 替换成 0.0，
-    # 或者后续直接在训练阶段丢掉这些通道。
-    nan_mask = ~np.isfinite(std)
-    std[nan_mask] = 1.0
-    mean[~np.isfinite(mean)] = 0.0
-
-    # 再做一个防 0 保护
-    std[std < 1e-8] = 1e-8
-    return mean, std
-
-
-
-def _apply_zscore(arr: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
-    return (arr - mean.reshape(1, 1, -1)) / std.reshape(1, 1, -1)
-
-# build_dataset.py 顶部附近加：
 def _add_state_velocity_cols(df: pd.DataFrame) -> pd.DataFrame:
     """
     基于 DVL BI 体坐标速度，构造“状态速度”列：
@@ -146,7 +161,7 @@ def _add_state_velocity_cols(df: pd.DataFrame) -> pd.DataFrame:
 
     # 如果有 has_dvl 之类的掩码，只用于诊断，不在这里改值
     has_dvl_col = None
-    for cand in ("has_dvl", "has_dvl_bi", "has_dvl_bi_mask"):
+    for cand in ("dvl_mask", "has_dvl", "has_dvl_bi", "has_dvl_bi_mask"):
         if cand in df_out.columns:
             has_dvl_col = cand
             break
@@ -193,7 +208,6 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
     df = pd.read_csv(cfg.base_csv)
     if df.empty:
         raise RuntimeError(f"Base CSV is empty: {cfg.base_csv}")
-    # 在这里插入一行：构造“状态速度”列
     df = _add_state_velocity_cols(df)
 
     # 2) 滑动窗口构造
@@ -205,20 +219,38 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
 
     print(f"[BUILD] X shape = {X_raw.shape}, Y shape = {Y_raw.shape}")
 
-    # 3) 可选标准化
-    if cfg.output.normalize == "standard":
-        x_mean, x_std = _compute_zscore_stats(X_raw)
-        y_mean, y_std = _compute_zscore_stats(Y_raw)
+    # 3) 仅保存原始窗口数据（无全量标准化，避免数据泄漏）
+    if cfg.output.normalize != "none":
+        print(
+            "[BUILD] NOTE: output.normalize is ignored here; "
+            "scaler fitting has moved to train split in training/evaluation stage."
+        )
+    X = X_raw
+    Y = Y_raw
 
-        X = _apply_zscore(X_raw, x_mean, x_std)
-        Y = _apply_zscore(Y_raw, y_mean, y_std)
-    else:
-        X = X_raw
-        Y = Y_raw
-        x_mean = np.zeros(X.shape[-1], dtype=float)
-        x_std = np.ones(X.shape[-1], dtype=float)
-        y_mean = np.zeros(Y.shape[-1], dtype=float)
-        y_std = np.ones(Y.shape[-1], dtype=float)
+    # 3.1) 生成 mask 窗口（用于下游 mask-aware 训练/评估）
+    dvl_mask_1d = _resolve_mask_series(
+        df,
+        candidates=("dvl_mask", "has_dvl", "has_dvl_bi", "has_dvl_bi_mask"),
+        name="dvl_mask",
+    )
+    power_mask_1d = _resolve_mask_series(
+        df,
+        candidates=("power_mask", "has_power"),
+        name="power_mask",
+    )
+    dvl_mask_hist, dvl_mask_pred = _build_mask_windows_from_idx0(
+        dvl_mask_1d,
+        sw_res.idx0,
+        hist_len=int(cfg.sliding_cfg.hist_len),
+        pred_len=int(cfg.sliding_cfg.pred_len),
+    )
+    power_mask_hist, power_mask_pred = _build_mask_windows_from_idx0(
+        power_mask_1d,
+        sw_res.idx0,
+        hist_len=int(cfg.sliding_cfg.hist_len),
+        pred_len=int(cfg.sliding_cfg.pred_len),
+    )
 
     # 4) 写出 features / labels / meta
     feat_path = cfg.output.dir / "features.npz"
@@ -231,11 +263,15 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
         t0=sw_res.t0,
         idx0=sw_res.idx0,
         input_cols=np.array(list(cfg.sliding_cfg.input_cols), dtype=object),
+        dvl_mask_hist=dvl_mask_hist,
+        power_mask_hist=power_mask_hist,
     )
     np.savez_compressed(
         label_path,
         Y=Y,
         target_cols=np.array(list(cfg.sliding_cfg.target_cols), dtype=object),
+        dvl_mask=dvl_mask_pred,
+        power_mask=power_mask_pred,
     )
 
     meta: Dict[str, Any] = {
@@ -249,14 +285,18 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
         "target_cols": list(cfg.sliding_cfg.target_cols),
         "input_dim": int(X.shape[-1]),
         "target_dim": int(Y.shape[-1]),
+        "mask_keys": {
+            "features": ["dvl_mask_hist", "power_mask_hist"],
+            "labels": ["dvl_mask", "power_mask"],
+        },
+        "dvl_mask_available_ratio": float(dvl_mask_1d.mean()) if dvl_mask_1d.size > 0 else 0.0,
+        "power_mask_available_ratio": float(power_mask_1d.mean()) if power_mask_1d.size > 0 else 0.0,
         "valid_mask_col": cfg.sliding_cfg.valid_mask_col,
         "min_valid_ratio": float(cfg.sliding_cfg.min_valid_ratio),
         "drop_incomplete": bool(cfg.sliding_cfg.drop_incomplete),
-        "normalize": cfg.output.normalize,
-        "x_mean": x_mean.tolist(),
-        "x_std": x_std.tolist(),
-        "y_mean": y_mean.tolist(),
-        "y_std": y_std.tolist(),
+        "normalize": "none (deferred to train split scaler)",
+        "normalize_requested": cfg.output.normalize,
+        "normalize_applied": "none (deferred to train split scaler)",
         "n_rows_base": int(len(df)),
         "n_windows": int(X.shape[0]),
     }

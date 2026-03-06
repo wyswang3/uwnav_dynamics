@@ -1,23 +1,26 @@
 # src/uwnav_dynamics/cli/utils.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+"""Shared helpers for CLI wrappers that need yaml and checkpoint resolution."""
+
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import yaml
+from uwnav_dynamics.experiment.layout import load_yaml_dict, run_layout_from_train_yaml
 
 
 def load_yaml(path: Path) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    """Backward-compatible alias used by existing CLI entry points."""
+    return load_yaml_dict(path)
 
 
 def ensure_dir(p: Path) -> None:
+    """Create a directory tree if it does not already exist."""
     p.mkdir(parents=True, exist_ok=True)
 
 
 def _find_latest_ckpt(dir_: Path) -> Optional[Path]:
+    """Fallback search used when canonical best/last checkpoint names are absent."""
     cand = []
     for ext in ("*.pth", "*.pt"):
         cand += list(dir_.rglob(ext))
@@ -35,11 +38,8 @@ def resolve_run_out_dir(train_yaml: Path) -> Tuple[Path, str]:
     训练产物通常会落到 out_dir/variant/ 下（如果你 trainer 里这样设计了）。
     若你的实现不是这样，这里也允许通过 CLI override。
     """
-    cfg = load_yaml(train_yaml)
-    run = cfg.get("run", {})
-    out_dir = Path(run.get("out_dir", "out/ckpts/_unknown"))
-    variant = str(run.get("variant", "default"))
-    return out_dir, variant
+    layout = run_layout_from_train_yaml(train_yaml)
+    return layout.out_dir, layout.variant
 
 
 def pick_ckpt(ckpt_or_run_dir: Path) -> Path:

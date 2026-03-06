@@ -76,6 +76,12 @@ class S1PredictorConfig:
     blocks: S1BlocksConfig = field(default_factory=S1BlocksConfig)
 
 
+# Backward-compatible aliases for existing config loaders.
+BlocksConfig = S1BlocksConfig
+DampingConfig = DampingHeadConfig
+UncertaintyConfig = UncertaintyHeadConfig
+
+
 # =============================================================================
 # Model
 # =============================================================================
