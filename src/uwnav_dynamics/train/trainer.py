@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 
-@dataclass
+@dataclass(frozen=True)
 class TrainConfig:
     """
     训练超参（兼容旧版）
@@ -16,6 +16,7 @@ class TrainConfig:
     说明：
       - 为了兼容你现在的 load_train_config，我们暂时保留 lr/weight_decay/device/amp/out_dir 在这里；
       - 但在“管线模式”下（run_train/cli 传参），fit() 会优先使用外部传入的 device/run_dir/amp。
+      - 这些字段仍属于“纯配置值”，因此适合冻结；runtime override 一律走 replace()。
     """
     epochs: int = 30
     lr: float = 1e-3

@@ -1,0 +1,39 @@
+\section{Neural Dynamics Model}
+
+\subsection{Sequence-to-Horizon Prediction}
+
+The current neural predictor maps a history window to future increments:
+\begin{equation}
+\left(\Delta \hat{\bY}_{t+1:t+H}, \log \hat{\bm{\sigma}}^2_{t+1:t+H}\right)
+= f_{\theta}(\bX_t).
+\end{equation}
+
+The baseline implementation uses an LSTM encoder followed by prediction heads.
+
+\subsection{Rollout Semantics}
+
+Let $\by_t$ denote the last available target-aligned state proxy extracted from the input window.
+The predicted future sequence is reconstructed as
+\begin{equation}
+\hat{\by}_{t+j} = \by_t + \sum_{k=1}^{j} \Delta \hat{\by}_{t+k},
+\qquad j = 1, \dots, H.
+\end{equation}
+
+This is the ``delta-cumsum'' rollout used by the current training and evaluation pipelines.
+
+\subsection{Optional Structured Modules}
+
+The architecture may include the following modules:
+\begin{itemize}
+  \item \textbf{ThrusterLag}: transforms raw command history into an effective control sequence,
+  \item \textbf{HydroSSM}: provides a latent hydrodynamic memory state,
+  \item \textbf{DampingHead}: adds a damping-related prior to the predicted increments,
+  \item \textbf{UncertaintyHead}: predicts diagonal log-variance terms.
+\end{itemize}
+
+Accordingly, one may interpret the network abstractly as
+\begin{equation}
+\left(\Delta \hat{\bY}, \log \hat{\bm{\sigma}}^2\right)
+= f_{\theta}\!\left(\bX_t, \bh_t\right),
+\end{equation}
+where $\bh_t$ denotes optional latent structured features induced by the additional modules.

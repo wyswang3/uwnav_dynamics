@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 
-@dataclass
+@dataclass(frozen=True)
 class UncertaintyHeadConfig:
     """
     不确定度输出头（U1：对角异方差）

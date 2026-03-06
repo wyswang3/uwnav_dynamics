@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-@dataclass
+@dataclass(frozen=True)
 class DampingHeadConfig:
     """
     阻尼一致性输出头（耗散先验）

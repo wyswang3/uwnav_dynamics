@@ -158,10 +158,36 @@ def test_runtime_helpers_capture_effective_config(tmp_path):
     assert note is not None
 
     out_path = tmp_path / "resolved_train.yaml"
-    save_resolved_train_config(out_path, cfg, source_yaml="configs/train/demo.yaml")
+    overrides = TrainCliOverrides(
+        device="cpu",
+        batch_size=64,
+        out_dir=tmp_path / "override_out",
+        variant="B1_eval",
+    )
+    save_resolved_train_config(
+        out_path,
+        cfg,
+        source_yaml="configs/train/demo.yaml",
+        cli_overrides=overrides,
+        requested_device="cuda",
+        runtime_device="cpu",
+        run_dir=tmp_path / "out" / "baseline",
+        split_indices_path=tmp_path / "out" / "baseline" / "split_indices.npz",
+        x_scaler_path=tmp_path / "out" / "baseline" / "scalers" / "x_scaler.npz",
+        y_scaler_path=tmp_path / "out" / "baseline" / "scalers" / "y_scaler.npz",
+    )
     saved = yaml.safe_load(out_path.read_text(encoding="utf-8"))
 
     assert saved["run"]["name"] == "demo"
     assert saved["run"]["out_dir"] == str(tmp_path / "out")
     assert saved["data"]["data_dir"] == str(tmp_path / "data")
+    assert saved["_meta"]["schema_version"] == "train_resolved_v1"
     assert saved["_meta"]["source_yaml"] == "configs/train/demo.yaml"
+    assert saved["_meta"]["cli_overrides"]["device"] == "cpu"
+    assert saved["_meta"]["cli_overrides"]["batch_size"] == 64
+    assert saved["_meta"]["requested_device"] == "cuda"
+    assert saved["_meta"]["runtime_device"] == "cpu"
+    assert saved["_meta"]["run_dir"] == str(tmp_path / "out" / "baseline")
+    assert saved["_meta"]["split_indices_path"] == str(tmp_path / "out" / "baseline" / "split_indices.npz")
+    assert saved["_meta"]["x_scaler_path"] == str(tmp_path / "out" / "baseline" / "scalers" / "x_scaler.npz")
+    assert saved["_meta"]["y_scaler_path"] == str(tmp_path / "out" / "baseline" / "scalers" / "y_scaler.npz")

@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-@dataclass
+@dataclass(frozen=True)
 class ThrusterLagConfig:
     """
     推进器微动力单元（输入侧先验）

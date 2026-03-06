@@ -23,7 +23,7 @@ from uwnav_dynamics.models.blocks import (
 # Config
 # =============================================================================
 
-@dataclass
+@dataclass(frozen=True)
 class S1BlocksConfig:
     """
     S1 组合模型的 blocks 开关与参数集合。
@@ -38,7 +38,7 @@ class S1BlocksConfig:
     uncertainty: UncertaintyHeadConfig = field(default_factory=lambda: UncertaintyHeadConfig(enabled=False))
 
 
-@dataclass
+@dataclass(frozen=True)
 class S1PredictorConfig:
     """
     Baseline + blocks 的统一配置。
@@ -136,6 +136,9 @@ class S1Predictor(nn.Module):
         # ThrusterLag：enabled=False 时应等价于 identity（u_eff=u）
         self.thruster = ThrusterLag(cfg.blocks.thruster_lag, n_thrusters=self.u_in_dim)
 
+        # 这里的 replace() 只是在模块构造阶段补齐运行时维度，
+        # 不是为了让配置对象在训练过程中可变。
+        # 因此上层 dataclass 仍然应该保持 frozen，避免 train/eval 配置漂移。
         # HydroSSM：避免“就地修改 cfg”，用 replace 构造局部 cfg
         hydro_cfg = replace(cfg.blocks.hydro_ssm, u_dim=self.u_in_dim, y_dim=self.y_in_dim)
         self.hydro = HydroSSMCell(hydro_cfg)

@@ -1,0 +1,38 @@
+\section{Underwater Dynamics Model and Motivation}
+
+\subsection{Classical Dynamics Background}
+
+A standard underwater vehicle dynamics model may be written as
+\begin{equation}
+\bm{M}(\bnu)\dot{\bnu} + \bm{C}(\bnu)\bnu + \bm{D}(\bnu)\bnu + \bg(\boldsymbol{\eta}) = \btau,
+\end{equation}
+where $\bnu$ denotes body-frame velocity variables, $\boldsymbol{\eta}$ denotes pose variables, and $\btau$ denotes generalized actuation.
+
+This form is physically meaningful but difficult to identify precisely in practice because:
+\begin{itemize}
+  \item thruster dynamics are nonlinear and history-dependent,
+  \item hydrodynamic effects vary with operating condition,
+  \item sensor observations are multi-rate and partially missing,
+  \item the final use case is short-horizon prediction for control rather than full parameter recovery.
+\end{itemize}
+
+\subsection{Why a Data-Driven Surrogate}
+
+Instead of identifying all coefficients explicitly, the current project adopts a control-oriented surrogate:
+\begin{equation}
+\by_{t+1:t+H} \approx f_{\theta}(\bX_t).
+\end{equation}
+
+The model is therefore asked to approximate the locally relevant short-horizon response map from aligned history windows to future observable state proxies.
+
+\subsection{Structured Priors}
+
+The current architecture keeps room for weak physical priors:
+\begin{itemize}
+  \item actuator-side lag and saturation modeling,
+  \item latent hydrodynamic memory,
+  \item damping-related output bias,
+  \item heteroscedastic predictive uncertainty.
+\end{itemize}
+
+These priors do not replace the classical dynamics equation; they provide an intermediate layer between pure black-box prediction and full white-box identification.

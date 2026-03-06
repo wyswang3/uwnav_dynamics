@@ -2,49 +2,26 @@
 
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{bm}
-\usepackage{graphicx}
 \usepackage{geometry}
-\usepackage{booktabs}
 \usepackage{hyperref}
 
 \geometry{margin=1in}
 
-% ---------- macros ----------
-\newcommand{\bx}{\bm{x}}
-\newcommand{\bu}{\bm{u}}
-\newcommand{\bh}{\bm{h}}
-\newcommand{\bv}{\bm{v}}
-\newcommand{\ba}{\bm{a}}
-\newcommand{\bw}{\bm{\omega}}
-\newcommand{\bR}{\bm{R}}
-\newcommand{\bg}{\bm{g}}
-\newcommand{\bb}{\bm{b}}
-\newcommand{\bn}{\bm{n}}
-\newcommand{\Normal}{\mathcal{N}}
+\input{macros.tex}
 
-% 如果你想把宏独立成文件，就用这一句替代上面这段宏区：
-% \input{macros.tex}
-
-\title{Control-Oriented Data-Driven Dynamics Modeling\\
-for Underwater Robots}
+\title{Mathematical Notes for uwnav\_dynamics}
 \author{Project uwnav\_dynamics}
 \date{\today}
 
 \begin{document}
 \maketitle
-
 \tableofcontents
 \newpage
 
 \input{notation}
-\input{assumptions}
-\input{sensors}
-\input{dynamics}
-\input{uncertainty}
-\input{learning}
-\input{rollout}
-\input{control_interface}
-\input{discussion}
-\input{appendix}
+\input{dynamics_model}
+\input{network_structure}
+\input{training_objective}
+\input{control_integration}
 
 \end{document}

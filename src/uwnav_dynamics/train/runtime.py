@@ -36,6 +36,14 @@ def set_global_seed(seed: int) -> None:
 
 
 def apply_train_overrides(cfg: TrainYamlConfig, overrides: TrainCliOverrides) -> TrainYamlConfig:
+    """
+    Apply CLI overrides without mutating the original config object.
+
+    This function intentionally stays pure so the repository always has a clear
+    boundary between:
+      - canonical config parsed from yaml
+      - runtime-only overrides injected by CLI / pipeline
+    """
     run_cfg = cfg.run
     data_cfg = cfg.data
     train_cfg = cfg.train
@@ -91,14 +99,43 @@ def save_resolved_train_config(
     cfg: TrainYamlConfig,
     *,
     source_yaml: str | Path,
+    cli_overrides: Any | None = None,
+    requested_device: str | None = None,
     runtime_device: str | None = None,
+    run_dir: str | Path | None = None,
+    split_indices_path: str | Path | None = None,
+    x_scaler_path: str | Path | None = None,
+    y_scaler_path: str | Path | None = None,
 ) -> Path:
+    """
+    Persist the exact post-override training config snapshot.
+
+    `resolved_train.yaml` is meant to be an audit-friendly experiment record:
+      - reproduce the run later without re-guessing CLI overrides
+      - explain how train-time artifacts map to split/scaler files
+      - support future open-source and research review with a compact snapshot
+    """
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = _to_serializable(cfg)
-    payload["_meta"] = {"source_yaml": str(Path(source_yaml))}
+    payload["_meta"] = {
+        "schema_version": "train_resolved_v1",
+        "source_yaml": str(Path(source_yaml)),
+    }
+    if cli_overrides is not None:
+        payload["_meta"]["cli_overrides"] = _to_serializable(cli_overrides)
+    if requested_device is not None:
+        payload["_meta"]["requested_device"] = str(requested_device)
     if runtime_device is not None:
         payload["_meta"]["runtime_device"] = str(runtime_device)
+    if run_dir is not None:
+        payload["_meta"]["run_dir"] = str(Path(run_dir))
+    if split_indices_path is not None:
+        payload["_meta"]["split_indices_path"] = str(Path(split_indices_path))
+    if x_scaler_path is not None:
+        payload["_meta"]["x_scaler_path"] = str(Path(x_scaler_path))
+    if y_scaler_path is not None:
+        payload["_meta"]["y_scaler_path"] = str(Path(y_scaler_path))
     with open(out_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(payload, f, sort_keys=False, allow_unicode=True)
     return out_path

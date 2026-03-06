@@ -70,20 +70,27 @@ def main() -> int:
     if args.no_amp:
         amp_override = False
 
+    # 配置处理顺序固定为：
+    #   1) 原始 train yaml（canonical parser）
+    #   2) CLI override（纯函数替换，不改原对象）
+    #   3) runtime reconcile（例如 CPU 下关闭 pin_memory）
+    #   4) resolved_train.yaml（记录最终实际执行配置）
+    cli_overrides = TrainCliOverrides(
+        data_dir=args.data_dir,
+        device=args.device,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=(args.pin_memory.lower() == "true") if args.pin_memory is not None else None,
+        out_dir=args.out_dir,
+        variant=args.variant,
+        seed=args.seed,
+        amp=amp_override,
+    )
+
     cfg = apply_train_overrides(
         cfg,
-        TrainCliOverrides(
-            data_dir=args.data_dir,
-            device=args.device,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            pin_memory=(args.pin_memory.lower() == "true") if args.pin_memory is not None else None,
-            out_dir=args.out_dir,
-            variant=args.variant,
-            seed=args.seed,
-            amp=amp_override,
-        ),
+        cli_overrides,
     )
 
     # ------------------------------
@@ -113,7 +120,13 @@ def main() -> int:
         run_dir / "resolved_train.yaml",
         cfg,
         source_yaml=args.yaml,
+        cli_overrides=cli_overrides,
+        requested_device=str(cfg.run.device),
         runtime_device=str(device),
+        run_dir=run_dir,
+        split_indices_path=run_layout.split_indices_path,
+        x_scaler_path=run_layout.x_scaler_path,
+        y_scaler_path=run_layout.y_scaler_path,
     )
 
     # ------------------------------

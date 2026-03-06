@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+"""
+Canonical train-yaml parser.
+
+Design intent:
+  - This module is the single source of truth for parsing `configs/train/*.yaml`.
+  - Train and eval must share the same schema contract so a checkpoint is always
+    reconstructed with the exact model topology used during training.
+  - The parser is intentionally strict: unknown keys fail fast, because silent
+    schema drift is far more dangerous than a loud configuration error in
+    research code and future open-source maintenance.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional, Iterable
@@ -117,6 +129,24 @@ def _check_no_unknown_keys(d: Dict[str, Any], allowed: Iterable[str], *, where: 
     extra = [k for k in d.keys() if k not in allowed_set]
     if extra:
         raise KeyError(f"Unknown keys in {where}: {extra}. Allowed: {sorted(allowed_set)}")
+
+
+def _warn_if_out_dir_repeats_variant(out_dir: Path, variant: str) -> None:
+    """
+    轻量校验 run.out_dir / run.variant 的拼接契约。
+
+    这里暂时只给 warning，不直接抛错，原因是：
+      - 历史实验可能已经把 variant 手工写进 out_dir；
+      - PR1 的目标是先把契约写清楚并修正样例，避免一次性打断旧工作流。
+    后续如果仓库内配置都已收敛，再考虑升级成 hard error。
+    """
+    out_dir_name = Path(out_dir).name
+    if out_dir_name == str(variant):
+        print(
+            "[WARN] run.out_dir already ends with run.variant; "
+            "the canonical contract is run_dir = out_dir / variant, so writing "
+            "variant into out_dir will create duplicated nesting."
+        )
 
 
 def load_yaml(path: Path) -> Dict[str, Any]:
@@ -261,6 +291,13 @@ def _parse_blocks(model_d: Dict[str, Any], *, where: str) -> BlocksConfig:
 # =============================================================================
 
 def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
+    """
+    Parse a raw yaml mapping into the fully-typed training config.
+
+    `TrainYamlConfig` is the canonical config contract of the repository.
+    Runtime overrides may replace selected fields later, but downstream code
+    should not re-interpret the yaml independently.
+    """
     # ---------------- run ----------------
     run_d = _req(d, "run", where="root")
     if not isinstance(run_d, dict):
@@ -280,6 +317,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         out_dir=_as_path(run_d.get("out_dir", "out/ckpts/s1_baseline"), where="run.out_dir"),
         variant=str(run_d.get("variant", "default")),
     )
+    _warn_if_out_dir_repeats_variant(run.out_dir, run.variant)
 
     # ---------------- data ----------------
     data_d = _req(d, "data", where="root")
@@ -438,5 +476,11 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
 
 
 def load_train_config(yaml_path: Path) -> TrainYamlConfig:
+    """
+    Load the canonical training config from yaml.
+
+    Eval code should reuse this function instead of maintaining a second,
+    partial model builder. That keeps train/eval topology strictly aligned.
+    """
     d = load_yaml(yaml_path)
     return build_from_dict(d)

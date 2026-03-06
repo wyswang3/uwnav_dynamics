@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-@dataclass
+@dataclass(frozen=True)
 class HydroSSMConfig:
     """
     Hydro-SSM 隐状态单元（流体记忆效应先验）

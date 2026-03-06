@@ -1,0 +1,43 @@
+\section{Control Integration}
+
+\subsection{Model Interface for Control}
+
+The long-term target is to use the learned predictor as a short-horizon dynamics model inside a controller:
+\begin{equation}
+\hat{\by}_{t+1:t+H} = f_{\theta}(\bX_t, \bu_{t:t+H-1}),
+\end{equation}
+possibly together with uncertainty outputs.
+
+\subsection{MPC-Oriented Objective}
+
+A generic finite-horizon control objective can be written as
+\begin{equation}
+\min_{\bu_{t:t+H-1}}
+\sum_{k=0}^{H-1}
+\left(
+\|\hat{\bx}_{t+k} - \bx^{\star}_{t+k}\|_{\bm{Q}}^{2}
++
+\|\bu_{t+k}\|_{\bm{R}}^{2}
+\right),
+\end{equation}
+subject to actuator and safety constraints.
+
+\subsection{Current Status}
+
+The repository is not yet an MPC implementation.
+However, the current training and evaluation design already prepares the ingredients needed for future integration:
+\begin{itemize}
+  \item short-horizon rollout semantics,
+  \item uncertainty outputs,
+  \item configuration and artifact traceability,
+  \item explicit room for structured priors.
+\end{itemize}
+
+\subsection{Near-Term Research Direction}
+
+Before closed-loop integration, the following steps are still required:
+\begin{itemize}
+  \item mask-aware sparse supervision for low-rate observations,
+  \item stronger rollout contract consistency,
+  \item clearer evaluation metrics that reflect control utility.
+\end{itemize}

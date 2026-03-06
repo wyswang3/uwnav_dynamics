@@ -36,7 +36,8 @@ def resolve_run_out_dir(train_yaml: Path) -> Tuple[Path, str]:
       run.out_dir: e.g. out/ckpts/pooltest02_s1_lstm_v0
       run.variant: e.g. B0_baseline
     训练产物通常会落到 out_dir/variant/ 下（如果你 trainer 里这样设计了）。
-    若你的实现不是这样，这里也允许通过 CLI override。
+    `resolved_train.yaml` 会记录一次训练最终实际采用的 run_dir，但 CLI 对外接口
+    仍保持“从 train yaml 推导默认 run_dir”的约定不变。
     """
     layout = run_layout_from_train_yaml(train_yaml)
     return layout.out_dir, layout.variant

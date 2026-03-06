@@ -1,0 +1,49 @@
+\section{Training Objective}
+
+\subsection{Current Baseline Objective}
+
+The current baseline predicts both mean trajectory increments and diagonal uncertainty.
+After rollout, the baseline objective is a diagonal Gaussian negative log-likelihood:
+\begin{equation}
+\mathcal{L}_{\mathrm{NLL}}
+=
+\sum_{j=1}^{H}
+\sum_{d=1}^{D_{\mathrm{out}}}
+\left[
+\frac{\left(y_{t+j,d} - \hat{y}_{t+j,d}\right)^2}{\hat{\sigma}_{t+j,d}^{2}}
++
+\log \hat{\sigma}_{t+j,d}^{2}
+\right].
+\end{equation}
+
+\subsection{Dense and Sparse Supervision}
+
+The engineering challenge is that supervision is not uniformly dense across modalities:
+\begin{itemize}
+  \item IMU-related target components are available on the main aligned axis,
+  \item DVL-related velocity information is lower-rate and naturally sparse.
+\end{itemize}
+
+This motivates a mask-aware formulation:
+\begin{equation}
+\mathcal{L}_{\mathrm{mask}}
+=
+\sum_{j=1}^{H}
+\sum_{d=1}^{D_{\mathrm{out}}}
+m_{t+j,d}
+\left[
+\frac{\left(y_{t+j,d} - \hat{y}_{t+j,d}\right)^2}{\hat{\sigma}_{t+j,d}^{2}}
++
+\log \hat{\sigma}_{t+j,d}^{2}
+\right],
+\end{equation}
+where $m_{t+j,d} \in \{0,1\}$ encodes whether the target dimension is valid at that time step.
+
+\subsection{Interpretation}
+
+In the current repository, the dense baseline is already implemented, while the fully mask-aware loss is a planned extension.
+The mathematical form above is therefore both:
+\begin{itemize}
+  \item a precise statement of the intended sparse-supervision objective,
+  \item a bridge between the current baseline and future mask-aware training.
+\end{itemize}
