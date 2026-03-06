@@ -7,8 +7,9 @@
 
 主要功能：
 1. 解析 `run / data / model / rollout / loss / train` 配置段。
-2. 对模型 blocks、索引布局与 runtime schema 执行严格校验。
-3. 保证 train / eval 使用同一份模型结构解释结果，避免配置漂移。
+2. 解析并校验 P0 研发阶段的最小辅助头配置，确保旧 YAML 继续兼容。
+3. 对模型 blocks、索引布局与 runtime schema 执行严格校验。
+4. 保证 train / eval 使用同一份模型结构解释结果，避免配置漂移。
 
 数据流：
 train yaml
@@ -27,11 +28,13 @@ train.run_train / eval.config
 备注：
 - 本模块只做配置解析与静态校验，不承担 rollout 数值执行。
 - `cfg_model.y_in_idx` 是 execution layout contract 的唯一执行真源。
+- P0.1 的 `model.aux_heads` 目前只在 parser 中收口并校验，
+  具体接入模型前向由后续 patch 负责。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional, Iterable
 
@@ -59,6 +62,20 @@ class LossConfig:
     type: str = "nll_diag"
     logvar_clip_min: float = -10.0
     logvar_clip_max: float = 6.0
+    # P0.1 保守起点建议 0.1 或 0.2；默认 0.0 表示完全关闭 auxiliary DVL loss。
+    dvl_obs_weight: float = 0.0
+    dvl_obs_delta: float = 1.0
+
+
+@dataclass(frozen=True)
+class AuxHeadConfig:
+    enabled: bool = False
+    hidden: int = 128
+
+
+@dataclass(frozen=True)
+class ModelAuxHeadsConfig:
+    dvl_obs: AuxHeadConfig = field(default_factory=AuxHeadConfig)
 
 
 @dataclass(frozen=True)
@@ -85,6 +102,7 @@ class TrainYamlConfig:
     rollout: RolloutConfig
     loss: LossConfig
     train: TrainConfig
+    model_aux_heads: ModelAuxHeadsConfig = field(default_factory=ModelAuxHeadsConfig)
 
 
 # =============================================================================
@@ -306,6 +324,38 @@ def _parse_blocks(model_d: Dict[str, Any], *, where: str) -> BlocksConfig:
     )
 
 
+def _parse_aux_head(d: Dict[str, Any], *, where: str) -> AuxHeadConfig:
+    _check_no_unknown_keys(
+        d,
+        allowed=["enabled", "hidden"],
+        where=where,
+    )
+    hidden = _as_int(d.get("hidden", 128), where=f"{where}.hidden")
+    if hidden <= 0:
+        raise ValueError(f"{where}.hidden must be > 0, got {hidden}")
+    return AuxHeadConfig(
+        enabled=_as_bool(d.get("enabled", False), where=f"{where}.enabled"),
+        hidden=hidden,
+    )
+
+
+def _parse_model_aux_heads(model_d: Dict[str, Any], *, where: str) -> ModelAuxHeadsConfig:
+    aux_d = model_d.get("aux_heads", {}) or {}
+    if not isinstance(aux_d, dict):
+        raise TypeError(f"{where}.aux_heads must be a dict")
+    _check_no_unknown_keys(
+        aux_d,
+        allowed=["dvl_obs"],
+        where=f"{where}.aux_heads",
+    )
+    dvl_d = aux_d.get("dvl_obs", {}) or {}
+    if not isinstance(dvl_d, dict):
+        raise TypeError(f"{where}.aux_heads.dvl_obs must be a dict")
+    return ModelAuxHeadsConfig(
+        dvl_obs=_parse_aux_head(dvl_d, where=f"{where}.aux_heads.dvl_obs"),
+    )
+
+
 # =============================================================================
 # Main builder
 # =============================================================================
@@ -394,6 +444,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             "y_in_idx",
             "use_thruster_as_replacement",
             "use_hydro_feat",
+            "aux_heads",
             "blocks",
         ],
         where="model",
@@ -401,6 +452,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
 
     # 强制要求 blocks 写全
     blocks = _parse_blocks(model_d, where="model")
+    model_aux_heads = _parse_model_aux_heads(model_d, where="model")
 
     model = S1PredictorConfig(
         din=int(model_d.get("din", 25)),
@@ -441,7 +493,11 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     if not isinstance(loss_d, dict):
         raise TypeError("loss must be a dict")
 
-    _check_no_unknown_keys(loss_d, allowed=["type", "logvar_clip"], where="loss")
+    _check_no_unknown_keys(
+        loss_d,
+        allowed=["type", "logvar_clip", "dvl_obs_weight", "dvl_obs_delta"],
+        where="loss",
+    )
 
     loss_type = str(loss_d.get("type", "nll_diag"))
     if loss_type != "nll_diag":
@@ -451,10 +507,24 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
         raise TypeError("loss.logvar_clip must be a list/tuple of [min,max]")
 
+    dvl_obs_weight = _as_float(loss_d.get("dvl_obs_weight", 0.0), where="loss.dvl_obs_weight")
+    dvl_obs_delta = _as_float(loss_d.get("dvl_obs_delta", 1.0), where="loss.dvl_obs_delta")
+    if dvl_obs_weight < 0.0:
+        raise ValueError(f"loss.dvl_obs_weight must be >= 0, got {dvl_obs_weight}")
+    if dvl_obs_delta <= 0.0:
+        raise ValueError(f"loss.dvl_obs_delta must be > 0, got {dvl_obs_delta}")
+    if (not model_aux_heads.dvl_obs.enabled) and dvl_obs_weight > 0.0:
+        raise ValueError(
+            "loss.dvl_obs_weight > 0 requires model.aux_heads.dvl_obs.enabled=true "
+            "to avoid silently enabling an unused auxiliary objective"
+        )
+
     loss = LossConfig(
         type=loss_type,
         logvar_clip_min=float(clip[0]),
         logvar_clip_max=float(clip[1]),
+        dvl_obs_weight=dvl_obs_weight,
+        dvl_obs_delta=dvl_obs_delta,
     )
 
     # ---------------- optim/train -> TrainConfig ----------------
@@ -491,6 +561,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         run=run,
         data=data,
         model=model,
+        model_aux_heads=model_aux_heads,
         rollout=rollout,
         loss=loss,
         train=train_cfg,

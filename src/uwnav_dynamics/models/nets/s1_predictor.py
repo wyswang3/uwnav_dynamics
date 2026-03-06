@@ -3,12 +3,14 @@
 
 模块职责：
 定义当前主模型 `S1Predictor`，
-将 LSTM backbone 与可选物理先验 blocks 组合为统一的多步增量预测器。
+将 LSTM backbone、可选物理先验 blocks 与 P0 阶段辅助观测头
+组合为统一的多步增量预测器。
 
 主要功能：
 1. 根据 canonical `S1PredictorConfig` 构建 encoder、head 与可选 blocks。
 2. 使用 `u_in_idx / y_in_idx` 从输入特征中切出控制量与状态量。
 3. 在模型构造阶段校验 execution layout contract，并检查 damping 配置与输出语义的一致性。
+4. 在不破坏主 `forward()` 契约的前提下，为训练阶段提供 `forward_with_aux()`。
 
 数据流：
 TrainYamlConfig.model
@@ -19,7 +21,7 @@ slice u / y from X
     ↓
 encoder + optional blocks
     ↓
-dY / logvar
+dY / logvar / optional aux heads
 
 依赖模块：
 - torch
@@ -30,13 +32,14 @@ dY / logvar
 备注：
 - `cfg_model.y_in_idx` 只负责执行层索引解释。
 - 输出 9 维的物理语义分组由 semantic output layout contract 单独管理。
+- P0.1 的 `dvl_obs` 仅作为训练辅助头，不改变主 state head、eval 或 artifact 协议。
 """
 
 # SPDX-License-Identifier: AGPL-3.0-or-later
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Sequence
+from typing import Any, Sequence
 
 import torch
 import torch.nn as nn
@@ -75,6 +78,29 @@ class S1BlocksConfig:
 
 
 @dataclass(frozen=True)
+class AuxHeadConfig:
+    """
+    单个辅助观测头的最小配置。
+
+    P0.1 只启用 `dvl_obs`，
+    通过 enabled/hidden 控制是否构造辅助解码器及其宽度。
+    """
+    enabled: bool = False
+    hidden: int = 128
+
+
+@dataclass(frozen=True)
+class AuxHeadsConfig:
+    """
+    P0 阶段的辅助观测头配置集合。
+
+    当前只保留 `dvl_obs`，
+    后续 P0.2 若新增 IMU 辅助头，可在此 dataclass 上做兼容扩展。
+    """
+    dvl_obs: AuxHeadConfig = field(default_factory=AuxHeadConfig)
+
+
+@dataclass(frozen=True)
 class S1PredictorConfig:
     """
     Baseline + blocks 的统一配置。
@@ -108,6 +134,9 @@ class S1PredictorConfig:
     use_thruster_as_replacement: bool = True
     use_hydro_feat: bool = True
 
+    # ---- P0 辅助观测头 ----
+    aux_heads: AuxHeadsConfig = field(default_factory=AuxHeadsConfig)
+
     # ---- blocks ----
     blocks: S1BlocksConfig = field(default_factory=S1BlocksConfig)
 
@@ -139,9 +168,10 @@ class S1Predictor(nn.Module):
       4) UncertaintyHead：可替换 baseline 的 logvar 输出（U1）
     """
 
-    def __init__(self, cfg: S1PredictorConfig):
+    def __init__(self, cfg: S1PredictorConfig | Any):
         super().__init__()
-        self.cfg = cfg
+        self.cfg = self._resolve_cfg(cfg)
+        cfg = self.cfg
         validate_feature_indices(cfg.u_in_idx, upper_bound=cfg.din, name="model.u_in_idx")
         validate_execution_layout(cfg.y_in_idx, din=cfg.din, dout=cfg.dout)
         semantic_layout = canonical_semantic_output_layout(cfg.dout)
@@ -153,9 +183,15 @@ class S1Predictor(nn.Module):
         y_idx = torch.as_tensor(list(cfg.y_in_idx), dtype=torch.long)
         self.register_buffer("_u_idx", u_idx, persistent=False)
         self.register_buffer("_y_idx", y_idx, persistent=False)
+        self.register_buffer(
+            "_dvl_semantic_idx",
+            torch.as_tensor(list(semantic_layout.group_indices["vel"]), dtype=torch.long),
+            persistent=False,
+        )
 
         self.u_in_dim = int(self._u_idx.numel())
         self.y_in_dim = int(self._y_idx.numel())
+        self.dvl_obs_dim = int(self._dvl_semantic_idx.numel())
 
         # ---------------------------
         # 1) Backbone encoder (LSTM)
@@ -212,12 +248,59 @@ class S1Predictor(nn.Module):
             nn.Linear(cfg.rnn_hidden, out_dim),
         )
 
+        if cfg.aux_heads.dvl_obs.enabled:
+            self.dvl_obs_head = nn.Sequential(
+                nn.Linear(head_in, int(cfg.aux_heads.dvl_obs.hidden)),
+                nn.ReLU(inplace=True),
+                nn.Linear(int(cfg.aux_heads.dvl_obs.hidden), cfg.pred_len * self.dvl_obs_dim),
+            )
+        else:
+            self.dvl_obs_head = None
+
         # ---- uncertainty feature projection ----
         # 业务逻辑：用可解释特征 (h_last, y_last, u_last) 生成 logvar
         feat_in = hydro_hidden + self.y_in_dim + self.u_in_dim
         self.unc_feat = nn.Sequential(
             nn.Linear(feat_in, int(unc_cfg.feat_dim)),
             nn.ReLU(inplace=True),
+        )
+
+    @staticmethod
+    def _resolve_cfg(cfg: S1PredictorConfig | Any) -> S1PredictorConfig:
+        """
+        兼容两类构造入口：
+          1. 直接传入 `S1PredictorConfig`
+          2. 传入完整 `TrainYamlConfig`（含 parser 已解析的 `model_aux_heads`）
+
+        这样 Patch B 不需要改 train/config.py 或 run_train.py，
+        也能把 Patch A 已解析的辅助头配置真正接到模型构造。
+        """
+        if isinstance(cfg, S1PredictorConfig):
+            return cfg
+
+        if hasattr(cfg, "model") and hasattr(cfg, "model_aux_heads"):
+            model_cfg = getattr(cfg, "model")
+            model_aux_heads = getattr(cfg, "model_aux_heads")
+            if not isinstance(model_cfg, S1PredictorConfig):
+                raise TypeError("cfg.model must be S1PredictorConfig when constructing S1Predictor from TrainYamlConfig")
+
+            dvl_obs_cfg = getattr(model_aux_heads, "dvl_obs", None)
+            if dvl_obs_cfg is None:
+                return model_cfg
+
+            return replace(
+                model_cfg,
+                aux_heads=AuxHeadsConfig(
+                    dvl_obs=AuxHeadConfig(
+                        enabled=bool(getattr(dvl_obs_cfg, "enabled", False)),
+                        hidden=int(getattr(dvl_obs_cfg, "hidden", 128)),
+                    )
+                ),
+            )
+
+        raise TypeError(
+            "S1Predictor expects S1PredictorConfig or a config object exposing "
+            "`model` + `model_aux_heads`"
         )
 
     # ---------------------------
@@ -251,7 +334,7 @@ class S1Predictor(nn.Module):
     # forward
     # ---------------------------
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward_with_aux(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor | None]]:
         """
         Args:
           x: (B,L,Din)
@@ -259,6 +342,7 @@ class S1Predictor(nn.Module):
         Returns:
           dY:     (B,H,Dout)  预测增量
           logvar: (B,H,Dout)  对角 log-variance
+          aux:    {"dvl_obs": Optional[(B,H,vel_dim)]}
         """
         if x.ndim != 3 or x.shape[-1] != self.cfg.din:
             raise ValueError(f"x must be (B,L,{self.cfg.din}), got {tuple(x.shape)}")
@@ -313,4 +397,17 @@ class S1Predictor(nn.Module):
         else:
             logvar = logvar_base
 
+        aux: dict[str, torch.Tensor | None] = {"dvl_obs": None}
+        if self.dvl_obs_head is not None:
+            dvl_out = self.dvl_obs_head(h_feat).view(B, H, self.dvl_obs_dim)
+            aux["dvl_obs"] = dvl_out
+
+        return dY, logvar, aux
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        对外保持旧路径兼容：仍然只返回主 state head 的 `dY / logvar`。
+        辅助观测头输出通过 `forward_with_aux()` 获取。
+        """
+        dY, logvar, _aux = self.forward_with_aux(x)
         return dY, logvar

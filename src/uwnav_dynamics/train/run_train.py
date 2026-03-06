@@ -10,6 +10,7 @@
 2. 准备 split / scaler / DataLoader，并写出 `resolved_train.yaml`。
 3. 基于 execution layout contract 构建 rollout loss，保证 train / eval 对 `y0` 解释一致。
 4. 在 PR5 中支持 batch `target_mask` 驱动的 mask-aware supervision。
+5. 在 P0.1 中以最小方式接入 `dvl_obs` 辅助监督，不改变主 state head 路径。
 
 数据流：
 train yaml + CLI override
@@ -29,10 +30,13 @@ best.pth / last.pth
 - uwnav_dynamics.train.data_pipeline
 - uwnav_dynamics.models.utils.execution_layout
 - uwnav_dynamics.models.utils.rollout
+- uwnav_dynamics.models.utils.semantic_output_layout
+- uwnav_dynamics.models.losses.auxiliary
 
 备注：
 - 本模块只接入 execution layout contract，不负责语义分组解释。
 - `target_mask` 若存在，则是训练运行时唯一的监督有效性真源。
+- `dvl_obs` 辅助监督只读取 semantic velocity group，不改变主 state head 的训练语义。
 """
 
 from __future__ import annotations
@@ -59,25 +63,74 @@ from uwnav_dynamics.train.trainer import fit
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor
 from uwnav_dynamics.models.utils.execution_layout import extract_y0_from_x_last
 from uwnav_dynamics.models.utils.rollout import rollout_from_delta
+from uwnav_dynamics.models.utils.semantic_output_layout import canonical_semantic_output_layout
+from uwnav_dynamics.models.losses.auxiliary import masked_huber_loss
 from uwnav_dynamics.models.losses.nll import gaussian_nll_diag, gaussian_nll_diag_masked
 
 
-def build_loss_fn(logvar_clip_min: float, logvar_clip_max: float, y_in_idx):
+def build_loss_fn(
+    logvar_clip_min: float,
+    logvar_clip_max: float,
+    y_in_idx,
+    *,
+    dout: int = 9,
+    dvl_obs_weight: float = 0.0,
+    dvl_obs_delta: float = 1.0,
+):
     """
-    v0 loss:
-      model(X) -> dY, logvar
-      y0 = X_last_state
-      y_hat = y0 + cumsum(dY)
-      loss = diag NLL(y_hat, Y, logvar)
+    P0.1 复合损失：
+      1) 主 state 路径保持原逻辑：
+         model -> dY/logvar -> rollout_from_delta -> dense/masked NLL
+      2) 若启用 dvl_obs 辅助头：
+         只在 velocity semantic group 上计算 masked Huber auxiliary loss
     """
+    vel_idx_cpu = torch.as_tensor(
+        list(canonical_semantic_output_layout(dout).group_indices["vel"]),
+        dtype=torch.long,
+    )
+
     def _loss(model, X, Y, target_mask=None):
-        dY, logvar = model(X)
+        if hasattr(model, "forward_with_aux"):
+            dY, logvar, aux = model.forward_with_aux(X)
+        else:
+            dY, logvar = model(X)
+            aux = {"dvl_obs": None}
+
         y0 = extract_y0_from_x_last(X, y_in_idx)
         y_hat = rollout_from_delta(y0, dY)
         logvar = torch.clamp(logvar, min=logvar_clip_min, max=logvar_clip_max)
+
         if target_mask is not None:
-            return gaussian_nll_diag_masked(y_hat, Y, logvar, target_mask)
-        return gaussian_nll_diag(y_hat, Y, logvar)
+            state_loss = gaussian_nll_diag_masked(y_hat, Y, logvar, target_mask)
+        else:
+            state_loss = gaussian_nll_diag(y_hat, Y, logvar)
+
+        if float(dvl_obs_weight) <= 0.0:
+            return state_loss
+
+        dvl_enabled = bool(getattr(getattr(model.cfg, "aux_heads", None), "dvl_obs", None) and model.cfg.aux_heads.dvl_obs.enabled)
+        if not dvl_enabled:
+            raise ValueError("loss.dvl_obs_weight > 0 but model.cfg.aux_heads.dvl_obs.enabled is False")
+
+        if "dvl_obs" not in aux:
+            raise ValueError("model.forward_with_aux() must return stable aux key 'dvl_obs'")
+        dvl_obs = aux["dvl_obs"]
+        if dvl_obs is None:
+            raise ValueError("model.cfg.aux_heads.dvl_obs.enabled is True but aux['dvl_obs'] is None")
+        if target_mask is None:
+            raise ValueError("dvl auxiliary loss requires runtime target_mask; got None")
+
+        vel_idx = vel_idx_cpu.to(device=Y.device)
+        y_vel = Y.index_select(dim=-1, index=vel_idx)
+        mask_vel = target_mask.index_select(dim=-1, index=vel_idx)
+        dvl_aux_loss = masked_huber_loss(
+            dvl_obs,
+            y_vel,
+            mask_vel,
+            delta=dvl_obs_delta,
+        )
+        return state_loss + float(dvl_obs_weight) * dvl_aux_loss
+
     return _loss
 
 
@@ -176,9 +229,16 @@ def main() -> int:
     # ------------------------------
     prepared = prepare_train_data(cfg.data, run_layout)
 
-    model = S1Predictor(cfg.model)
+    model = S1Predictor(cfg)
 
-    loss_fn = build_loss_fn(cfg.loss.logvar_clip_min, cfg.loss.logvar_clip_max, cfg.model.y_in_idx)
+    loss_fn = build_loss_fn(
+        cfg.loss.logvar_clip_min,
+        cfg.loss.logvar_clip_max,
+        cfg.model.y_in_idx,
+        dout=cfg.model.dout,
+        dvl_obs_weight=cfg.loss.dvl_obs_weight,
+        dvl_obs_delta=cfg.loss.dvl_obs_delta,
+    )
 
     # ------------------------------
     # Fit (pipeline-style): pass device/run_dir/amp
