@@ -1,3 +1,33 @@
+"""
+模块名称：训练执行器
+
+模块职责：
+负责执行 epoch 级训练与验证循环，
+并将 DataLoader batch、loss_fn、optimizer、AMP 与 checkpoint 保存串起来。
+
+主要功能：
+1. 支持 `(X, Y)` 与 `(X, Y, target_mask)` 两类 batch。
+2. 在训练与验证阶段统一调用外部注入的 `loss_fn`。
+3. 管理设备迁移、AMP、梯度裁剪与 best/last checkpoint 落盘。
+
+数据流：
+prepare_train_data() 产出的 DataLoader
+    ↓
+trainer._to_device()
+    ↓
+loss_fn(model, X, Y, optional target_mask)
+    ↓
+optimizer / checkpoint
+
+依赖模块：
+- torch
+- torch.utils.data
+
+备注：
+- 本模块不构造 supervision mask，只负责按 batch 传递。
+- `target_mask` 若存在，则是训练运行时唯一的 mask 执行真源。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -27,21 +57,24 @@ class TrainConfig:
     amp: bool = True
     out_dir: Path = Path("out/ckpts/s1_baseline")
 
-    # 未来可扩展：save_best/save_last/metric 等
     save_best: bool = True
     save_last: bool = True
-    metric: str = "val_loss"  # 预留
+    metric: str = "val_loss"
 
 
-def _to_device(batch: Tuple[torch.Tensor, torch.Tensor], device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+def _to_device(
+    batch: Tuple[torch.Tensor, ...],
+    device: torch.device,
+) -> Tuple[torch.Tensor, ...]:
     """
     小优化：
       - non_blocking 只有在 CUDA + pinned memory 下才真正有意义；
       - CPU 时开 non_blocking 也不会错，但容易造成“看起来很玄学”的性能误判。
     """
+    if len(batch) not in (2, 3):
+        raise ValueError(f"batch must be (X,Y) or (X,Y,target_mask), got len={len(batch)}")
     nb = (device.type == "cuda")
-    X, Y = batch
-    return X.to(device, non_blocking=nb), Y.to(device, non_blocking=nb)
+    return tuple(t.to(device, non_blocking=nb) for t in batch)
 
 
 def train_one_epoch(
@@ -58,14 +91,15 @@ def train_one_epoch(
     total = 0.0
     n = 0
 
-    for X, Y in loader:
-        X, Y = _to_device((X, Y), device)
+    for batch in loader:
+        moved = _to_device(batch, device)
+        X, Y = moved[0], moved[1]
+        target_mask = moved[2] if len(moved) == 3 else None
         optimizer.zero_grad(set_to_none=True)
 
         if scaler is not None and amp_enabled and device.type == "cuda":
-            # torch.cuda.amp.autocast is fine; for torch>=2.0 也可用 torch.autocast("cuda")
             with torch.cuda.amp.autocast():
-                loss = loss_fn(model, X, Y)
+                loss = loss_fn(model, X, Y, target_mask)
 
             scaler.scale(loss).backward()
             if grad_clip and grad_clip > 0:
@@ -74,7 +108,7 @@ def train_one_epoch(
             scaler.step(optimizer)
             scaler.update()
         else:
-            loss = loss_fn(model, X, Y)
+            loss = loss_fn(model, X, Y, target_mask)
             loss.backward()
             if grad_clip and grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -92,9 +126,11 @@ def eval_one_epoch(model, loader: DataLoader, loss_fn, device: torch.device) -> 
     total = 0.0
     n = 0
 
-    for X, Y in loader:
-        X, Y = _to_device((X, Y), device)
-        loss = loss_fn(model, X, Y)
+    for batch in loader:
+        moved = _to_device(batch, device)
+        X, Y = moved[0], moved[1]
+        target_mask = moved[2] if len(moved) == 3 else None
+        loss = loss_fn(model, X, Y, target_mask)
         total += float(loss.item()) * X.shape[0]
         n += X.shape[0]
 
@@ -102,12 +138,6 @@ def eval_one_epoch(model, loader: DataLoader, loss_fn, device: torch.device) -> 
 
 
 def _resolve_device(device: Optional[torch.device], cfg_device: str) -> torch.device:
-    """
-    统一 device 决策：
-      - 优先使用外部传入 device（管线）
-      - 否则使用 cfg.device
-      - 若请求 cuda 但不可用，回落 cpu
-    """
     if device is not None:
         return device
 
@@ -119,10 +149,6 @@ def _resolve_device(device: Optional[torch.device], cfg_device: str) -> torch.de
 
 
 def _resolve_out_dir(run_dir: Optional[Path], cfg_out_dir: Path) -> Path:
-    """
-    训练输出目录优先级：
-      run_dir（管线） > cfg.out_dir（旧逻辑）
-    """
     return Path(run_dir) if run_dir is not None else Path(cfg_out_dir)
 
 
@@ -133,12 +159,10 @@ def fit(
     cfg: TrainConfig,
     loss_fn,
     *,
-    # ---- 管线可选注入：让 run_train/cli 生效 ----
     device: Optional[torch.device] = None,
     run_dir: Optional[Path] = None,
     amp: Optional[bool] = None,
     optimizer: Optional[torch.optim.Optimizer] = None,
-    # 未来扩展：scheduler / callbacks / loggers
 ) -> Dict[str, Any]:
     """
     返回训练摘要，方便 pipeline/报告消费：
@@ -149,7 +173,6 @@ def fit(
 
     device = _resolve_device(device, cfg.device)
 
-    # AMP 决策：外部优先，其次 cfg.amp；但只有 CUDA 才启用 scaler
     amp_enabled = bool(cfg.amp) if amp is None else bool(amp)
     if device.type != "cuda":
         amp_enabled = False
@@ -164,7 +187,6 @@ def fit(
         scaler = torch.cuda.amp.GradScaler()
 
     best_val = float("inf")
-    # 建议统一 .pth（和你 evaluate/cli 更一致）；你现在 .pt 也可以，但尽量统一
     best_path = out_dir / "best.pth"
     last_path = out_dir / "last.pth"
 
@@ -179,7 +201,6 @@ def fit(
 
         print(f"[EPOCH {ep:03d}] train_loss={tr:.6f}  val_loss={va:.6f}")
 
-        # save last
         if getattr(cfg, "save_last", True):
             torch.save(
                 {
@@ -194,7 +215,6 @@ def fit(
                 last_path,
             )
 
-        # save best
         if getattr(cfg, "save_best", True) and va < best_val:
             best_val = va
             torch.save(

@@ -9,6 +9,7 @@
 1. 复用 canonical train parser 与 runtime override 生成最终训练配置。
 2. 准备 split / scaler / DataLoader，并写出 `resolved_train.yaml`。
 3. 基于 execution layout contract 构建 rollout loss，保证 train / eval 对 `y0` 解释一致。
+4. 在 PR5 中支持 batch `target_mask` 驱动的 mask-aware supervision。
 
 数据流：
 train yaml + CLI override
@@ -31,6 +32,7 @@ best.pth / last.pth
 
 备注：
 - 本模块只接入 execution layout contract，不负责语义分组解释。
+- `target_mask` 若存在，则是训练运行时唯一的监督有效性真源。
 """
 
 from __future__ import annotations
@@ -57,7 +59,7 @@ from uwnav_dynamics.train.trainer import fit
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor
 from uwnav_dynamics.models.utils.execution_layout import extract_y0_from_x_last
 from uwnav_dynamics.models.utils.rollout import rollout_from_delta
-from uwnav_dynamics.models.losses.nll import gaussian_nll_diag
+from uwnav_dynamics.models.losses.nll import gaussian_nll_diag, gaussian_nll_diag_masked
 
 
 def build_loss_fn(logvar_clip_min: float, logvar_clip_max: float, y_in_idx):
@@ -68,11 +70,13 @@ def build_loss_fn(logvar_clip_min: float, logvar_clip_max: float, y_in_idx):
       y_hat = y0 + cumsum(dY)
       loss = diag NLL(y_hat, Y, logvar)
     """
-    def _loss(model, X, Y):
+    def _loss(model, X, Y, target_mask=None):
         dY, logvar = model(X)
         y0 = extract_y0_from_x_last(X, y_in_idx)
         y_hat = rollout_from_delta(y0, dY)
         logvar = torch.clamp(logvar, min=logvar_clip_min, max=logvar_clip_max)
+        if target_mask is not None:
+            return gaussian_nll_diag_masked(y_hat, Y, logvar, target_mask)
         return gaussian_nll_diag(y_hat, Y, logvar)
     return _loss
 

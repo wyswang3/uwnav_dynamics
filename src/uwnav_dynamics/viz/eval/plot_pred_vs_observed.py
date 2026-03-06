@@ -28,6 +28,7 @@ plots/pred_vs_observed_group_norm_000.png|pdf
 - 本模块中的 `observed` 指当前评估阶段使用的监督目标 `y_true`。
 - 它不等同于未经处理的原始 IMU / DVL / Power 传感器输出。
 - 若旧 artifact 缺少 layout metadata，则统一 warning 并回退到 canonical `acc/gyro/vel` 分组。
+- PR5 第一阶段不接入 sample-level masked visualization；若未来需要样本级有效性标记，应通过独立 artifact 扩展。
 """
 
 from __future__ import annotations

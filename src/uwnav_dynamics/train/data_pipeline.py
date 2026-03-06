@@ -1,14 +1,44 @@
+"""
+模块名称：训练数据准备管线
+
+模块职责：
+负责训练阶段非模型部分的主数据契约：
+加载滑窗数据、复用或创建 split/scaler artifact、构造 DataLoader，
+并在 PR5 中将 supervision mask 接入训练 batch。
+
+主要功能：
+1. 从 `features.npz / labels.npz` 读取 `X / Y` 与原始 mask artifact。
+2. 复用 PR2 的 split/scaler 真源路径，保证 train / eval 一致。
+3. 基于 `dvl_mask + semantic output layout` 构造与 `Y` 对齐的 `target_mask`。
+4. 产出 `(X, Y, target_mask)` DataLoader，供训练主路径直接消费。
+
+数据流：
+features.npz / labels.npz
+    ↓
+X / Y / dvl_mask / target_cols
+    ↓
+semantic output layout 校验
+    ↓
+target_mask:(N,H,D)
+    ↓
+split/scaler
+    ↓
+train/val/test DataLoader
+
+依赖模块：
+- numpy
+- torch
+- uwnav_dynamics.dataset.normalize
+- uwnav_dynamics.dataset.split
+- uwnav_dynamics.models.utils.semantic_output_layout
+- uwnav_dynamics.supervision_mask
+
+备注：
+- runtime mask 的唯一执行真源是 batch 中的 `target_mask`。
+- `meta.yaml` 只做记录，不参与训练运行时 mask 裁决。
+"""
+
 from __future__ import annotations
-
-"""
-Training data preparation pipeline.
-
-This module owns the non-model part of the training contract:
-  - load raw sliding-window tensors from `features.npz` / `labels.npz`
-  - create and persist deterministic split indices
-  - fit scalers on the train subset only
-  - materialize DataLoaders for train/val/test
-"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +61,14 @@ from uwnav_dynamics.dataset.split import (
     save_split_indices,
 )
 from uwnav_dynamics.experiment.layout import RunLayout
+from uwnav_dynamics.models.utils.semantic_output_layout import (
+    SemanticOutputLayout,
+    resolve_semantic_output_layout,
+)
+from uwnav_dynamics.supervision_mask import (
+    build_dense_target_mask,
+    build_target_mask_from_dvl_mask,
+)
 from uwnav_dynamics.train.data import DataConfig
 
 
@@ -44,14 +82,40 @@ class PreparedTrainData:
     mask_shapes: Dict[str, tuple[int, ...]]
 
 
-def _load_xy(data_dir: Path) -> Tuple[np.ndarray, np.ndarray, Dict[str, tuple[int, ...]]]:
-    """
-    Load the dense training tensors and report any optional mask tensor shapes.
+@dataclass(frozen=True)
+class _LoadedDatasetArrays:
+    X: np.ndarray
+    Y: np.ndarray
+    target_mask: np.ndarray
+    semantic_layout: SemanticOutputLayout
+    raw_mask_source: str
+    mask_shapes: Dict[str, tuple[int, ...]]
 
-    Note: masks are currently exposed as metadata only; the loaders themselves
-    still return `(X, Y)` so downstream code can decide if and how to consume
-    the mask artifacts.
-    """
+
+def _extract_target_cols(label_npz: np.lib.npyio.NpzFile) -> tuple[str, ...] | None:
+    if "target_cols" not in label_npz:
+        return None
+    target_cols = np.asarray(label_npz["target_cols"])
+    if target_cols.ndim == 0:
+        return (str(target_cols.item()),)
+    return tuple(str(x) for x in target_cols.tolist())
+
+
+def _build_target_mask(
+    *,
+    dvl_mask: np.ndarray | None,
+    semantic_layout: SemanticOutputLayout,
+    target_shape: tuple[int, int, int],
+) -> tuple[np.ndarray, str]:
+    if dvl_mask is None:
+        return build_dense_target_mask(target_shape), "implicit_all_true"
+    return (
+        build_target_mask_from_dvl_mask(dvl_mask, semantic_layout, target_shape=target_shape),
+        "dvl_mask",
+    )
+
+
+def _load_dataset_arrays(data_dir: Path) -> _LoadedDatasetArrays:
     feat_npz = data_dir / "features.npz"
     lab_npz = data_dir / "labels.npz"
     if not feat_npz.exists():
@@ -60,26 +124,45 @@ def _load_xy(data_dir: Path) -> Tuple[np.ndarray, np.ndarray, Dict[str, tuple[in
         raise FileNotFoundError(f"Missing: {lab_npz}")
 
     mask_shapes: Dict[str, tuple[int, ...]] = {}
-    with np.load(feat_npz, allow_pickle=False) as z:
-        if "X" not in z:
+    with np.load(feat_npz, allow_pickle=False) as z_feat:
+        if "X" not in z_feat:
             raise KeyError(f"'X' not found in {feat_npz}")
-        X = np.asarray(z["X"], dtype=np.float32)
+        X = np.asarray(z_feat["X"], dtype=np.float32)
         for k in ("dvl_mask_hist", "power_mask_hist"):
-            if k in z:
-                mask_shapes[k] = tuple(np.asarray(z[k]).shape)
-    with np.load(lab_npz, allow_pickle=False) as z:
-        if "Y" not in z:
+            if k in z_feat:
+                mask_shapes[k] = tuple(np.asarray(z_feat[k]).shape)
+
+    with np.load(lab_npz, allow_pickle=True) as z_lab:
+        if "Y" not in z_lab:
             raise KeyError(f"'Y' not found in {lab_npz}")
-        Y = np.asarray(z["Y"], dtype=np.float32)
+        Y = np.asarray(z_lab["Y"], dtype=np.float32)
+        dvl_mask = np.asarray(z_lab["dvl_mask"], dtype=bool) if "dvl_mask" in z_lab else None
         for k in ("dvl_mask", "power_mask"):
-            if k in z:
-                mask_shapes[k] = tuple(np.asarray(z[k]).shape)
+            if k in z_lab:
+                mask_shapes[k] = tuple(np.asarray(z_lab[k]).shape)
+        target_cols = _extract_target_cols(z_lab)
 
     if X.ndim != 3 or Y.ndim != 3:
         raise ValueError(f"Expect X/Y to be 3D, got X={X.shape}, Y={Y.shape}")
     if X.shape[0] != Y.shape[0]:
         raise ValueError(f"X and Y window counts mismatch: {X.shape[0]} vs {Y.shape[0]}")
-    return X, Y, mask_shapes
+
+    semantic_layout = resolve_semantic_output_layout(dout=Y.shape[-1], target_cols=target_cols)
+    target_mask, raw_mask_source = _build_target_mask(
+        dvl_mask=dvl_mask,
+        semantic_layout=semantic_layout,
+        target_shape=tuple(int(v) for v in Y.shape),
+    )
+    mask_shapes["target_mask"] = tuple(target_mask.shape)
+
+    return _LoadedDatasetArrays(
+        X=X,
+        Y=Y,
+        target_mask=target_mask,
+        semantic_layout=semantic_layout,
+        raw_mask_source=raw_mask_source,
+        mask_shapes=mask_shapes,
+    )
 
 
 def _validate_indices(indices: Dict[str, np.ndarray], n: int) -> None:
@@ -109,13 +192,18 @@ def _validate_indices(indices: Dict[str, np.ndarray], n: int) -> None:
 def _make_loader(
     X: np.ndarray,
     Y: np.ndarray,
+    target_mask: np.ndarray,
     *,
     batch_size: int,
     num_workers: int,
     pin_memory: bool,
     shuffle: bool,
 ) -> DataLoader:
-    ds = TensorDataset(torch.from_numpy(X), torch.from_numpy(Y))
+    ds = TensorDataset(
+        torch.from_numpy(X),
+        torch.from_numpy(Y),
+        torch.from_numpy(target_mask.astype(np.bool_, copy=False)),
+    )
     return DataLoader(
         ds,
         batch_size=batch_size,
@@ -127,20 +215,20 @@ def _make_loader(
 
 
 def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainData:
-    """Prepare split/scaler/DataLoader artifacts for one concrete run layout."""
-    X_all, Y_all, mask_shapes = _load_xy(Path(cfg.data_dir))
+    loaded = _load_dataset_arrays(Path(cfg.data_dir))
+    X_all = loaded.X
+    Y_all = loaded.Y
+    target_mask_all = loaded.target_mask
     n_total = int(X_all.shape[0])
-    if mask_shapes:
-        print(f"[DATA] found mask tensors: {mask_shapes}")
+    if loaded.mask_shapes:
+        print(f"[DATA] found mask tensors: {loaded.mask_shapes}")
+        print(f"[DATA] target_mask source={loaded.raw_mask_source}")
 
     split_path = run_layout.split_indices_path
     if split_path.exists():
         split_indices = load_split_indices(split_path)
         print(f"[SPLIT] reuse: {split_path}")
     else:
-        # 对滑窗数据集而言，“索引不重叠”不等于“时间无泄漏”。
-        # 当前 canonical 策略使用 contiguous_v1：按时间顺序切 train/val/test，
-        # 再把确切索引落盘，供 train / eval 共享。
         split_indices = make_split_indices(
             n=n_total,
             seed=int(cfg.seed),
@@ -179,9 +267,14 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
     X_test = transform(X_all[test_idx], x_scaler).astype(np.float32, copy=False)
     Y_test = transform(Y_all[test_idx], y_scaler).astype(np.float32, copy=False)
 
+    mask_train = target_mask_all[train_idx]
+    mask_val = target_mask_all[val_idx]
+    mask_test = target_mask_all[test_idx]
+
     train_loader = _make_loader(
         X_train,
         Y_train,
+        mask_train,
         batch_size=int(cfg.batch_size),
         num_workers=int(cfg.num_workers),
         pin_memory=bool(cfg.pin_memory),
@@ -190,6 +283,7 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
     val_loader = _make_loader(
         X_val,
         Y_val,
+        mask_val,
         batch_size=int(cfg.batch_size),
         num_workers=int(cfg.num_workers),
         pin_memory=bool(cfg.pin_memory),
@@ -198,6 +292,7 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
     test_loader = _make_loader(
         X_test,
         Y_test,
+        mask_test,
         batch_size=int(cfg.batch_size),
         num_workers=int(cfg.num_workers),
         pin_memory=bool(cfg.pin_memory),
@@ -214,5 +309,5 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
             "val": int(val_idx.size),
             "test": int(test_idx.size),
         },
-        mask_shapes=mask_shapes,
+        mask_shapes=loaded.mask_shapes,
     )

@@ -103,6 +103,48 @@ PR4 之后，仓库对 rollout layout contract 做了明确分层：
 - 不替代 `cfg_model.y_in_idx`
 - 不成为 viz 主逻辑的主消费契约
 
+## 3.3 dense supervision 与 masked supervision 的边界
+
+PR5 第一阶段之后，仓库需要明确区分两类“监督存在”：
+
+- `dense supervision`
+  - 指 `Y` 中数值上完整存在的监督张量
+  - 例如经过 forward-fill 后的 `Vel*_state_mps` 仍会保留在 `Y` 中
+- `masked supervision`
+  - 指训练 / 评估在运行时真正计入 loss 或 metric 的有效监督元素
+  - 是否有效必须由 batch 中的 `target_mask` 决定
+
+这里必须强调：
+
+- forward-fill 后的 velocity target 仍可保留为数值对齐结果
+- 但它不再自动等同于“有效监督”
+- velocity 维是否计入 loss / metric，只能由 `target_mask` 裁决
+
+PR5 当前 runtime mask contract 为：
+
+- 训练阶段：
+  - `labels.npz["dvl_mask"]` 作为原始 sparse supervision 来源之一
+  - `train/data_pipeline.py` 基于 `dvl_mask + semantic output layout` 构造 `target_mask`
+  - DataLoader batch 以 `(X, Y, target_mask)` 形式传入 trainer
+- 评估阶段：
+  - `evaluate.py` 同样从 `labels.npz["dvl_mask"]` 构造 `target_mask`
+  - dense / masked 指标共同基于同一批 `y_hat / y_true / target_mask`
+
+边界要求：
+
+- `target_mask` 是 train / eval 运行时唯一的 mask 执行真源
+- `meta.yaml` 与 `metrics.yaml` 只做记录、审计与可视化说明
+- `meta.yaml` / `metrics.yaml` 不参与运行时 mask 裁决
+
+其中：
+
+- `execution layout contract`
+  - 继续只负责 rollout 执行索引
+  - 与 supervision mask 裁决无关
+- `semantic output layout contract`
+  - 只负责告诉系统哪些输出维属于 `acc / gyro / vel`
+  - 供 `target_mask` 构造、指标分组与 viz 解释使用
+
 ## 4. frozen 配置与 override 规则
 
 ### 4.1 哪些对象应该 frozen

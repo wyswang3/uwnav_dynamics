@@ -45,8 +45,14 @@
 - `mae_by_horizon.csv`
 - `pred_samples.npz`
 
-以上四项属于数值评估主流程产物，
-应由 `src/uwnav_dynamics/eval/evaluate.py` 直接负责生成。
+PR5 第一阶段后，若启用 mask-aware 评估，同一评估目录还应并行产出：
+
+- `rmse_by_horizon_masked.csv`
+- `mae_by_horizon_masked.csv`
+
+其中前四项是 dense 主产物；
+masked 两项属于 PR5 第一阶段新增的并行数值评估产物。
+这些文件都应由 `src/uwnav_dynamics/eval/evaluate.py` 直接负责生成。
 
 若启用绘图，还应额外保存：
 
@@ -93,6 +99,50 @@ layout:
 - `y_hat`
 - `y_true`
 - `logvar`
+
+## 4.3 supervision metadata 与 dense/masked 并存策略
+
+PR5 第一阶段后，`metrics.yaml` 额外记录最小 supervision metadata，
+用于说明当前评估目录是否同时包含 dense 与 masked 指标。
+
+推荐最小结构如下：
+
+```yaml
+supervision:
+  schema_version: supervision_v1
+  dense_metrics:
+    present: true
+  masked_metrics:
+    present: true
+    mask_name: target_mask
+    raw_mask_source: dvl_mask
+    applies_to_groups: [vel]
+    group_source: canonical_acc_gyro_vel_v1
+    horizon_files:
+      rmse: rmse_by_horizon_masked.csv
+      mae: mae_by_horizon_masked.csv
+```
+
+这里的语义边界必须保持清晰：
+
+- dense metrics
+  - 继续沿用已有 `rmse_by_horizon.csv / mae_by_horizon.csv`
+  - 语义保持不变，避免破坏 PR3 / PR4 之后的稳定产物
+- masked metrics
+  - 由运行时 `target_mask` 单独裁决
+  - 当前第一阶段主要用于 velocity 稀疏监督
+
+注意：
+
+- `metrics.yaml` 只做记录与说明
+- 运行时是否计入某个监督元素，必须由 batch 内 `target_mask` 决定
+- `metrics.yaml` 不参与 train / eval 主执行路径的 mask 裁决
+
+当前第一阶段保持：
+
+- `pred_samples.npz` 三键 schema 不变
+- 不新增 `pred_sample_masks.npz`
+- sample-level masked visualization 留到后续 patch 再接入
 
 ## 4.2 legacy artifact fallback
 
@@ -159,6 +209,6 @@ smoke test 不要求：
 
 仍在推进中的方向包括：
 
-- mask-aware 指标
+- 更完整的 mask-aware sample-level 可视化
 - 不确定度校准指标
 - 更贴近控制性能的评估指标

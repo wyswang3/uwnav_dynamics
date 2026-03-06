@@ -8,7 +8,8 @@
 主要功能：
 1. 读取 `metrics.yaml` 与 horizon CSV artifact。
 2. 优先根据 `metrics.yaml.layout.semantic` 对输出分组聚合并绘图。
-3. 支持单评估目录出图与多评估目录对比出图。
+3. 支持 dense / masked horizon artifact 并行存在，且不覆盖现有 dense 输出命名。
+4. 支持单评估目录出图与多评估目录对比出图。
 
 数据流：
 eval_<split>/metrics.yaml + rmse_by_horizon.csv / mae_by_horizon.csv
@@ -18,6 +19,7 @@ load + group aggregation
 matplotlib figure
     ↓
 plots/rmse_horizon_*.png|pdf / mae_horizon_*.png|pdf
+以及可选 *_masked.png|pdf
 
 依赖模块：
 - matplotlib
@@ -28,13 +30,13 @@ plots/rmse_horizon_*.png|pdf / mae_horizon_*.png|pdf
 备注：
 - 当前默认消费 PR3 保持稳定的 horizon CSV artifact，
   并在旧 artifact 缺少 layout metadata 时统一 fallback 到 canonical `acc/gyro/vel` 分组。
-- 若未来 PR5 引入 mask-aware 指标，应通过新增可选 artifact / loader 扩展，
-  而不是替换现有 CSV 契约。
+- PR5 通过平行的 masked CSV 扩展，不替换现有 dense CSV 契约。
 """
 
 from __future__ import annotations
 
 import argparse
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
@@ -105,21 +107,27 @@ class HorizonPlotCfg:
     fmt: str = "png"       # "png" | "pdf" | "both"
 
 
-def _metric_from_dir(eval_dir: Path, metric: str) -> Tuple[np.ndarray, Dict[str, Any], SemanticOutputLayout]:
+def _metric_csv_name(metric: str, artifact_variant: str) -> str:
+    suffix = "" if artifact_variant == "dense" else "_masked"
+    if metric == "rmse":
+        return f"rmse_by_horizon{suffix}.csv"
+    if metric == "mae":
+        return f"mae_by_horizon{suffix}.csv"
+    raise ValueError(metric)
+
+
+def _metric_from_dir(
+    eval_dir: Path,
+    metric: str,
+    artifact_variant: str = "dense",
+) -> Tuple[np.ndarray, Dict[str, Any], SemanticOutputLayout]:
     """
     返回：
       hd: (H,D) 指标矩阵
       meta: metrics.yaml 解析结果
     """
-    # TODO(PR5): 未来如需接入 masked metrics，应以新增可选 loader 的方式扩展，
-    # 不覆盖当前 rmse/mae horizon CSV 的稳定读取契约。
     meta = _load_yaml(eval_dir / "metrics.yaml")
-    if metric == "rmse":
-        hd = _load_csv_hd(eval_dir / "rmse_by_horizon.csv")
-    elif metric == "mae":
-        hd = _load_csv_hd(eval_dir / "mae_by_horizon.csv")
-    else:
-        raise ValueError(metric)
+    hd = _load_csv_hd(eval_dir / _metric_csv_name(metric, artifact_variant))
     semantic_layout = load_semantic_layout_from_metrics_dict(meta, dout=hd.shape[1])
     return hd, meta, semantic_layout
 
@@ -127,7 +135,13 @@ def _metric_from_dir(eval_dir: Path, metric: str) -> Tuple[np.ndarray, Dict[str,
 def _group_curves(hd: np.ndarray, semantic_layout: SemanticOutputLayout) -> Dict[str, np.ndarray]:
     curves: Dict[str, np.ndarray] = {}
     for key, indices in semantic_layout.group_indices.items():
-        curves[key] = hd[:, list(indices)].mean(axis=1)
+        vals = hd[:, list(indices)]
+        valid_count = np.sum(~np.isnan(vals), axis=1)
+        curve = np.full(vals.shape[0], np.nan, dtype=float)
+        valid = valid_count > 0
+        if np.any(valid):
+            curve[valid] = np.nansum(vals[valid], axis=1) / valid_count[valid]
+        curves[key] = curve
     return curves
 
 
@@ -135,10 +149,11 @@ def build_groups_vs_horizon_figure(
     eval_dirs: List[Path],
     labels: List[str],
     cfg: HorizonPlotCfg,
+    artifact_variant: str = "dense",
 ) -> Tuple[plt.Figure, plt.Axes]:
     setup_mpl()
 
-    hd0, _, semantic_layout0 = _metric_from_dir(eval_dirs[0], cfg.metric)
+    hd0, _, semantic_layout0 = _metric_from_dir(eval_dirs[0], cfg.metric, artifact_variant=artifact_variant)
     H = hd0.shape[0]
     x_steps = np.arange(1, H + 1)
     x = x_steps * cfg.dt_s if cfg.use_seconds else x_steps
@@ -146,7 +161,7 @@ def build_groups_vs_horizon_figure(
 
     group_styles = get_group_styles()
     for eval_dir, lab in zip(eval_dirs, labels):
-        hd, _, semantic_layout = _metric_from_dir(eval_dir, cfg.metric)
+        hd, _, semantic_layout = _metric_from_dir(eval_dir, cfg.metric, artifact_variant=artifact_variant)
         curves = _group_curves(hd, semantic_layout)
 
         if len(eval_dirs) == 1:
@@ -190,10 +205,33 @@ def plot_groups_vs_horizon(
     out_dir: Path,
     cfg: HorizonPlotCfg,
 ) -> None:
-    fig, _ = build_groups_vs_horizon_figure(eval_dirs=eval_dirs, labels=labels, cfg=cfg)
     _ensure_dir(out_dir)
+    fig, _ = build_groups_vs_horizon_figure(
+        eval_dirs=eval_dirs,
+        labels=labels,
+        cfg=cfg,
+        artifact_variant="dense",
+    )
     save_figure(fig, out_dir / cfg.out_name, fmt=cfg.fmt)
     plt.close(fig)
+
+    masked_csv_name = _metric_csv_name(cfg.metric, "masked")
+    has_masked = [((Path(eval_dir) / masked_csv_name).exists()) for eval_dir in eval_dirs]
+    if any(has_masked):
+        if not all(has_masked):
+            warnings.warn(
+                f"masked horizon artifact missing for part of eval_dirs; skip masked plot for {cfg.metric}",
+                UserWarning,
+            )
+            return
+        fig_masked, _ = build_groups_vs_horizon_figure(
+            eval_dirs=eval_dirs,
+            labels=labels,
+            cfg=cfg,
+            artifact_variant="masked",
+        )
+        save_figure(fig_masked, out_dir / f"{cfg.out_name}_masked", fmt=cfg.fmt)
+        plt.close(fig_masked)
 
 
 def main() -> int:

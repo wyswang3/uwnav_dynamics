@@ -9,6 +9,7 @@
 1. 第一版优先实现 horizon compare 主路径。
 2. 将 semantic layout 驱动的 Acc / Gyro / Vel 三组误差拆成 3×1 共享 x 轴布局。
 3. 自动根据标签或显式 role 推断视觉层级，突出 proposed / primary 方法。
+4. 在 masked horizon artifact 存在时并行输出 masked compare 图，不覆盖现有 dense 输出。
 
 数据流：
 多个 eval_dir 下的 metrics.yaml + rmse/mae_by_horizon.csv
@@ -18,6 +19,7 @@ group aggregation
 role-aware style mapping
     ↓
 plots/rmse_model_compare_horizon.png|pdf
+以及可选 *_masked.png|pdf
 
 依赖模块：
 - numpy
@@ -34,6 +36,7 @@ plots/rmse_model_compare_horizon.png|pdf
 from __future__ import annotations
 
 import argparse
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -41,7 +44,7 @@ from typing import List, Optional, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-from uwnav_dynamics.viz.eval.plot_horizon_metrics import _metric_from_dir
+from uwnav_dynamics.viz.eval.plot_horizon_metrics import _metric_csv_name, _metric_from_dir
 from uwnav_dynamics.viz.style.sci_style import (
     apply_axes_style,
     apply_minimal_legend,
@@ -80,6 +83,7 @@ def build_horizon_compare_figure(
     labels: Sequence[str],
     cfg: ModelCompareCfg,
     roles: Optional[Sequence[str]] = None,
+    artifact_variant: str = "dense",
 ) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes, plt.Axes]]:
     setup_mpl()
 
@@ -92,7 +96,7 @@ def build_horizon_compare_figure(
     order = {"primary": 0, "ablation": 1, "baseline": 2}
     zipped = sorted(zip(eval_dirs, labels, resolved_roles), key=lambda item: order[item[2]])
 
-    hd0, _, semantic_layout0 = _metric_from_dir(Path(zipped[0][0]), cfg.metric)
+    hd0, _, semantic_layout0 = _metric_from_dir(Path(zipped[0][0]), cfg.metric, artifact_variant=artifact_variant)
     H = hd0.shape[0]
     x_steps = np.arange(1, H + 1)
     x = x_steps * cfg.dt_s if cfg.use_seconds else x_steps
@@ -106,8 +110,13 @@ def build_horizon_compare_figure(
 
     for group_ax, (group_key, ylabel) in zip(axes, group_specs):
         for eval_dir, label, role in zipped:
-            hd, _, semantic_layout = _metric_from_dir(Path(eval_dir), cfg.metric)
-            curve = hd[:, list(semantic_layout.group_indices[group_key])].mean(axis=1)
+            hd, _, semantic_layout = _metric_from_dir(Path(eval_dir), cfg.metric, artifact_variant=artifact_variant)
+            vals = hd[:, list(semantic_layout.group_indices[group_key])]
+            valid_count = np.sum(~np.isnan(vals), axis=1)
+            curve = np.full(vals.shape[0], np.nan, dtype=float)
+            valid = valid_count > 0
+            if np.any(valid):
+                curve[valid] = np.nansum(vals[valid], axis=1) / valid_count[valid]
             sty = get_model_role_style(role)
             group_ax.plot(
                 x,
@@ -136,9 +145,34 @@ def plot_horizon_compare(
     roles: Optional[Sequence[str]] = None,
 ) -> None:
     _ensure_dir(out_dir)
-    fig, _ = build_horizon_compare_figure(eval_dirs=eval_dirs, labels=labels, cfg=cfg, roles=roles)
+    fig, _ = build_horizon_compare_figure(
+        eval_dirs=eval_dirs,
+        labels=labels,
+        cfg=cfg,
+        roles=roles,
+        artifact_variant="dense",
+    )
     save_figure(fig, out_dir / f"{cfg.metric}_model_compare_horizon", fmt=cfg.fmt)
     plt.close(fig)
+
+    masked_csv_name = _metric_csv_name(cfg.metric, "masked")
+    has_masked = [((Path(eval_dir) / masked_csv_name).exists()) for eval_dir in eval_dirs]
+    if any(has_masked):
+        if not all(has_masked):
+            warnings.warn(
+                f"masked horizon artifact missing for part of eval_dirs; skip masked compare for {cfg.metric}",
+                UserWarning,
+            )
+            return
+        fig_masked, _ = build_horizon_compare_figure(
+            eval_dirs=eval_dirs,
+            labels=labels,
+            cfg=cfg,
+            roles=roles,
+            artifact_variant="masked",
+        )
+        save_figure(fig_masked, out_dir / f"{cfg.metric}_model_compare_horizon_masked", fmt=cfg.fmt)
+        plt.close(fig_masked)
 
 
 def main() -> int:

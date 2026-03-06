@@ -17,7 +17,7 @@
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
 | `src/uwnav_dynamics/cli/eval.py` | 正式评估 CLI 入口，自动选择 checkpoint，并按需编排“数值评估 -> viz 出图”。 | 输入：train YAML、可选 ckpt/split/device/plot 参数；输出：评估目录与可选 `plots/*`。 |
-| `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计指标并落盘 artifact。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`（含 layout metadata）、`rmse_by_horizon.csv`、`mae_by_horizon.csv`、`pred_samples.npz`。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计 dense/masked 指标并落盘 artifact。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`（含 layout/supervision metadata）、`rmse_by_horizon.csv`、`mae_by_horizon.csv`、`rmse_by_horizon_masked.csv`、`mae_by_horizon_masked.csv`、`pred_samples.npz`。 |
 
 ## 3) 数据预处理入口（pipeline / align / build_dataset）
 
@@ -42,8 +42,9 @@
 | `src/uwnav_dynamics/models/blocks/uncertainty_head.py` | 异方差不确定度头，输出对角 log-variance。 | 输入：`feat:(B,feat_dim)`；输出：`logvar:(B,H,9)`。 |
 | `src/uwnav_dynamics/models/utils/execution_layout.py` | rollout 执行布局 helper，校验 `y_in_idx` 并从 `X` 提取 `y0`。 | 输入：`cfg_model.y_in_idx`、`X:(B,L,Din)`；输出：执行层索引 metadata 与 `y0:(B,Dout)`。 |
 | `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | 输出语义布局 helper，统一组件标签、`acc/gyro/vel` 分组与 legacy fallback。 | 输入：`metrics.yaml` 或 `target_cols`；输出：semantic layout metadata。 |
+| `src/uwnav_dynamics/supervision_mask.py` | 监督有效性 helper，将 `dvl_mask + semantic layout` 构造成 `target_mask`。 | 输入：`labels.npz["dvl_mask"]` 与 semantic layout；输出：`target_mask:(N,H,D)`。 |
 | `src/uwnav_dynamics/models/utils/rollout.py` | rollout 工具函数（从 `dY` 累加得到未来状态序列）。 | 输入：`y0` 与 `dY`；输出：`y_hat`。 |
-| `src/uwnav_dynamics/models/losses/nll.py` | 对角高斯 NLL 损失定义。 | 输入：`y_hat/y_true/logvar`（同形状）；输出：标量 loss。 |
+| `src/uwnav_dynamics/models/losses/nll.py` | 对角高斯 NLL 损失定义，支持 dense 与 masked 两条监督路径。 | 输入：`y_hat/y_true/logvar` 与可选 `target_mask`；输出：标量 loss。 |
 | `src/uwnav_dynamics/models/blocks/__init__.py` | blocks 统一导出入口。 | 输入：无；输出：模块类与配置类命名空间。 |
 
 ## 5) 配置文件（configs/）
@@ -75,12 +76,14 @@
 
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
-| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：metrics/csv/npz 与 layout metadata。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：dense/masked metrics、CSV、`pred_samples.npz` 与 layout/supervision metadata。 |
 | `src/uwnav_dynamics/models/utils/execution_layout.py` | rollout 执行索引 helper。 | 输入：`cfg_model.y_in_idx` 与 `X`；输出：`y0`。 |
 | `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | rollout 输出语义 helper。 | 输入：`metrics.yaml` 或 `target_cols`；输出：分组解释与 fallback 结果。 |
+| `src/uwnav_dynamics/supervision_mask.py` | supervision mask helper。 | 输入：`dvl_mask` 与 semantic layout；输出：`target_mask`。 |
 | `src/uwnav_dynamics/models/utils/rollout.py` | rollout 纯数值辅助函数集合。 | 输入：`dY` 与初值；输出：未来状态序列。 |
-| `src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py` | 画 RMSE/MAE 随预测步长变化曲线。 | 输入：评估目录；输出：`rmse_horizon_*.png/pdf`、`mae_horizon_*.png/pdf`。 |
+| `src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py` | 画 RMSE/MAE 随预测步长变化曲线。 | 输入：评估目录；输出：dense 图与可选 `*_masked.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_rollout_samples.py` | 画 rollout 样例时域对比图。 | 输入：`pred_samples.npz`；输出：`rollout_sample_*.png/pdf`。 |
+| `src/uwnav_dynamics/viz/eval/plot_model_compare.py` | 画多模型 horizon 比较图。 | 输入：多个评估目录；输出：dense compare 图与可选 `*_masked.png/pdf`。 |
 | `src/uwnav_dynamics/viz/plots/imu_plot.py` | 原始/预处理 IMU 绘图模块。 | 输入：`ImuFrame` 或 `*_proc.csv`；输出：`imu_raw_9axis.png`、`imu_dt.png`、`imu_proc_3rows.png`。 |
 | `src/uwnav_dynamics/viz/plots/dvl_plots.py` | DVL 原始与预处理绘图模块。 | 输入：`DvlFrame` 或 DVL processed CSV；输出：`dvl_vel_BI_BE.png`、`dvl_proc_BI_BE_BD.png`。 |
 | `src/uwnav_dynamics/viz/plots/power_plots.py` | 8 电机电流绘图模块。 | 输入：`PowerFrame`；输出：`power_currents_8motors.png`。 |

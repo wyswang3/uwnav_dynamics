@@ -33,6 +33,7 @@
 - `PR2` 后，train / eval 对 split / scaler artifact 的共享与复用已由自动化测试覆盖
 - `PR3` 后，数值评估与绘图编排职责已拆开，CLI 级编排与失败保留语义已有测试覆盖
 - `PR4` 后，train / eval / viz 的状态布局解释已统一收口为 execution / semantic 两层 contract
+- `PR5` 第一阶段后，mask-aware supervision 已进入训练 loss 与 eval masked metrics 主路径
 - `resolved_train.yaml` 已能记录训练最终执行配置、关键 artifact 路径与 `split_strategy`
 
 建议把以下类型的测试视为当前最小健康信号：
@@ -89,11 +90,21 @@
 - `evaluate.py --plots` 改为显式弃用，提示用户迁移到 CLI 入口
 - 增加 CLI 编排、显式弃用与“绘图失败但数值 artifact 保留”测试
 
+### 4.5 PR5：mask-aware 训练评估第一阶段
+
+已完成内容：
+
+- 新增 `target_mask` 运行时链路，训练 batch 现在可携带 `(X, Y, target_mask)`
+- DVL velocity 稀疏监督已通过 masked NLL 进入训练主路径
+- 评估目录同时保留 dense 与 masked horizon artifact
+- horizon / model-compare 图在 masked CSV 存在时可并行输出 masked 图
+- `pred_samples.npz` 仍保持 `y_hat / y_true / logvar` 三键 schema
+
 ## 5. 下一步升级顺序
 
 建议按以下顺序推进：
 
-1. `PR5`：mask-aware 训练评估
+1. `PR5` 后续阶段：sample-level masked visualization 与更细粒度稀疏监督表达
 
 排序原则：
 
@@ -106,8 +117,8 @@
 
 当前仍需重点跟踪的技术债：
 
-- DVL 稀疏监督尚未正式进入 mask-aware 训练
-- 评估和绘图的职责边界仍不够清晰
+- sample-level masked visualization 尚未进入正式 artifact
+- 评估和绘图的更细粒度 masked 表达仍可继续完善
 - 历史 `split_indices.npz` 可能缺少 `split_strategy` 元数据，当前仅通过 warning 做兼容提示
 - 理论文档需持续跟进工程真实状态
 

@@ -7,7 +7,7 @@
 
 主要功能：
 1. 复用训练阶段的 split / scaler artifact，执行确定性的离线评估。
-2. 计算全局与 horizon 级 RMSE / MAE 指标并写出 metrics 与 CSV。
+2. 计算全局与 horizon 级 RMSE / MAE 指标，并并行写出 dense / masked artifact。
 3. 导出供 viz 层复用的 `pred_samples.npz`，并在 `metrics.yaml` 中写入最小 layout metadata。
 
 数据流：
@@ -17,9 +17,12 @@ EvalConfig / S1PredictorConfig
     ↓
 加载 features.npz / labels.npz / split_indices.npz / scalers
     ↓
-model rollout + metric aggregation
+model rollout + target_mask-aware metric aggregation
     ↓
-metrics.yaml(layout.execution + layout.semantic) + rmse_by_horizon.csv + mae_by_horizon.csv + pred_samples.npz
+metrics.yaml(layout.execution + layout.semantic + supervision) +
+rmse_by_horizon.csv + mae_by_horizon.csv +
+rmse_by_horizon_masked.csv + mae_by_horizon_masked.csv +
+pred_samples.npz
     ↓
 cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 
@@ -32,6 +35,7 @@ cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 备注：
 - 本模块只负责数值评估与 artifact 落盘。
 - 旧 `--plots` 路径已显式弃用，正式用户入口为 `cli/eval.py` 与 `cli/pipeline.py`。
+- runtime mask 的唯一执行真源是评估 batch 中的 `target_mask`。
 """
 
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -60,9 +64,12 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
     SEMANTIC_LAYOUT_SCHEMA_VERSION,
     SemanticOutputLayout,
     build_semantic_layout_metadata,
-    canonical_semantic_output_layout,
-    validate_target_cols_against_semantic_layout,
+    resolve_semantic_output_layout,
 )
+from uwnav_dynamics.supervision_mask import build_dense_target_mask, build_target_mask_from_dvl_mask
+
+
+SUPERVISION_SCHEMA_VERSION = "supervision_v1"
 
 
 def _ensure_dir(p: Path) -> None:
@@ -93,10 +100,56 @@ def _rmse_mae_by_horizon(y_hat: torch.Tensor, y_true: torch.Tensor) -> Tuple[np.
     return rmse.detach().cpu().numpy(), mae.detach().cpu().numpy()
 
 
+def _rmse_mae_by_horizon_masked(
+    y_hat: torch.Tensor,
+    y_true: torch.Tensor,
+    target_mask: torch.Tensor,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if target_mask.shape != y_hat.shape:
+        raise ValueError(f"target_mask shape mismatch: expect {tuple(y_hat.shape)}, got {tuple(target_mask.shape)}")
+    mask = target_mask.to(device=y_hat.device, dtype=y_hat.dtype)
+    valid = mask.sum(dim=0)  # (H,D)
+
+    err = y_hat - y_true
+    sq = (err * err) * mask
+    ab = torch.abs(err) * mask
+
+    rmse = torch.full_like(valid, float("nan"), dtype=y_hat.dtype)
+    mae = torch.full_like(valid, float("nan"), dtype=y_hat.dtype)
+    valid_pos = valid > 0
+    rmse[valid_pos] = torch.sqrt(sq.sum(dim=0)[valid_pos] / valid[valid_pos])
+    mae[valid_pos] = ab.sum(dim=0)[valid_pos] / valid[valid_pos]
+    return rmse.detach().cpu().numpy(), mae.detach().cpu().numpy()
+
+
+def _global_rmse_mae(y_hat: torch.Tensor, y_true: torch.Tensor, target_mask: torch.Tensor | None = None) -> Tuple[float, float]:
+    err = y_hat - y_true
+    if target_mask is None:
+        mse = torch.mean(err * err)
+        mae = torch.mean(torch.abs(err))
+        return float(torch.sqrt(mse).item()), float(mae.item())
+
+    if target_mask.shape != y_hat.shape:
+        raise ValueError(f"target_mask shape mismatch: expect {tuple(y_hat.shape)}, got {tuple(target_mask.shape)}")
+    mask = target_mask.to(device=y_hat.device, dtype=y_hat.dtype)
+    valid = mask.sum()
+    if float(valid.item()) <= 0.0:
+        raise ValueError("target_mask contains zero valid supervision elements during evaluation")
+    mse = ((err * err) * mask).sum() / valid
+    mae = (torch.abs(err) * mask).sum() / valid
+    return float(torch.sqrt(mse).item()), float(mae.item())
+
+
 def _aggregate_group_curve(metric_hd: np.ndarray, groups: Dict[str, Sequence[int]]) -> Dict[str, List[float]]:
     out: Dict[str, List[float]] = {}
     for key, indices in groups.items():
-        out[key] = metric_hd[:, list(indices)].mean(axis=1).tolist()
+        group_vals = metric_hd[:, list(indices)]
+        valid_count = np.sum(~np.isnan(group_vals), axis=1)
+        curve = np.full(group_vals.shape[0], np.nan, dtype=float)
+        valid = valid_count > 0
+        if np.any(valid):
+            curve[valid] = np.nansum(group_vals[valid], axis=1) / valid_count[valid]
+        out[key] = curve.tolist()
     return out
 
 
@@ -120,11 +173,26 @@ def _extract_target_cols(label_npz: Dict[str, Any]) -> tuple[str, ...] | None:
 
 
 def _resolve_semantic_layout(label_npz: Dict[str, Any], dout: int) -> SemanticOutputLayout:
-    layout = canonical_semantic_output_layout(dout)
     target_cols = _extract_target_cols(label_npz)
-    if target_cols is None:
-        return layout
-    return validate_target_cols_against_semantic_layout(target_cols, layout)
+    return resolve_semantic_output_layout(dout=dout, target_cols=target_cols)
+
+
+def _build_eval_target_mask(
+    label_npz: Dict[str, Any],
+    *,
+    semantic_layout: SemanticOutputLayout,
+    target_shape: tuple[int, int, int],
+) -> tuple[np.ndarray, str]:
+    if "dvl_mask" not in label_npz:
+        return build_dense_target_mask(target_shape), "implicit_all_true"
+    return (
+        build_target_mask_from_dvl_mask(
+            np.asarray(label_npz["dvl_mask"], dtype=bool),
+            semantic_layout,
+            target_shape=target_shape,
+        ),
+        "dvl_mask",
+    )
 
 
 # =============================================================================
@@ -156,6 +224,11 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     if Dout != cfg_model.dout or H != cfg_model.pred_len:
         raise ValueError(f"Y shape mismatch: data (H,D)={(H,Dout)} vs cfg {(cfg_model.pred_len,cfg_model.dout)}")
     semantic_layout = _resolve_semantic_layout(lab, Dout)
+    target_mask_all_np, raw_mask_source = _build_eval_target_mask(
+        lab,
+        semantic_layout=semantic_layout,
+        target_shape=(n, H, Dout),
+    )
 
     split_indices = load_split_indices(cfg_eval.split_indices_path)
     if cfg_eval.split_name not in split_indices:
@@ -172,6 +245,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     # copy()：避免 torch.from_numpy 的只读 warning
     Xs = transform(np.array(X[idx], copy=True), x_scaler).astype(np.float32, copy=False)
     Ys = transform(np.array(Y[idx], copy=True), y_scaler).astype(np.float32, copy=False)
+    target_mask_np = np.asarray(target_mask_all_np[idx], dtype=bool)
 
     model = S1Predictor(cfg_model).to(device)
     ckpt = _load_checkpoint(cfg_eval.ckpt, device)
@@ -184,11 +258,13 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     yhat_list: List[torch.Tensor] = []
     ytrue_list: List[torch.Tensor] = []
     logvar_list: List[torch.Tensor] = []
+    target_mask_list: List[torch.Tensor] = []
 
     for s in range(0, n_eval, bs):
         e = min(n_eval, s + bs)
         xb = torch.from_numpy(Xs[s:e]).to(device=device, dtype=torch.float32)
         yb = torch.from_numpy(Ys[s:e]).to(device=device, dtype=torch.float32)
+        mb = torch.from_numpy(target_mask_np[s:e]).to(device=device, dtype=torch.bool)
 
         dY, logvar = model(xb)
 
@@ -202,16 +278,21 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         yhat_list.append(y_hat.cpu())
         ytrue_list.append(yb.cpu())
         logvar_list.append(logvar.cpu())
+        target_mask_list.append(mb.cpu())
 
     y_hat_all = torch.cat(yhat_list, dim=0)
     y_true_all = torch.cat(ytrue_list, dim=0)
     logvar_all = torch.cat(logvar_list, dim=0)
+    target_mask_all = torch.cat(target_mask_list, dim=0)
 
     rmse_hd, mae_hd = _rmse_mae_by_horizon(y_hat_all, y_true_all)
+    rmse_hd_masked, mae_hd_masked = _rmse_mae_by_horizon_masked(y_hat_all, y_true_all, target_mask_all)
     rmse_groups = _aggregate_group_curve(rmse_hd, semantic_layout.group_indices)
     mae_groups = _aggregate_group_curve(mae_hd, semantic_layout.group_indices)
-    rmse_global = float(rmse_hd.mean())
-    mae_global = float(mae_hd.mean())
+    rmse_groups_masked = _aggregate_group_curve(rmse_hd_masked, semantic_layout.group_indices)
+    mae_groups_masked = _aggregate_group_curve(mae_hd_masked, semantic_layout.group_indices)
+    rmse_global, mae_global = _global_rmse_mae(y_hat_all, y_true_all)
+    rmse_global_masked, mae_global_masked = _global_rmse_mae(y_hat_all, y_true_all, target_mask_all)
 
     n_samp = int(min(cfg_eval.save_samples, y_hat_all.shape[0]))
     samp = {
@@ -226,11 +307,18 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         "split": cfg_eval.split_name,
         "rmse_global": rmse_global,
         "mae_global": mae_global,
+        "rmse_global_masked": rmse_global_masked,
+        "mae_global_masked": mae_global_masked,
         "rmse_hd": rmse_hd,
         "mae_hd": mae_hd,
+        "rmse_hd_masked": rmse_hd_masked,
+        "mae_hd_masked": mae_hd_masked,
         "rmse_groups": rmse_groups,
         "mae_groups": mae_groups,
+        "rmse_groups_masked": rmse_groups_masked,
+        "mae_groups_masked": mae_groups_masked,
         "semantic_layout": semantic_layout,
+        "raw_mask_source": raw_mask_source,
         "samples": samp,
     }
 
@@ -284,12 +372,33 @@ def main() -> int:
         "n_eval": res["n_eval"],
         "rmse_global": res["rmse_global"],
         "mae_global": res["mae_global"],
+        "rmse_global_masked": res["rmse_global_masked"],
+        "mae_global_masked": res["mae_global_masked"],
         "rmse_groups": res["rmse_groups"],
         "mae_groups": res["mae_groups"],
+        "rmse_groups_masked": res["rmse_groups_masked"],
+        "mae_groups_masked": res["mae_groups_masked"],
         "layout": {
             "schema_version": SEMANTIC_LAYOUT_SCHEMA_VERSION,
             "execution": build_execution_layout_metadata(cfg_model.y_in_idx),
             "semantic": build_semantic_layout_metadata(res["semantic_layout"]),
+        },
+        "supervision": {
+            "schema_version": SUPERVISION_SCHEMA_VERSION,
+            "dense_metrics": {
+                "present": True,
+            },
+            "masked_metrics": {
+                "present": True,
+                "mask_name": "target_mask",
+                "raw_mask_source": res["raw_mask_source"],
+                "applies_to_groups": ["vel"],
+                "group_source": res["semantic_layout"].source,
+                "horizon_files": {
+                    "rmse": "rmse_by_horizon_masked.csv",
+                    "mae": "mae_by_horizon_masked.csv",
+                },
+            },
         },
         "cfg": {
             "data_dir": str(cfg_eval.data_dir),
@@ -309,6 +418,8 @@ def main() -> int:
     # ---- write csv ----
     _write_csv_hd(cfg_eval.out_dir / "rmse_by_horizon.csv", res["rmse_hd"], col_prefix="d")
     _write_csv_hd(cfg_eval.out_dir / "mae_by_horizon.csv", res["mae_hd"], col_prefix="d")
+    _write_csv_hd(cfg_eval.out_dir / "rmse_by_horizon_masked.csv", res["rmse_hd_masked"], col_prefix="d")
+    _write_csv_hd(cfg_eval.out_dir / "mae_by_horizon_masked.csv", res["mae_hd_masked"], col_prefix="d")
 
     # ---- write samples ----
     pred_npz = cfg_eval.out_dir / "pred_samples.npz"

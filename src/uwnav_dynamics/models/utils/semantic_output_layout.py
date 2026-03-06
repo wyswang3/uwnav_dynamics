@@ -83,6 +83,17 @@ def canonical_semantic_output_layout(dout: int) -> SemanticOutputLayout:
     )
 
 
+def resolve_semantic_output_layout(
+    *,
+    dout: int,
+    target_cols: Sequence[str] | None = None,
+) -> SemanticOutputLayout:
+    layout = canonical_semantic_output_layout(dout)
+    if target_cols is None:
+        return layout
+    return validate_target_cols_against_semantic_layout(target_cols, layout)
+
+
 def build_semantic_layout_metadata(layout: SemanticOutputLayout) -> dict[str, object]:
     return {
         "source": layout.source,

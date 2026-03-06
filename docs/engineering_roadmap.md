@@ -113,6 +113,10 @@
 
 ## 5. PR5：mask-aware 训练评估
 
+### 状态
+
+- 第一阶段已完成，收口日期：2026-03-06
+
 ### 目标
 
 - 将 DVL 等稀疏观测的有效性显式纳入 loss 和 metric
@@ -125,12 +129,37 @@
 - `src/uwnav_dynamics/train/run_train.py`
 - `src/uwnav_dynamics/models/losses/*`
 - `src/uwnav_dynamics/eval/evaluate.py`
+- `src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py`
+- `src/uwnav_dynamics/viz/eval/plot_model_compare.py`
+- `src/uwnav_dynamics/supervision_mask.py`
 
 ### 验收标准
 
-- 数据加载器能输出 mask
-- velocity 相关监督支持 masked 指标
-- 评估同时提供 dense 与 masked 指标过渡结果
+- 训练 batch 以 `(X, Y, target_mask)` 进入 trainer 主路径
+- `gaussian_nll_diag_masked()` 在 mask 全真时与 dense 版本一致
+- 评估同时落盘 dense 与 masked horizon artifact
+- horizon / model-compare 图在 masked CSV 存在时并行输出 masked 图
+- `pred_samples.npz` 三键 schema 保持不变
+
+### 已完成内容
+
+- 新增 `supervision_mask.py`，统一将 `dvl_mask + semantic layout` 构造成 `target_mask`
+- `train/data_pipeline.py` 将 `target_mask` 作为 batch 运行时真源接入训练主路径
+- `trainer.py` / `run_train.py` 支持 dense 与 masked supervision 两条 loss 路径
+- `nll.py` 新增 `gaussian_nll_diag_masked()`，并对“有效元素数为 0”采取 fail-fast
+- `evaluate.py` 同时落盘：
+  - `rmse_by_horizon.csv`
+  - `mae_by_horizon.csv`
+  - `rmse_by_horizon_masked.csv`
+  - `mae_by_horizon_masked.csv`
+- `metrics.yaml` 新增最小 `supervision` metadata
+- `plot_horizon_metrics.py` 与 `plot_model_compare.py` 支持 dense / masked 图并行存在
+
+### 当前边界
+
+- 第一阶段不新增 `pred_sample_masks.npz`
+- sample-level masked visualization 继续留到后续 patch
+- `meta.yaml` 与 `metrics.yaml` 只做记录，不参与运行时 mask 裁决
 
 ## 6. 工程执行原则
 

@@ -28,6 +28,7 @@ plots/rollout_sample_000.png|pdf
 - 当前图中的 “observed/true” 来自评估监督目标 `y_true`，不等同于未经处理的原始传感器输出。
 - `logvar` 当前只保留供未来不确定度带扩展，不改变本次最小 patch 的默认显示。
 - 若旧 artifact 缺少 layout metadata，则统一 warning 并回退到 canonical `acc/gyro/vel` 分组。
+- PR5 第一阶段不接入 sample-level masked visualization，后续若需要单样本监督有效性显示，应通过独立 artifact 扩展。
 """
 
 from __future__ import annotations

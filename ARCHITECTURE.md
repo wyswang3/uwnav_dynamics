@@ -78,6 +78,7 @@ raw logs
 4. `train data pipeline`
    - 入口：`src/uwnav_dynamics/train/data_pipeline.py`
    - 产物：`split_indices.npz`、`x_scaler.npz`、`y_scaler.npz`
+   - 运行时 batch：`(X, Y, target_mask)`
 
 ## 5. 模型 pipeline
 
@@ -142,6 +143,30 @@ train yaml
 -> viz grouping / plotting
 ```
 
+PR5 第一阶段之后，监督有效性链路补充为：
+
+```text
+aligned sparse DVL availability
+-> labels.npz["dvl_mask"]
+-> supervision_mask helper
+-> target_mask(batch)
+-> masked loss / masked eval metrics
+-> rmse_by_horizon_masked.csv / mae_by_horizon_masked.csv
+-> horizon/model-compare masked plots
+```
+
+这里需要明确区分：
+
+- execution layout contract
+  - 只负责 rollout 的 `y0` 提取
+  - 唯一执行真源仍是 `cfg_model.y_in_idx`
+- semantic output layout contract
+  - 只负责 `acc / gyro / vel` 语义分组
+  - 供 `target_mask` 构造、masked metric 聚合与 viz 解释使用
+- runtime mask contract
+  - 训练 / 评估运行时唯一 mask 真源是 batch 内的 `target_mask`
+  - `meta.yaml` 与 `metrics.yaml` 只记录，不裁决 mask 执行
+
 ## 8. 配置契约
 
 PR1 已建立当前配置系统的核心边界：
@@ -181,6 +206,7 @@ run_dir = run.out_dir / run.variant
 - `PR2`：split / scaler 单一真源
 - `PR3`：eval-viz 解耦
 - `PR4`：execution / semantic layout contract 收口
+- `PR5`：mask-aware 训练评估第一阶段（dense/masked 并行 horizon artifact）
 
 待推进：
 
@@ -190,14 +216,15 @@ run_dir = run.out_dir / run.variant
 
 当前工程仍存在以下限制：
 
-- DVL 稀疏监督尚未在 loss / metric 层完整 mask-aware 化
-- eval 与 viz 的最终职责边界仍需继续收敛
+- sample-level masked visualization 尚未接入
+- 更细粒度的稀疏监督类型仍未完全扩展到所有图型
 - 理论文档与工程实现仍需持续保持一致
 - 未来控制接口仍停留在模型输出可接入阶段，尚未落正式 MPC 实现
 
 已解决的相关限制：
 
 - train / eval / viz 对状态布局的解释已统一，不再由多处 rollout 硬编码副本分别维护
+- DVL velocity 稀疏监督已进入训练 loss 与 eval masked metrics 主路径
 
 ## 12. 阅读建议
 
