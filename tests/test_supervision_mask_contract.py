@@ -9,6 +9,7 @@
 1. 验证输出 `target_mask` 与 `Y` 形状严格对齐。
 2. 验证 acc / gyro 维默认全为 True。
 3. 验证 vel 维只由 `dvl_mask` 广播决定。
+4. 验证 helper 兼容 `dvl_mask:(N,H)` 与 `dvl_mask:(N,H,1)` 两种 artifact 形状。
 
 数据流：
 dvl_mask + semantic layout
@@ -53,3 +54,28 @@ def test_build_target_mask_uses_dvl_mask_only_for_velocity_group():
     assert np.array_equal(target_mask[:, :, 6], dvl_mask)
     assert np.array_equal(target_mask[:, :, 7], dvl_mask)
     assert np.array_equal(target_mask[:, :, 8], dvl_mask)
+
+
+def test_build_target_mask_accepts_singleton_last_dim_mask_artifact():
+    semantic_layout = canonical_semantic_output_layout(9)
+    dvl_mask = np.asarray(
+        [
+            [[True], [False], [True]],
+            [[False], [True], [False]],
+        ],
+        dtype=bool,
+    )
+
+    target_mask = build_target_mask_from_dvl_mask(
+        dvl_mask,
+        semantic_layout,
+        target_shape=(2, 3, 9),
+    )
+
+    expected_2d = dvl_mask[:, :, 0]
+    assert target_mask.shape == (2, 3, 9)
+    assert target_mask.dtype == np.bool_
+    assert np.all(target_mask[:, :, 0:6])
+    assert np.array_equal(target_mask[:, :, 6], expected_2d)
+    assert np.array_equal(target_mask[:, :, 7], expected_2d)
+    assert np.array_equal(target_mask[:, :, 8], expected_2d)

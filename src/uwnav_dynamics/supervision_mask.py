@@ -8,11 +8,14 @@
 
 主要功能：
 1. 构造“全有效”的 dense supervision mask。
-2. 将 `dvl_mask:(N,H)` 广播到 velocity 语义组，生成 `target_mask:(N,H,D)`。
-3. 严格校验 mask 形状与 semantic group 的维度合法性。
+2. 兼容 `dvl_mask:(N,H)` 与 `dvl_mask:(N,H,1)` 两种常见 artifact 形状。
+3. 将规范化后的 `dvl_mask` 广播到 velocity 语义组，生成 `target_mask:(N,H,D)`。
+4. 严格校验 mask 形状与 semantic group 的维度合法性。
 
 数据流：
 labels.npz["dvl_mask"] + semantic output layout
+    ↓
+shape normalize
     ↓
 target_mask:(N,H,D)
     ↓
@@ -26,6 +29,8 @@ train DataLoader batch / eval metrics
 - 本模块只负责监督有效性 mask 构造。
 - 不负责 rollout 执行索引，不参与 execution layout contract。
 - 不负责物理语义推断；语义分组由 semantic output layout 提供。
+- 真实 `labels.npz` 可能保存 `dvl_mask:(N,H,1)`；本模块会在消费端压缩 singleton 末轴，
+  避免要求重建历史数据集 artifact。
 """
 
 from __future__ import annotations
@@ -44,6 +49,23 @@ def build_dense_target_mask(target_shape: Sequence[int]) -> np.ndarray:
     return np.ones(shape, dtype=bool)
 
 
+def _normalize_dvl_mask_shape(dvl_mask: np.ndarray, *, expected_shape: tuple[int, int]) -> np.ndarray:
+    """
+    兼容历史/现有两类 mask artifact：
+      - (N,H)
+      - (N,H,1)
+
+    只允许末轴为 singleton 的三维 mask。
+    若出现其他形状，则显式报错，避免静默吞掉错误数据。
+    """
+    raw = np.asarray(dvl_mask, dtype=bool)
+    if raw.shape == expected_shape:
+        return raw
+    if raw.ndim == 3 and raw.shape[:2] == expected_shape and raw.shape[-1] == 1:
+        return raw[..., 0]
+    raise ValueError(f"dvl_mask shape mismatch: expect {expected_shape} or {expected_shape + (1,)}, got {raw.shape}")
+
+
 def build_target_mask_from_dvl_mask(
     dvl_mask: np.ndarray,
     semantic_layout: SemanticOutputLayout,
@@ -51,10 +73,8 @@ def build_target_mask_from_dvl_mask(
     target_shape: Sequence[int],
 ) -> np.ndarray:
     mask = build_dense_target_mask(target_shape)
-    raw = np.asarray(dvl_mask, dtype=bool)
     expected = mask.shape[:2]
-    if raw.shape != expected:
-        raise ValueError(f"dvl_mask shape mismatch: expect {expected}, got {raw.shape}")
+    raw = _normalize_dvl_mask_shape(dvl_mask, expected_shape=expected)
 
     vel_indices = semantic_layout.group_indices.get("vel")
     if vel_indices is None:

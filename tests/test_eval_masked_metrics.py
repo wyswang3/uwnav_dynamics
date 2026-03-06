@@ -135,11 +135,13 @@ def test_evaluate_main_writes_dense_and_masked_horizon_artifacts(tmp_path, monke
 
     X = np.zeros((4, 4, 25), dtype=np.float32)
     Y = np.zeros((4, 2, 9), dtype=np.float32)
-    dvl_mask = np.ones((4, 2), dtype=bool)
+    # 真实 labels.npz 由 build_dataset.py 落盘时，dvl_mask 可能保存为 (N,H,1)。
+    # 这里显式覆盖该 artifact 形状，验证评估主路径的兼容性。
+    dvl_mask = np.ones((4, 2, 1), dtype=bool)
 
     # test split 使用样本 0 和 1：
     # horizon=2 时，样本 0 的 velocity 误差被 mask 掉，样本 1 保持有效且误差为 0。
-    dvl_mask[0, 1] = False
+    dvl_mask[0, 1, 0] = False
     Y[0, 1, 6:] = np.asarray([10.0, 20.0, 30.0], dtype=np.float32)
     Y[1, 1, 6:] = 0.0
 

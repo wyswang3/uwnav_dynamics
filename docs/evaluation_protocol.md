@@ -138,6 +138,29 @@ supervision:
 - 运行时是否计入某个监督元素，必须由 batch 内 `target_mask` 决定
 - `metrics.yaml` 不参与 train / eval 主执行路径的 mask 裁决
 
+### 4.3.1 DVL mask artifact 兼容说明
+
+历史与现有数据集构建流程中，
+`labels.npz["dvl_mask"]` 可能出现两种等价存储形状：
+
+- `(N, H)`
+- `(N, H, 1)`
+
+其中 `H` 为 prediction horizon。
+
+当前训练/评估运行时统一在 supervision mask helper 中做消费端规范化：
+
+- `(N, H)`：直接使用
+- `(N, H, 1)`：压缩 singleton 末轴后再广播到 velocity semantic group
+
+这样做的原因是：
+
+- 不改变既有 `labels.npz` artifact 命名与主语义
+- 不要求为历史实验重建数据集
+- 把兼容逻辑集中在单一 helper，避免 train / eval 各自写一套 shape 特判
+
+除上述两种形状外，其他 `dvl_mask` 形状仍视为非法输入并显式报错。
+
 当前第一阶段保持：
 
 - `pred_samples.npz` 三键 schema 不变

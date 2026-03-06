@@ -100,6 +100,29 @@
 - horizon / model-compare 图在 masked CSV 存在时可并行输出 masked 图
 - `pred_samples.npz` 仍保持 `y_hat / y_true / logvar` 三键 schema
 
+### 4.6 PR5 兼容性热修复：`dvl_mask` shape 对齐
+
+线上训练暴露的问题：
+
+- 真实 `labels.npz["dvl_mask"]` 可能保存为 `(N, H, 1)`
+- 但 PR5 初版 supervision mask helper 只接受 `(N, H)`
+- 这会在 `prepare_train_data()` 构造 `target_mask` 时触发 shape mismatch
+
+本次修复方法：
+
+- 不修改训练/评估主流程
+- 不修改 `labels.npz` 主 artifact 命名与语义
+- 在 `src/uwnav_dynamics/supervision_mask.py` 中集中兼容：
+  - `(N, H)`
+  - `(N, H, 1)`
+- 对除上述两类之外的非法 shape 继续显式报错
+
+这样做的原因是：
+
+- 历史数据集无需重建
+- train / eval 共用同一 helper，避免兼容逻辑分散
+- 回滚面最小，只涉及 mask helper 与相关测试
+
 ## 5. 下一步升级顺序
 
 建议按以下顺序推进：
