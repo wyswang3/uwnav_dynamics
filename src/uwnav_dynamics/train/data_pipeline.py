@@ -10,7 +10,10 @@
 1. 从 `features.npz / labels.npz` 读取 `X / Y` 与原始 mask artifact。
 2. 复用 PR2 的 split/scaler 真源路径，保证 train / eval 一致。
 3. 基于 `dvl_mask + semantic output layout` 构造与 `Y` 对齐的 `target_mask`。
-4. 产出 `(X, Y, target_mask)` DataLoader，供训练主路径直接消费。
+4. 对经过 scaler 的输入特征做非有限值清洗，避免稀疏辅助通道中的 `NaN` 直接进入 RNN。
+5. 对历史 artifact 中“velocity mask=true 但目标仍为 NaN”的情况做保守降级。
+6. 对仅发生在 `target_mask=False` 位置的目标侧非有限值做兼容清洗。
+7. 产出 `(X, Y, target_mask)` DataLoader，供训练主路径直接消费。
 
 数据流：
 features.npz / labels.npz
@@ -22,6 +25,12 @@ semantic output layout 校验
 target_mask:(N,H,D)
     ↓
 split/scaler
+    ↓
+输入 X 非有限值清洗（置 0，对应 train 均值）
+    ↓
+velocity mask 与有限 target 的保守交集
+    ↓
+masked-out Y 非有限值兼容清洗
     ↓
 train/val/test DataLoader
 
@@ -36,6 +45,11 @@ train/val/test DataLoader
 备注：
 - runtime mask 的唯一执行真源是 batch 中的 `target_mask`。
 - `meta.yaml` 只做记录，不参与训练运行时 mask 裁决。
+- 对输入 `X` 的非有限值清洗只发生在训练消费端，不修改原始 dataset artifact。
+- 对 velocity 语义组允许“mask=true 但目标非有限”的历史 artifact 兼容降级；
+  该降级只发生在 runtime `target_mask` 构造阶段，不回写 dataset。
+- 对目标 `Y` 仅兼容清洗那些已经被 `target_mask=False` 排除的非有限值；
+  活跃监督位置若仍存在 `NaN/Inf`，继续显式报错。
 """
 
 from __future__ import annotations
@@ -68,6 +82,7 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
 from uwnav_dynamics.supervision_mask import (
     build_dense_target_mask,
     build_target_mask_from_dvl_mask,
+    refine_velocity_target_mask_with_finite_targets,
 )
 from uwnav_dynamics.train.data import DataConfig
 
@@ -153,6 +168,16 @@ def _load_dataset_arrays(data_dir: Path) -> _LoadedDatasetArrays:
         semantic_layout=semantic_layout,
         target_shape=tuple(int(v) for v in Y.shape),
     )
+    target_mask, downgraded_velocity_count = refine_velocity_target_mask_with_finite_targets(
+        target_mask,
+        Y,
+        semantic_layout,
+    )
+    if downgraded_velocity_count > 0:
+        print(
+            "[DATA] downgraded velocity supervision due to non-finite targets: "
+            f"{downgraded_velocity_count} elements"
+        )
     mask_shapes["target_mask"] = tuple(target_mask.shape)
 
     return _LoadedDatasetArrays(
@@ -187,6 +212,78 @@ def _validate_indices(indices: Dict[str, np.ndarray], n: int) -> None:
         raise ValueError("split indices contain overlap (data leakage risk)")
     if merged.size != n:
         raise ValueError(f"split indices do not cover all samples: {merged.size} vs {n}")
+
+
+def _sanitize_scaled_inputs(x: np.ndarray, *, split_name: str) -> np.ndarray:
+    """
+    对 scaler 之后的输入特征做最小非有限值清洗。
+
+    设计原因：
+    - 原始 `features.npz` 中允许保留稀疏辅助通道的 NaN（例如 power 缺测段）。
+    - `fit_scaler()` 会忽略 NaN 拟合统计量，但 `transform()` 会保留 NaN。
+    - 若直接把这些 NaN 喂给 LSTM，训练首个 batch 就会产出 NaN loss。
+
+    这里在消费端把非有限值统一置为 0.0，语义上等价于“回到 z-score 后的 train 均值”，
+    同时不改变原始 dataset artifact。
+    """
+    bad = ~np.isfinite(x)
+    bad_count = int(np.count_nonzero(bad))
+    if bad_count == 0:
+        return x
+
+    x_safe = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0, copy=True)
+    print(
+        "[DATA] sanitized non-finite X on "
+        f"{split_name} split: replaced {bad_count} values with 0.0 after z-score transform"
+    )
+    return x_safe.astype(np.float32, copy=False)
+
+
+def _sanitize_targets_with_runtime_mask(
+    y: np.ndarray,
+    target_mask: np.ndarray,
+    *,
+    split_name: str,
+) -> np.ndarray:
+    """
+    对训练目标 `Y` 做最小兼容清洗。
+
+    规则：
+    - 若非有限值只出现在 `target_mask=False` 的位置，则统一置为 0.0。
+      这类位置不会进入主 state masked NLL，也不会进入 DVL auxiliary loss，
+      因此允许作为历史/stale artifact 的兼容修复。
+    - 若非有限值出现在活跃监督位置（`target_mask=True`），则立即显式报错。
+
+    设计原因：
+    - PR5 明确规定 runtime 监督有效性真源是 batch `target_mask`。
+    - 部分历史 dataset artifact 可能在 velocity 稀疏监督位置保留了 NaN，
+      但这些位置本就不应参与 loss 计算。
+    """
+    if y.shape != target_mask.shape:
+        raise ValueError(
+            f"Y / target_mask shape mismatch on {split_name} split: "
+            f"Y={y.shape}, target_mask={target_mask.shape}"
+        )
+
+    bad = ~np.isfinite(y)
+    bad_count = int(np.count_nonzero(bad))
+    if bad_count == 0:
+        return y
+
+    active_bad = bad & target_mask
+    active_bad_count = int(np.count_nonzero(active_bad))
+    if active_bad_count > 0:
+        raise ValueError(
+            "non-finite values found in active Y supervision after scaling on "
+            f"{split_name} split: active_count={active_bad_count} total_bad={bad_count}"
+        )
+
+    y_safe = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0, copy=True)
+    print(
+        "[DATA] sanitized non-finite Y on "
+        f"{split_name} split: replaced {bad_count} masked-out values with 0.0"
+    )
+    return y_safe.astype(np.float32, copy=False)
 
 
 def _make_loader(
@@ -260,16 +357,37 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
         save_scaler(y_scaler_path, y_scaler)
         print(f"[SCALER] fitted on train split and saved to: {run_layout.scalers_dir}")
 
-    X_train = transform(X_all[train_idx], x_scaler).astype(np.float32, copy=False)
-    Y_train = transform(Y_all[train_idx], y_scaler).astype(np.float32, copy=False)
-    X_val = transform(X_all[val_idx], x_scaler).astype(np.float32, copy=False)
-    Y_val = transform(Y_all[val_idx], y_scaler).astype(np.float32, copy=False)
-    X_test = transform(X_all[test_idx], x_scaler).astype(np.float32, copy=False)
-    Y_test = transform(Y_all[test_idx], y_scaler).astype(np.float32, copy=False)
-
     mask_train = target_mask_all[train_idx]
     mask_val = target_mask_all[val_idx]
     mask_test = target_mask_all[test_idx]
+
+    X_train = _sanitize_scaled_inputs(
+        transform(X_all[train_idx], x_scaler).astype(np.float32, copy=False),
+        split_name="train",
+    )
+    Y_train = _sanitize_targets_with_runtime_mask(
+        transform(Y_all[train_idx], y_scaler).astype(np.float32, copy=False),
+        mask_train,
+        split_name="train",
+    )
+    X_val = _sanitize_scaled_inputs(
+        transform(X_all[val_idx], x_scaler).astype(np.float32, copy=False),
+        split_name="val",
+    )
+    Y_val = _sanitize_targets_with_runtime_mask(
+        transform(Y_all[val_idx], y_scaler).astype(np.float32, copy=False),
+        mask_val,
+        split_name="val",
+    )
+    X_test = _sanitize_scaled_inputs(
+        transform(X_all[test_idx], x_scaler).astype(np.float32, copy=False),
+        split_name="test",
+    )
+    Y_test = _sanitize_targets_with_runtime_mask(
+        transform(Y_all[test_idx], y_scaler).astype(np.float32, copy=False),
+        mask_test,
+        split_name="test",
+    )
 
     train_loader = _make_loader(
         X_train,

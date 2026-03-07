@@ -9,6 +9,7 @@
 1. 复用训练阶段的 split / scaler artifact，执行确定性的离线评估。
 2. 计算全局与 horizon 级 RMSE / MAE 指标，并并行写出 dense / masked artifact。
 3. 导出供 viz 层复用的 `pred_samples.npz`，并在 `metrics.yaml` 中写入最小 layout metadata。
+4. 对经过 scaler 后仍残留在输入 `X` 中的非有限值做最小清洗，与训练消费端保持一致。
 
 数据流：
 train yaml + checkpoint + run_dir artifacts
@@ -36,6 +37,8 @@ cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 - 本模块只负责数值评估与 artifact 落盘。
 - 旧 `--plots` 路径已显式弃用，正式用户入口为 `cli/eval.py` 与 `cli/pipeline.py`。
 - runtime mask 的唯一执行真源是评估 batch 中的 `target_mask`。
+- 输入 `X` 中由稀疏辅助通道保留的 NaN 不会回写 dataset artifact，
+  仅在评估消费端被清洗为 0.0（对应 z-score 后的 train 均值）。
 """
 
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -79,6 +82,28 @@ def _ensure_dir(p: Path) -> None:
 def _np_load_npz(path: Path) -> Dict[str, Any]:
     with np.load(path, allow_pickle=True) as z:
         return {k: z[k] for k in z.files}
+
+
+def _sanitize_scaled_inputs_for_eval(x: np.ndarray) -> np.ndarray:
+    """
+    对评估阶段经过 scaler 后的输入特征做最小非有限值清洗。
+
+    设计原因：
+    - `features.npz` 允许保留稀疏辅助输入的 NaN（例如 power 缺测段）。
+    - `transform()` 会保留 NaN；若直接送入模型，预测与指标都会变成 NaN。
+    - 训练侧已经在消费端将这些值置为 0.0；评估侧必须保持同一语义。
+    """
+    bad = ~np.isfinite(x)
+    bad_count = int(np.count_nonzero(bad))
+    if bad_count == 0:
+        return x
+
+    x_safe = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0, copy=True)
+    print(
+        "[EVAL] sanitized non-finite X: "
+        f"replaced {bad_count} values with 0.0 after z-score transform"
+    )
+    return x_safe.astype(np.float32, copy=False)
 
 
 def _load_checkpoint(ckpt_path: Path, device: torch.device) -> Dict[str, Any]:
@@ -244,6 +269,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
 
     # copy()：避免 torch.from_numpy 的只读 warning
     Xs = transform(np.array(X[idx], copy=True), x_scaler).astype(np.float32, copy=False)
+    Xs = _sanitize_scaled_inputs_for_eval(Xs)
     Ys = transform(np.array(Y[idx], copy=True), y_scaler).astype(np.float32, copy=False)
     target_mask_np = np.asarray(target_mask_all_np[idx], dtype=bool)
 

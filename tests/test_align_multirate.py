@@ -1,3 +1,30 @@
+"""
+模块名称：多频对齐回归测试
+
+模块职责：
+验证对齐模块在 DVL / Power 稀疏 attach 与 IMU dense 重采样场景下，
+能够保持主时间轴语义稳定，并防止浮点边界或不规则 IMU 时间轴导致的监督污染。
+
+主要功能：
+1. 验证 DVL / Power mask 对齐行为。
+2. 验证不规则但严格递增的 IMU 时间轴不会把 dense IMU target 对齐成 NaN。
+
+数据流：
+synthetic IMU / PWM / DVL / Power CSV
+    ↓
+build_training_table_imu_main()
+    ↓
+aligned train_base DataFrame assertions
+
+依赖模块：
+- numpy
+- pandas
+- uwnav_dynamics.preprocess.align.aligner
+
+备注：
+- 该测试只覆盖上游对齐契约，不涉及训练侧 mask 或 loss 逻辑。
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,6 +49,29 @@ def _write_imu_csv(path: Path) -> None:
             "GyroX_body_rad_s": np.zeros_like(t),
             "GyroY_body_rad_s": np.zeros_like(t),
             "GyroZ_body_rad_s": np.zeros_like(t),
+        }
+    )
+    df.to_csv(path, index=False)
+
+
+def _write_irregular_imu_csv(path: Path) -> None:
+    """
+    写一个最小 IMU 预处理结果文件，时间轴严格递增但非固定 dt。
+    """
+    n = 100
+    dt = np.full(n - 1, 0.01, dtype=float)
+    dt[::11] += 0.0015
+    dt[5::13] -= 0.0010
+    t = np.concatenate([[0.0], np.cumsum(dt)])
+    df = pd.DataFrame(
+        {
+            "t_s": t,
+            "AccX_body_mps2": np.sin(t),
+            "AccY_body_mps2": np.cos(t),
+            "AccZ_body_mps2": 0.5 * np.sin(2.0 * t),
+            "GyroX_body_rad_s": 0.1 * np.cos(t),
+            "GyroY_body_rad_s": 0.1 * np.sin(t),
+            "GyroZ_body_rad_s": 0.05 * np.cos(2.0 * t),
         }
     )
     df.to_csv(path, index=False)
@@ -129,3 +179,39 @@ def test_align_multirate_masks(tmp_path):
     power_cols = [f"P{i}_W" for i in range(8)]
     power_non_hit = np.where(power_mask == 0)[0]
     assert np.isnan(df.loc[power_non_hit, power_cols].to_numpy(dtype=float)).all()
+
+
+def test_align_irregular_imu_main_axis_keeps_dense_imu_targets_finite(tmp_path):
+    """
+    验证当 IMU 时间轴合法递增但非严格固定 dt 时，
+    主轴对齐后的 6 个 dense IMU 列仍保持全 finite。
+    """
+    imu_csv = tmp_path / "imu_irregular_proc.csv"
+    pwm_csv = tmp_path / "pwm.csv"
+
+    _write_irregular_imu_csv(imu_csv)
+    _write_pwm_csv(pwm_csv)
+
+    cfg = AlignConfig(
+        dt_main_s=0.01,
+        t_margin_s=0.0,
+    )
+
+    df = build_training_table_imu_main(
+        imu_proc_csv=imu_csv,
+        pwm_csv=pwm_csv,
+        dvl_proc_csv=None,
+        power_csv=None,
+        cfg=cfg,
+    )
+
+    imu_cols = [
+        "AccX_body_mps2",
+        "AccY_body_mps2",
+        "AccZ_body_mps2",
+        "GyroX_body_rad_s",
+        "GyroY_body_rad_s",
+        "GyroZ_body_rad_s",
+    ]
+    imu_arr = df[imu_cols].to_numpy(dtype=float)
+    assert np.isfinite(imu_arr).all()

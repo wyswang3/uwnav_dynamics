@@ -1,7 +1,7 @@
 run:
   name: "pooltest02_s1_lstm_v0"              # 本次实验/训练任务名称（用于日志与输出目录标识）
   seed: 0                                   # 随机种子：影响 split、DataLoader shuffle、初始化等；复现实验用
-  device: "cpu"                             # 训练设备：本地先 cpu；上服务器改 "cuda"
+  device: "cuda"                             # 训练设备：本地先 cpu；上服务器改 "cuda"
   amp: false                                # 混合精度：仅在 cuda 时建议 true（可提速、降显存）
   out_dir: "out/ckpts/pooltest02_s1_lstm_v0"   # checkpoint 根目录；这里只写实验根目录，variant 由程序追加一次
   variant: "B0_baseline"                    # 结构/消融版本标识：B0/B1/B4/U1...（用于 pipeline 自动定位产物）

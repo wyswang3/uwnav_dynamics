@@ -123,6 +123,65 @@
 - train / eval 共用同一 helper，避免兼容逻辑分散
 - 回滚面最小，只涉及 mask helper 与相关测试
 
+### 4.7 训练稳定性热修复：输入侧 `NaN` 清洗
+
+线上训练暴露的问题：
+
+- 当前 baseline 输入包含 `Power 8` 辅助通道
+- 对齐与数据集构建阶段允许这些稀疏辅助通道在缺测段保留 `NaN`
+- `fit_scaler()` 会忽略 `NaN` 拟合统计量，但 `transform()` 不会自动消除 `NaN`
+- 结果是：训练数据若直接把缩放后的 `X` 喂给 LSTM，首个 batch 就可能产出 `train_loss=nan`
+
+本次修复方法：
+
+- 不修改原始 `features.npz / labels.npz` artifact
+- 不修改 `Y` 与 `target_mask` 的监督语义
+- 在 `src/uwnav_dynamics/train/data_pipeline.py` 的训练消费端集中处理：
+  - `X` 经 scaler 后若仍含 `NaN/Inf`，统一置为 `0.0`
+  - 这里的 `0.0` 对应 z-score 后的 train 均值
+  - `Y` 继续保持严格有限值校验；若目标里仍有 `NaN/Inf`，直接显式报错
+
+这样做的原因是：
+
+- 不需要重建历史数据集
+- 不改变 PR2 的 split/scaler artifact 契约
+- 不改变 PR5 的 `target_mask` runtime 真源
+- 回滚面最小，只涉及 `train.data_pipeline` 与回归测试
+
+### 4.8 训练兼容性热修复：masked-out 目标中的 `NaN`
+
+线上继续暴露的问题：
+
+- 部分历史/迁移后的 processed dataset 中，`Y` 的 velocity 位置仍可能保留 `NaN`
+- 这些 `NaN` 与 `dvl_mask` 对应，语义上属于“无监督”的 masked-out 稀疏目标
+- 若训练侧一律要求 `Y` 全 finite，就会在进入第一个 epoch 前直接报错
+
+本次修复方法：
+
+- 继续坚持 PR5 的原则：runtime 监督有效性真源是 batch `target_mask`
+- 在 `src/uwnav_dynamics/train/data_pipeline.py` 中增加兼容逻辑：
+  - 若 `Y` 的非有限值只出现在 `target_mask=False` 的位置，则统一置为 `0.0`
+  - 若非有限值出现在活跃监督位置（`target_mask=True`），继续显式报错
+
+这样做的原因是：
+
+- 被 mask 掉的位置本就不会进入主 state masked NLL 或 DVL auxiliary loss
+- 兼容旧 dataset artifact 无需重建
+- 仍然保留对真正监督错误的 fail-fast 语义
+
+补充说明：
+
+- 在线上进一步发现的旧 artifact 中，还可能存在：
+  - `dvl_mask=true`
+  - 但 `Y[..., vel]` 实际仍为 `NaN`
+- 这类位置本质上不应继续参与 velocity 稀疏监督
+- 当前训练侧已在 `train.data_pipeline` 中增加保守降级：
+  - 先把 velocity supervision mask 与 `Y[..., vel]` 的有限性做交集
+  - 再仅对降级后的 masked-out 位置执行 `NaN -> 0.0` 的兼容清洗
+
+这样可以兼容历史 processed dataset，
+同时不放松 acc/gyro 或其他活跃监督位置的 fail-fast 约束。
+
 ## 5. 下一步升级顺序
 
 建议按以下顺序推进：

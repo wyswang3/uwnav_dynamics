@@ -1,22 +1,39 @@
 # src/uwnav_dynamics/preprocess/build_dataset.py
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+"""
+模块名称：训练数据集构建
+
+模块职责：
+负责从对齐后的 `train_base.csv` 构造滑动窗口数据集，
+并将 features / labels / meta artifact 落盘到 processed 数据目录。
+
+主要功能：
+1. 读取基础训练表并构造状态速度列。
+2. 按滑窗配置生成 `(X, Y)` 数据集与 mask artifact。
+3. 在落盘前对 target 列执行最小 fail-fast 数据质量检查。
+
+数据流：
+train_base.csv
+    ↓
+状态速度列构造 / target finite guard
+    ↓
+sliding window
+    ↓
+features.npz / labels.npz / meta.yaml
+
+依赖模块：
+- numpy
+- pandas
+- yaml
+- uwnav_dynamics.preprocess.sliding_window
+
+备注：
+- 本模块不放宽 dense supervision 契约；
+- 若 target 列仍含 NaN/Inf，应先修复上游 align，再重新构建数据集。
+"""
+
 from __future__ import annotations
-
-"""
-uwnav_dynamics.preprocess.build_dataset
-
-用途：
-  - 读取对齐好的 100 Hz 训练基础表（例如 *_train_base.csv）
-  - 根据 YAML 中的滑动窗口配置构造 (X, Y) 数据集
-  - 将结果写入 data/processed/<dataset_name>/ 下的 npz + meta.yaml
-  - 标准化参数拟合延后到训练阶段（基于 train split，避免泄漏）
-
-命令行示例：
-  PYTHONPATH=src \\
-  python -m uwnav_dynamics.preprocess.build_dataset \\
-    -y configs/dataset/pooltest02_s1.yaml
-"""
 
 import argparse
 from dataclasses import dataclass
@@ -27,6 +44,11 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from uwnav_dynamics.preprocess.qa import (
+    assert_train_base_qa_pass,
+    render_train_base_qa,
+    run_train_base_qa,
+)
 from uwnav_dynamics.preprocess.sliding_window import (
     SlidingWindowConfig,
     SlidingWindowResult,
@@ -189,6 +211,7 @@ def _add_state_velocity_cols(df: pd.DataFrame) -> pd.DataFrame:
 
     return df_out
 
+
 # ---------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------
@@ -209,6 +232,17 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
     if df.empty:
         raise RuntimeError(f"Base CSV is empty: {cfg.base_csv}")
     df = _add_state_velocity_cols(df)
+    qa_report = run_train_base_qa(
+        df,
+        stage="base_csv",
+        time_col=cfg.time_col,
+        dense_target_cols=cfg.sliding_cfg.target_cols,
+        hist_len=int(cfg.sliding_cfg.hist_len),
+        pred_len=int(cfg.sliding_cfg.pred_len),
+        key_stat_cols=cfg.sliding_cfg.target_cols,
+    )
+    print(render_train_base_qa(qa_report))
+    assert_train_base_qa_pass(qa_report)
 
     # 2) 滑动窗口构造
     sw_res: SlidingWindowResult = None  # type: ignore

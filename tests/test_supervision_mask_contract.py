@@ -10,6 +10,7 @@
 2. 验证 acc / gyro 维默认全为 True。
 3. 验证 vel 维只由 `dvl_mask` 广播决定。
 4. 验证 helper 兼容 `dvl_mask:(N,H)` 与 `dvl_mask:(N,H,1)` 两种 artifact 形状。
+5. 验证历史 artifact 中 `mask=true 但 velocity target 为 NaN` 时会被保守降级。
 
 数据流：
 dvl_mask + semantic layout
@@ -29,7 +30,10 @@ from __future__ import annotations
 import numpy as np
 
 from uwnav_dynamics.models.utils.semantic_output_layout import canonical_semantic_output_layout
-from uwnav_dynamics.supervision_mask import build_target_mask_from_dvl_mask
+from uwnav_dynamics.supervision_mask import (
+    build_target_mask_from_dvl_mask,
+    refine_velocity_target_mask_with_finite_targets,
+)
 
 
 def test_build_target_mask_uses_dvl_mask_only_for_velocity_group():
@@ -79,3 +83,26 @@ def test_build_target_mask_accepts_singleton_last_dim_mask_artifact():
     assert np.array_equal(target_mask[:, :, 6], expected_2d)
     assert np.array_equal(target_mask[:, :, 7], expected_2d)
     assert np.array_equal(target_mask[:, :, 8], expected_2d)
+
+
+def test_refine_velocity_target_mask_downgrades_nonfinite_velocity_targets():
+    semantic_layout = canonical_semantic_output_layout(9)
+    dvl_mask = np.ones((2, 3), dtype=bool)
+    target_mask = build_target_mask_from_dvl_mask(
+        dvl_mask,
+        semantic_layout,
+        target_shape=(2, 3, 9),
+    )
+    y = np.zeros((2, 3, 9), dtype=np.float32)
+    y[0, 1, 6:] = np.nan
+
+    refined, downgraded = refine_velocity_target_mask_with_finite_targets(
+        target_mask,
+        y,
+        semantic_layout,
+    )
+
+    assert downgraded == 3
+    assert np.all(refined[:, :, 0:6])
+    assert np.array_equal(refined[0, 1, 6:], np.asarray([False, False, False], dtype=bool))
+    assert np.array_equal(refined[0, 0, 6:], np.asarray([True, True, True], dtype=bool))

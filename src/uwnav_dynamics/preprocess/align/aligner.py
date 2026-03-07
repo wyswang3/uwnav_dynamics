@@ -1,6 +1,38 @@
 # src/uwnav_dynamics/preprocess/align/aligner.py
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+"""
+模块名称：多传感器主时间轴对齐
+
+模块职责：
+负责将 IMU、PWM、DVL、Power 等异步传感器数据对齐到统一主时间轴，
+生成训练与评估共用的 `train_base.csv` 基础表。
+
+主要功能：
+1. 根据 IMU / PWM 时间范围解析主时间轴。
+2. 将 IMU dense 观测、PWM 控制、DVL 稀疏监督与 Power 辅助量映射到主轴。
+3. 输出可直接进入 dataset build 的训练基础表。
+
+数据流：
+IMU proc CSV / PWM CSV / DVL proc CSV / Power CSV
+    ↓
+主时间轴解析
+    ↓
+IMU dense 重采样 + PWM hold-last + DVL sparse attach + Power gating
+    ↓
+train_base.csv / DataFrame
+
+依赖模块：
+- numpy
+- pandas
+- pathlib
+- dataclasses
+
+备注：
+- IMU Acc/Gyro 属于 dense 连续信号，必须保持主轴对齐结果全 finite；
+- DVL / Power 仍按各自的稀疏监督与辅助量语义处理。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +41,12 @@ from typing import Optional, Sequence, Dict, Any
 
 import numpy as np
 import pandas as pd
+
+from uwnav_dynamics.preprocess.qa import (
+    assert_train_base_qa_pass,
+    render_train_base_qa,
+    run_train_base_qa,
+)
 
 
 # =============================================================================
@@ -199,6 +237,129 @@ def _bin_average_multi(
             out[:, c] = s / np.maximum(count, 1.0)
         out[count == 0, c] = np.nan
 
+    return out
+
+
+def _assert_main_axis_within_src_range(
+    t_src: np.ndarray,
+    t_main_s: np.ndarray,
+    *,
+    src_name: str,
+) -> None:
+    """
+    断言主时间轴完全落在源时间轴覆盖范围内。
+
+    该检查用于 dense 插值前的 fail-fast：
+      - 不允许对源时间轴之外的主轴做外推；
+      - 不对主轴做静默裁剪，避免悄悄改变实验语义。
+    """
+    t_src = np.asarray(t_src, dtype=float).reshape(-1)
+    t_main = np.asarray(t_main_s, dtype=float).reshape(-1)
+
+    if t_src.size == 0:
+        raise ValueError(f"[ALIGN][IMU] empty source time axis: src={src_name}")
+    if t_main.size == 0:
+        raise ValueError(f"[ALIGN][IMU] empty main time axis for src={src_name}")
+    if not np.all(np.isfinite(t_src)):
+        raise ValueError(f"[ALIGN][IMU] source time axis has NaN/Inf: src={src_name}")
+    if not np.all(np.isfinite(t_main)):
+        raise ValueError(f"[ALIGN][IMU] main time axis has NaN/Inf: src={src_name}")
+
+    axis_eps_s = 1e-9
+    src_lo = float(t_src[0])
+    src_hi = float(t_src[-1])
+    main_lo = float(t_main[0])
+    main_hi = float(t_main[-1])
+
+    if (main_lo < (src_lo - axis_eps_s)) or (main_hi > (src_hi + axis_eps_s)):
+        msg = (
+            f"[ALIGN][IMU] main axis out of source range: src={src_name} "
+            f"t_src=[{src_lo:.9f}, {src_hi:.9f}] "
+            f"t_main=[{main_lo:.9f}, {main_hi:.9f}]"
+        )
+        print(msg)
+        raise ValueError(msg)
+
+
+def _interp_dense_to_main(
+    t_src: np.ndarray,
+    values: np.ndarray,
+    t_main_s: np.ndarray,
+    *,
+    name: str,
+) -> np.ndarray:
+    """
+    将 dense 连续信号按真实时间轴线性插值到主时间轴。
+
+    约束：
+      - 源时间轴必须严格递增且无重复；
+      - 源值必须全 finite；
+      - 不做自动排序、去重、聚合或外推。
+    """
+    t_src = np.asarray(t_src, dtype=float).reshape(-1)
+    vals = np.asarray(values, dtype=float)
+    t_main = np.asarray(t_main_s, dtype=float).reshape(-1)
+
+    if vals.ndim == 1:
+        vals = vals.reshape(-1, 1)
+    if vals.shape[0] != t_src.size:
+        raise ValueError(f"[ALIGN][IMU] dense_interp name={name} time/value length mismatch")
+    if t_src.size == 0:
+        raise ValueError(f"[ALIGN][IMU] dense_interp name={name} empty source time axis")
+    if t_main.size == 0:
+        raise ValueError(f"[ALIGN][IMU] dense_interp name={name} empty main time axis")
+    if not np.all(np.isfinite(t_src)):
+        raise ValueError(f"[ALIGN][IMU] dense_interp name={name} source time axis has NaN/Inf")
+    if not np.all(np.isfinite(t_main)):
+        raise ValueError(f"[ALIGN][IMU] dense_interp name={name} main time axis has NaN/Inf")
+
+    bad_steps = np.where(np.diff(t_src) <= 0.0)[0]
+    if bad_steps.size > 0:
+        i = int(bad_steps[0])
+        raise ValueError(
+            "[ALIGN][IMU] dense_interp "
+            f"name={name} source time axis must be strictly increasing without duplicates: "
+            f"bad_idx={i} t[i]={float(t_src[i]):.9f} t[i+1]={float(t_src[i + 1]):.9f}"
+        )
+
+    src_nonfinite = int((~np.isfinite(vals)).sum())
+    if src_nonfinite > 0:
+        msg = (
+            f"[ALIGN][IMU] ERROR dense_interp name={name} "
+            f"src_nonfinite={src_nonfinite}"
+        )
+        print(msg)
+        raise RuntimeError(msg)
+
+    out = np.empty((t_main.size, vals.shape[1]), dtype=float)
+    for c in range(vals.shape[1]):
+        out[:, c] = np.interp(
+            t_main,
+            t_src,
+            vals[:, c],
+            left=np.nan,
+            right=np.nan,
+        )
+
+    out_nonfinite = int((~np.isfinite(out)).sum())
+    if out_nonfinite > 0:
+        msg = (
+            f"[ALIGN][IMU] ERROR dense_interp name={name} "
+            f"out_nonfinite={out_nonfinite} "
+            f"t_src=[{float(t_src[0]):.9f}, {float(t_src[-1]):.9f}] "
+            f"t_main=[{float(t_main[0]):.9f}, {float(t_main[-1]):.9f}]"
+        )
+        print(msg)
+        raise RuntimeError(msg)
+
+    src_dt_med = float(np.median(np.diff(t_src))) if t_src.size > 1 else float("nan")
+    main_dt_med = float(np.median(np.diff(t_main))) if t_main.size > 1 else float("nan")
+    print(
+        f"[ALIGN][IMU] dense_interp name={name} "
+        f"src_n={t_src.size} main_n={t_main.size} "
+        f"src_dt_med={src_dt_med:.6f} main_dt_med={main_dt_med:.6f} "
+        f"src_nonfinite={src_nonfinite} out_nonfinite={out_nonfinite}"
+    )
     return out
 
 
@@ -469,25 +630,24 @@ def build_training_table_imu_main(
     t_main = _resolve_main_grid(t_imu=t_imu, t_pwm=t_pwm, cfg=cfg)
     N = t_main.size
 
-    # ---------------- 4) IMU -> 主时间轴（bin-average） ----------------
-    acc_main = _bin_average_multi(
+    # ---------------- 4) IMU -> 主时间轴（dense interpolation） ----------------
+    _assert_main_axis_within_src_range(t_imu, t_main, src_name="imu")
+    acc_main = _interp_dense_to_main(
         t_src=t_imu,
         values=acc_imu,
-        t0=float(t_main[0]),
-        dt=float(cfg.dt_main_s),
-        n_bins=N,
+        t_main_s=t_main,
+        name="acc_body",
     )
-    gyro_main = _bin_average_multi(
+    gyro_main = _interp_dense_to_main(
         t_src=t_imu,
         values=gyro_imu,
-        t0=float(t_main[0]),
-        dt=float(cfg.dt_main_s),
-        n_bins=N,
+        t_main_s=t_main,
+        name="gyro_body",
     )
-
-    # 若某些 bin 完全没有 IMU 样本（理论上不应该），直接抛异常提醒
-    if np.isnan(acc_main).all():
-        raise RuntimeError("[ALIGN] IMU bin-average 结果全为 NaN，请检查时间戳。")
+    if (not np.all(np.isfinite(acc_main))) or (not np.all(np.isfinite(gyro_main))):
+        raise RuntimeError(
+            "[ALIGN][IMU] aligned dense IMU targets must be finite before writing train_base.csv"
+        )
 
     # ---------------- 5) PWM: hold-last 到主时间轴 ----------------
     pwm_main = _sample_last_before(
@@ -630,4 +790,13 @@ def build_training_table_imu_main(
             data[c] = power_main[:, i]
 
     df_out = pd.DataFrame(data)
+    qa_report = run_train_base_qa(
+        df_out,
+        stage="train_base",
+        time_col="t_s",
+        dense_target_cols=imu_acc_cols + imu_gyro_cols,
+        key_stat_cols=imu_acc_cols + imu_gyro_cols,
+    )
+    print(render_train_base_qa(qa_report))
+    assert_train_base_qa_pass(qa_report)
     return df_out
