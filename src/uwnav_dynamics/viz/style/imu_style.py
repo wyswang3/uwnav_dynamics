@@ -38,6 +38,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 
 from uwnav_dynamics.viz.style.sci_style import (
+    align_ylabels,
     apply_minimal_legend,
     apply_shared_xlabels,
     get_figure_size,
@@ -190,6 +191,7 @@ def finalize_imu_axes(axes: Sequence[plt.Axes], *, y_pad_frac: float = 0.03) -> 
     """对三行传感器图统一收尾 y 轴刻度。"""
     for ax in axes:
         set_y_ticks_pretty_3(ax, y_pad_frac=y_pad_frac)
+    align_ylabels(axes)
 
 
 def plot_xyz_lines(

@@ -27,7 +27,8 @@ plot 模块通过 helper 构造 figure / axes / legend
 - 本模块是绘图系统的全局真源；`imu_style.py` 只负责多行传感器图布局。
 - 主结果与 baseline 的视觉层级必须在此处固化，不应由调用者每次手工拼接样式。
 - 多曲线比较图应优先使用高对比、近互补的配色组合，让 primary / baseline / ablation 或多条候选曲线在首眼观察时就能分离。
-- 正式 preset 采用浅底、无背景网格的科研风格，避免图面噪声抢占曲线注意力。
+- 正式 preset 采用纯白底、无背景网格的科研风格，避免图面噪声抢占曲线注意力。
+- 英文、数字与 mathtext 统一收敛到 `Times New Roman`，文字颜色统一使用纯黑。
 """
 
 from __future__ import annotations
@@ -37,13 +38,15 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from cycler import cycler
 
 
-_FIGURE_BG = "#FAFBFC"
+_FIGURE_BG = "#FFFFFF"
 _AXES_BG = "#FFFFFF"
-_TEXT_PRIMARY = "#243447"
-_TEXT_SECONDARY = "#5B6B7A"
+_TIMES_NEW_ROMAN = "Times New Roman"
+_TEXT_PRIMARY = "#000000"
+_TEXT_SECONDARY = "#000000"
 _GRID_COLOR = "#D9E2EC"
 _SPINE_COLOR = "#C7D0D9"
 
@@ -58,6 +61,16 @@ _RESIDUAL_COLOR = "#C8553D"
 _MUTED_COLOR = "#B8C4CF"
 _ACCENT_GOLD = "#D4A72C"
 _ACCENT_ROSE = "#D65A7A"
+_TIMES_FONT_FILES: Tuple[str, ...] = (
+    "Times_New_Roman.ttf",
+    "Times_New_Roman_Italic.ttf",
+    "Times_New_Roman_Bold.ttf",
+    "Times_New_Roman_Bold_Italic.ttf",
+    "times.ttf",
+    "timesi.ttf",
+    "timesbd.ttf",
+    "timesbi.ttf",
+)
 
 
 @dataclass(frozen=True)
@@ -113,8 +126,8 @@ class MplGlobalStyle:
 _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
     "paper": MplGlobalStyle(
         preset="paper",
-        font_family="serif",
-        font_serif=("Times New Roman", "Times", "DejaVu Serif"),
+        font_family=_TIMES_NEW_ROMAN,
+        font_serif=(_TIMES_NEW_ROMAN, "Times", "DejaVu Serif"),
         base_fontsize=11,
         labelsize=11,
         ticksize=10,
@@ -150,8 +163,8 @@ _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
     ),
     "ppt": MplGlobalStyle(
         preset="ppt",
-        font_family="serif",
-        font_serif=("Times New Roman", "Times", "DejaVu Serif"),
+        font_family=_TIMES_NEW_ROMAN,
+        font_serif=(_TIMES_NEW_ROMAN, "Times", "DejaVu Serif"),
         base_fontsize=13,
         labelsize=13,
         ticksize=12,
@@ -237,6 +250,19 @@ def get_style(preset: str = "paper") -> MplGlobalStyle:
     if preset not in _STYLE_PRESETS:
         raise KeyError(f"Unknown plot preset: {preset!r}")
     return _STYLE_PRESETS[preset]
+
+
+def _register_times_new_roman() -> None:
+    """向 matplotlib 显式注册 Times New Roman，避免字体缓存回退到默认字体。"""
+    try:
+        font_manager.findfont(_TIMES_NEW_ROMAN, fallback_to_default=False)
+        return
+    except ValueError:
+        pass
+
+    for path_str in font_manager.findSystemFonts():
+        if Path(path_str).name in _TIMES_FONT_FILES:
+            font_manager.fontManager.addfont(path_str)
 
 
 def get_figure_size(kind: str, preset: str = "paper") -> Tuple[float, float]:
@@ -329,6 +355,7 @@ def get_model_role_styles(roles: Sequence[str]) -> List[SeriesStyle]:
 def setup_mpl(style: Optional[MplGlobalStyle] = None) -> None:
     """把仓库统一科研绘图风格写入 matplotlib 全局配置。"""
     style = style or get_style("paper")
+    _register_times_new_roman()
     plt.rcParams.update(
         {
             "font.family": style.font_family,
@@ -363,6 +390,10 @@ def setup_mpl(style: Optional[MplGlobalStyle] = None) -> None:
             "legend.edgecolor": "none",
             "axes.prop_cycle": cycler(color=list(style.prop_cycle)),
             "grid.color": _GRID_COLOR,
+            "mathtext.fontset": "custom",
+            "mathtext.rm": _TIMES_NEW_ROMAN,
+            "mathtext.it": f"{_TIMES_NEW_ROMAN}:italic",
+            "mathtext.bf": f"{_TIMES_NEW_ROMAN}:bold",
             "figure.figsize": style.single_size,
             "figure.dpi": style.figure_dpi,
             "savefig.dpi": style.savefig_dpi,
@@ -401,14 +432,23 @@ def apply_shared_xlabels(axes: Sequence[plt.Axes], xlabel: str) -> None:
     axes[-1].set_xlabel(xlabel)
 
 
+def align_ylabels(axes: Sequence[plt.Axes]) -> None:
+    """把同一列多子图的 y 轴标签对齐到统一竖线。"""
+    if len(axes) == 0:
+        return
+    fig = axes[0].figure
+    fig.canvas.draw()
+    fig.align_ylabels(list(axes))
+
+
 def apply_minimal_legend(legend: Optional[plt.Legend]) -> None:
     """把图例收敛到仓库统一的极简样式。"""
     if legend is None:
         return
     frame = legend.get_frame()
-    frame.set_alpha(0.96)
+    frame.set_alpha(0.0)
     frame.set_linewidth(0.0)
-    frame.set_facecolor(_FIGURE_BG)
+    frame.set_facecolor("none")
     frame.set_edgecolor("none")
     for text in legend.get_texts():
         text.set_color(_TEXT_PRIMARY)

@@ -167,6 +167,8 @@ def test_prepare_matrix_runs_materializes_unique_generated_train_yamls(tmp_path:
     assert len(prepared) == 2
     assert prepared[0].yaml_path.exists()
     assert prepared[1].yaml_path.exists()
+    assert prepared[0].yaml_path.parent == tmp_path / "configs" / "train" / "generated" / "demo"
+    assert prepared[1].yaml_path.parent == tmp_path / "configs" / "train" / "generated" / "demo"
     assert prepared[0].run_dir != prepared[1].run_dir
     assert prepared[0].eval_dir.name == "eval_test"
 

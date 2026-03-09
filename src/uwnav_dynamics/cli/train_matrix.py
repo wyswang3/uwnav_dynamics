@@ -33,7 +33,8 @@ summary.csv + compare plots
 备注：
 - 当前实现是“8 卡并发实验矩阵”，不是单模型 DDP。
 - 这样做的原因是当前 baseline 只有约 1M 参数，更适合并发比较多种思路。
-- 生成的 train yaml 会作为本次实验的显式审计产物保留在 `work_dir/generated_configs/`。
+- 生成的 train yaml 会作为本次实验的显式审计产物保留在 `configs/train/generated/<work_dir_name>/`，
+  避免在 `out/` 等运行目录中混入新的训练配置文件。
 """
 
 from __future__ import annotations
@@ -274,6 +275,14 @@ def _resolve_repo_path(repo_root: Path, path: Path) -> Path:
     return path if path.is_absolute() else (repo_root / path)
 
 
+def _resolve_generated_train_dir(cfg: MatrixLauncherConfig, *, repo_root: Path) -> Path:
+    """把矩阵物化后的训练 YAML 统一放到 `configs/train/generated/<work_dir_name>/`。"""
+    work_dir_name = cfg.work_dir.name or "default"
+    generated_dir = repo_root / "configs" / "train" / "generated" / work_dir_name
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    return generated_dir
+
+
 def prepare_matrix_runs(cfg: MatrixLauncherConfig, *, repo_root: Path) -> list[PreparedMatrixRun]:
     """根据基础 YAML 与各变体 override 生成独立运行配置文件。"""
     base_yaml_path = cfg.base_train_yaml
@@ -282,9 +291,8 @@ def prepare_matrix_runs(cfg: MatrixLauncherConfig, *, repo_root: Path) -> list[P
     base_yaml = load_yaml_dict(base_yaml_path)
 
     resolved_work_dir = _resolve_repo_path(repo_root, cfg.work_dir)
-    generated_dir = resolved_work_dir / "generated_configs"
+    generated_dir = _resolve_generated_train_dir(cfg, repo_root=repo_root)
     logs_dir = resolved_work_dir / "logs"
-    generated_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     prepared: list[PreparedMatrixRun] = []

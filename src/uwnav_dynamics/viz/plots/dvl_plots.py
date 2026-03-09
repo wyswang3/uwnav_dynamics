@@ -49,7 +49,7 @@ from uwnav_dynamics.viz.style.imu_style import (
     plot_xyz_lines,
     set_y_ticks_pretty_3,
 )
-from uwnav_dynamics.viz.style.sci_style import apply_axes_style, get_figure_size, setup_mpl
+from uwnav_dynamics.viz.style.sci_style import align_ylabels, apply_axes_style, get_figure_size, setup_mpl
 
 
 @dataclass(frozen=True)
@@ -124,6 +124,7 @@ def save_dvl_bi_be_vel_2rows(
     ax2.set_xlabel("Time (s)")
     set_y_ticks_pretty_3(ax2, y_pad_frac=layout.y_pad_frac)
 
+    align_ylabels(axes)
     fig.subplots_adjust(left=layout.left, right=layout.right, bottom=layout.bottom, top=layout.top, hspace=0.18)
     fig.savefig(paths.dvl_vel_png)
     plt.close(fig)
@@ -216,6 +217,7 @@ def save_dvl_proc_figures(
     ax_bd.set_xlabel("Time (s)")
     set_y_ticks_pretty_3(ax_bd, y_pad_frac=layout.y_pad_frac)
 
+    align_ylabels(axes)
     fig.subplots_adjust(left=layout.left, right=layout.right, bottom=layout.bottom, top=layout.top, hspace=0.20)
     fig.savefig(paths.combined_png)
     plt.close(fig)

@@ -30,9 +30,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import matplotlib as mpl
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
+from matplotlib.colors import to_rgba
 
 from uwnav_dynamics.io.readers.dvl_reader import DvlFrame
 from uwnav_dynamics.io.readers.imu_reader import ImuFrame
@@ -105,10 +107,14 @@ def test_imu_raw_figure_has_no_titles_and_single_legend(tmp_path, monkeypatch):
 
     fig, _ = captured[0]
     axes = fig.axes
+    fig.canvas.draw()
     assert [ax.get_title() for ax in axes] == ["", "", ""]
     assert [ax.get_xlabel() for ax in axes] == ["", "", "Time (s)"]
     assert [ax.get_ylabel() for ax in axes] == ["Acc (g)", "Gyro (deg/s)", "Att (deg)"]
     assert sum(ax.get_legend() is not None for ax in axes) == 1
+    renderer = fig.canvas.get_renderer()
+    ylabel_x0 = [ax.yaxis.label.get_window_extent(renderer).x0 for ax in axes]
+    assert max(ylabel_x0) - min(ylabel_x0) < 1.0
 
 
 def test_dvl_proc_figure_uses_bottom_xlabel_and_no_single_var_legends(tmp_path, monkeypatch):
@@ -156,7 +162,19 @@ def test_rollout_sample_figure_has_no_titles_bottom_xlabel_and_single_legend():
     y_true = np.zeros((H, 9), dtype=float)
     y_hat = np.ones((H, 9), dtype=float) * 0.1
     fig, axes = build_rollout_sample_figure(y_hat=y_hat, y_true=y_true, dt_s=0.05)
+    fig.canvas.draw()
 
     assert [ax.get_title() for ax in axes] == ["", "", ""]
     assert [ax.get_xlabel() for ax in axes] == ["", "", "Prediction horizon (s)"]
-    assert sum(ax.get_legend() is not None for ax in axes) == 1
+    assert len(fig.legends) == 1
+    assert mpl.rcParams["font.family"][0] == "Times New Roman"
+    assert axes[2].xaxis.label.get_fontfamily()[0] == "Times New Roman"
+    assert fig.get_facecolor() == to_rgba("#FFFFFF")
+    assert all(ax.get_facecolor() == to_rgba("#FFFFFF") for ax in axes)
+    assert not any(line.get_visible() for ax in axes for line in ax.get_xgridlines() + ax.get_ygridlines())
+    assert to_rgba(axes[2].xaxis.label.get_color()) == to_rgba("#000000")
+    assert to_rgba(axes[2].get_xticklabels()[0].get_color()) == to_rgba("#000000")
+    legend = fig.legends[0]
+    assert legend.get_frame().get_alpha() == 0.0
+    assert legend.get_texts()[0].get_fontfamily()[0] == "Times New Roman"
+    assert to_rgba(legend.get_texts()[0].get_color()) == to_rgba("#000000")

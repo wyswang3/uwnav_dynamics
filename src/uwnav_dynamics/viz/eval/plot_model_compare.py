@@ -47,6 +47,7 @@ import numpy as np
 from uwnav_dynamics.viz.eval.plot_horizon_metrics import _metric_csv_name, _metric_from_dir
 from uwnav_dynamics.viz.style.sci_style import (
     add_figure_legend,
+    align_ylabels,
     apply_axes_style,
     apply_shared_xlabels,
     get_figure_size,
@@ -135,6 +136,7 @@ def build_horizon_compare_figure(
         apply_axes_style(group_ax, grid=False)
 
     apply_shared_xlabels(list(axes), "Prediction horizon (s)" if cfg.use_seconds else "Prediction step (k)")
+    align_ylabels(axes)
     handles, legend_labels = axes[0].get_legend_handles_labels()
     fig.subplots_adjust(top=0.84)
     add_figure_legend(fig, handles, legend_labels, ncol=min(len(legend_labels), 4), y=0.985)
