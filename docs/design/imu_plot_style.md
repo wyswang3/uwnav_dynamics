@@ -56,11 +56,17 @@ IMU 图采用固定三行布局：
 
 ## 5. Color and Semantic Mapping
 
-- X axis: 固定颜色
-- Y axis: 固定颜色
-- Z axis: 固定颜色
+- X axis: `#2C7FB8`
+- Y axis: `#F28E2B`
+- Z axis: `#1B9E77`
 
 该映射在所有 IMU 图中保持不变。
+
+补充约束：
+
+- IMU 图默认采用浅底、无背景网格的风格
+- 坐标轴背景保持白色，避免三轴曲线被底纹切碎
+- 若确需额外参考线，应优先使用轻量事件线，而不是重新开启整面网格
 
 ## 6. Titles and Legends
 

@@ -46,11 +46,11 @@ import numpy as np
 
 from uwnav_dynamics.viz.eval.plot_horizon_metrics import _metric_csv_name, _metric_from_dir
 from uwnav_dynamics.viz.style.sci_style import (
+    add_figure_legend,
     apply_axes_style,
-    apply_minimal_legend,
     apply_shared_xlabels,
     get_figure_size,
-    get_model_role_style,
+    get_model_role_styles,
     infer_model_role,
     save_figure,
     setup_mpl,
@@ -97,6 +97,7 @@ def build_horizon_compare_figure(
     resolved_roles = _resolve_roles(labels, roles)
     order = {"primary": 0, "ablation": 1, "baseline": 2}
     zipped = sorted(zip(eval_dirs, labels, resolved_roles), key=lambda item: order[item[2]])
+    resolved_role_styles = get_model_role_styles([item[2] for item in zipped])
 
     hd0, _, semantic_layout0 = _metric_from_dir(Path(zipped[0][0]), cfg.metric, artifact_variant=artifact_variant)
     H = hd0.shape[0]
@@ -111,7 +112,7 @@ def build_horizon_compare_figure(
     )
 
     for group_ax, (group_key, ylabel) in zip(axes, group_specs):
-        for eval_dir, label, role in zipped:
+        for idx, (eval_dir, label, role) in enumerate(zipped):
             hd, _, semantic_layout = _metric_from_dir(Path(eval_dir), cfg.metric, artifact_variant=artifact_variant)
             vals = hd[:, list(semantic_layout.group_indices[group_key])]
             valid_count = np.sum(~np.isnan(vals), axis=1)
@@ -119,7 +120,7 @@ def build_horizon_compare_figure(
             valid = valid_count > 0
             if np.any(valid):
                 curve[valid] = np.nansum(vals[valid], axis=1) / valid_count[valid]
-            sty = get_model_role_style(role)
+            sty = resolved_role_styles[idx]
             group_ax.plot(
                 x,
                 curve,
@@ -134,7 +135,9 @@ def build_horizon_compare_figure(
         apply_axes_style(group_ax, grid=False)
 
     apply_shared_xlabels(list(axes), "Prediction horizon (s)" if cfg.use_seconds else "Prediction step (k)")
-    apply_minimal_legend(axes[0].legend(loc="upper right"))
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    fig.subplots_adjust(top=0.84)
+    add_figure_legend(fig, handles, legend_labels, ncol=min(len(legend_labels), 4), y=0.985)
     return fig, (axes[0], axes[1], axes[2])
 
 

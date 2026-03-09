@@ -50,8 +50,8 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
     load_semantic_layout_from_metrics_path,
 )
 from uwnav_dynamics.viz.style.sci_style import (
+    add_figure_legend,
     apply_axes_style,
-    apply_minimal_legend,
     apply_shared_xlabels,
     get_figure_size,
     get_group_styles,
@@ -181,7 +181,9 @@ def _build_group_norm_figure(
         # 绘制 prediction mean ± sigma 的低饱和填充区域。
 
     apply_shared_xlabels(list(axes), "Prediction horizon (s)")
-    apply_minimal_legend(axes[0].legend(loc="upper right"))
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.subplots_adjust(top=0.86)
+    add_figure_legend(fig, handles, labels, ncol=2, y=0.985)
     return fig, (axes[0], axes[1], axes[2])
 
 
@@ -247,7 +249,9 @@ def _build_component_figure(
             ax.tick_params(axis="x", which="both", labelbottom=False)
     for ax in axes[-1]:
         ax.set_xlabel("Prediction horizon (s)")
-    apply_minimal_legend(flat_axes[0].legend(loc="upper right"))
+    handles, labels = flat_axes[0].get_legend_handles_labels()
+    fig.subplots_adjust(top=0.89)
+    add_figure_legend(fig, handles, labels, ncol=2, y=0.99)
     return fig, flat_axes
 
 

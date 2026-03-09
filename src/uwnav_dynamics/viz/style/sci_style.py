@@ -26,16 +26,38 @@ plot 模块通过 helper 构造 figure / axes / legend
 备注：
 - 本模块是绘图系统的全局真源；`imu_style.py` 只负责多行传感器图布局。
 - 主结果与 baseline 的视觉层级必须在此处固化，不应由调用者每次手工拼接样式。
+- 多曲线比较图应优先使用高对比、近互补的配色组合，让 primary / baseline / ablation 或多条候选曲线在首眼观察时就能分离。
+- 正式 preset 采用浅底、无背景网格的科研风格，避免图面噪声抢占曲线注意力。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 from cycler import cycler
+
+
+_FIGURE_BG = "#FAFBFC"
+_AXES_BG = "#FFFFFF"
+_TEXT_PRIMARY = "#243447"
+_TEXT_SECONDARY = "#5B6B7A"
+_GRID_COLOR = "#D9E2EC"
+_SPINE_COLOR = "#C7D0D9"
+
+_OBSERVED_COLOR = "#2F3B52"
+_PRED_COLOR = "#2C7FB8"
+_PRED_ALT_COLOR = "#E76F51"
+_BASELINE_COLOR = "#5C6BC0"
+_PRIMARY_COLOR = "#1B9E77"
+_ABLATION_COLOR = "#E76F51"
+_UNCERTAINTY_FILL = "#A9D6E5"
+_RESIDUAL_COLOR = "#C8553D"
+_MUTED_COLOR = "#B8C4CF"
+_ACCENT_GOLD = "#D4A72C"
+_ACCENT_ROSE = "#D65A7A"
 
 
 @dataclass(frozen=True)
@@ -84,6 +106,8 @@ class MplGlobalStyle:
     prop_cycle: Tuple[str, ...]
     legend_frameon: bool
     legend_borderaxespad: float
+    legend_handlelength: float
+    legend_columnspacing: float
 
 
 _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
@@ -112,15 +136,17 @@ _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
         rollout_3row_size=(5.0, 4.0),
         component_3x3_size=(6.5, 5.4),
         prop_cycle=(
-            "#4C78A8",
-            "#54A24B",
-            "#B279A2",
-            "#9D7660",
-            "#7F8C8D",
-            "#72B7B2",
+            _PRED_COLOR,
+            "#F28E2B",
+            _PRIMARY_COLOR,
+            _PRED_ALT_COLOR,
+            _BASELINE_COLOR,
+            _ACCENT_ROSE,
         ),
         legend_frameon=False,
         legend_borderaxespad=0.25,
+        legend_handlelength=2.4,
+        legend_columnspacing=1.1,
     ),
     "ppt": MplGlobalStyle(
         preset="ppt",
@@ -147,40 +173,62 @@ _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
         rollout_3row_size=(6.5, 5.0),
         component_3x3_size=(8.0, 6.6),
         prop_cycle=(
-            "#4C78A8",
-            "#54A24B",
-            "#B279A2",
-            "#9D7660",
-            "#7F8C8D",
-            "#72B7B2",
+            _PRED_COLOR,
+            "#F28E2B",
+            _PRIMARY_COLOR,
+            _PRED_ALT_COLOR,
+            _BASELINE_COLOR,
+            _ACCENT_ROSE,
         ),
         legend_frameon=False,
         legend_borderaxespad=0.25,
+        legend_handlelength=2.4,
+        legend_columnspacing=1.2,
     ),
 }
 
 
 _XYZ_SERIES: Dict[str, SeriesStyle] = {
-    "x": SeriesStyle(color="#4C78A8"),
+    "x": SeriesStyle(color=_PRED_COLOR),
     "y": SeriesStyle(color="#F28E2B"),
-    "z": SeriesStyle(color="#59A14F"),
+    "z": SeriesStyle(color=_PRIMARY_COLOR),
 }
 
 _GROUP_SERIES: Dict[str, SeriesStyle] = {
-    "Acc": SeriesStyle(color="#4C78A8"),
-    "Gyro": SeriesStyle(color="#B279A2"),
-    "Vel": SeriesStyle(color="#59A14F"),
+    "Acc": SeriesStyle(color=_PRED_COLOR),
+    "Gyro": SeriesStyle(color=_PRED_ALT_COLOR),
+    "Vel": SeriesStyle(color=_PRIMARY_COLOR),
 }
 
 _OBSERVED_PRED_SERIES: Dict[str, SeriesStyle] = {
-    "observed": SeriesStyle(color="#30343A", linestyle="-", linewidth=1.6, alpha=1.0, zorder=5),
-    "pred": SeriesStyle(color="#1F4E79", linestyle="--", linewidth=1.5, alpha=0.98, zorder=4),
+    "observed": SeriesStyle(color=_OBSERVED_COLOR, linestyle="-", linewidth=1.7, alpha=0.96, zorder=5),
+    "pred": SeriesStyle(color=_PRED_COLOR, linestyle="--", linewidth=1.55, alpha=0.98, zorder=4),
 }
 
 _MODEL_ROLE_SERIES: Dict[str, SeriesStyle] = {
-    "primary": SeriesStyle(color="#1F4E79", linestyle="-", linewidth=1.8, alpha=1.0, zorder=5),
-    "baseline": SeriesStyle(color="#8C9199", linestyle="--", linewidth=1.2, alpha=0.95, zorder=3),
-    "ablation": SeriesStyle(color="#5A7D6D", linestyle="-.", linewidth=1.35, alpha=0.98, zorder=4),
+    "primary": SeriesStyle(color=_PRIMARY_COLOR, linestyle="-", linewidth=1.95, alpha=1.0, zorder=5),
+    "baseline": SeriesStyle(color=_BASELINE_COLOR, linestyle="--", linewidth=1.45, alpha=0.94, zorder=3),
+    "ablation": SeriesStyle(color=_ABLATION_COLOR, linestyle="-.", linewidth=1.6, alpha=0.97, zorder=4),
+}
+
+_MODEL_ROLE_PALETTES: Dict[str, Tuple[str, ...]] = {
+    "primary": (
+        _PRIMARY_COLOR,
+        _PRED_COLOR,
+        _ACCENT_ROSE,
+        "#4C956C",
+    ),
+    "baseline": (
+        _BASELINE_COLOR,
+        "#7A8CA3",
+        "#8FA1B3",
+    ),
+    "ablation": (
+        _ABLATION_COLOR,
+        "#F28E2B",
+        _RESIDUAL_COLOR,
+        _ACCENT_GOLD,
+    ),
 }
 
 
@@ -248,6 +296,36 @@ def get_model_role_style(role: str) -> SeriesStyle:
     return _MODEL_ROLE_SERIES[role_key]
 
 
+def get_model_role_styles(roles: Sequence[str]) -> List[SeriesStyle]:
+    """
+    为一组模型角色生成稳定且可区分的曲线样式。
+
+    规则：
+    - 角色决定线型、线宽和视觉层级；
+    - 同角色内用 role-specific palette 轮换颜色，避免多条 primary/baseline 曲线难以区分。
+    """
+    counts: Dict[str, int] = {key: 0 for key in _MODEL_ROLE_SERIES}
+    styles: List[SeriesStyle] = []
+    for role in roles:
+        role_key = role.lower()
+        if role_key not in _MODEL_ROLE_SERIES:
+            raise KeyError(f"Unknown model role: {role!r}")
+        base = _MODEL_ROLE_SERIES[role_key]
+        palette = _MODEL_ROLE_PALETTES[role_key]
+        color = palette[counts[role_key] % len(palette)]
+        counts[role_key] += 1
+        styles.append(
+            SeriesStyle(
+                color=color,
+                linestyle=base.linestyle,
+                linewidth=base.linewidth,
+                alpha=base.alpha,
+                zorder=base.zorder,
+            )
+        )
+    return styles
+
+
 def setup_mpl(style: Optional[MplGlobalStyle] = None) -> None:
     """把仓库统一科研绘图风格写入 matplotlib 全局配置。"""
     style = style or get_style("paper")
@@ -263,8 +341,17 @@ def setup_mpl(style: Optional[MplGlobalStyle] = None) -> None:
             "legend.fontsize": style.legendsize,
             "axes.grid": style.grid,
             "axes.linewidth": style.axes_linewidth,
+            "figure.facecolor": _FIGURE_BG,
+            "figure.edgecolor": _FIGURE_BG,
+            "axes.facecolor": _AXES_BG,
+            "axes.edgecolor": _SPINE_COLOR,
+            "axes.labelcolor": _TEXT_PRIMARY,
+            "axes.titlecolor": _TEXT_PRIMARY,
             "axes.spines.top": True,
             "axes.spines.right": True,
+            "text.color": _TEXT_PRIMARY,
+            "xtick.color": _TEXT_SECONDARY,
+            "ytick.color": _TEXT_SECONDARY,
             "xtick.major.size": style.tick_length,
             "xtick.major.width": style.tick_width,
             "ytick.major.size": style.tick_length,
@@ -272,11 +359,15 @@ def setup_mpl(style: Optional[MplGlobalStyle] = None) -> None:
             "lines.linewidth": style.default_linewidth,
             "legend.frameon": style.legend_frameon,
             "legend.borderaxespad": style.legend_borderaxespad,
+            "legend.facecolor": _FIGURE_BG,
+            "legend.edgecolor": "none",
             "axes.prop_cycle": cycler(color=list(style.prop_cycle)),
+            "grid.color": _GRID_COLOR,
             "figure.figsize": style.single_size,
             "figure.dpi": style.figure_dpi,
             "savefig.dpi": style.savefig_dpi,
             "savefig.bbox": "tight",
+            "savefig.facecolor": _FIGURE_BG,
             "savefig.pad_inches": 0.02,
         }
     )
@@ -286,10 +377,16 @@ def apply_axes_style(ax: plt.Axes, *, grid: Optional[bool] = None, grid_alpha: O
     """对单个坐标轴应用统一边框、刻度和网格风格。"""
     style = get_style("paper")
     use_grid = style.grid if grid is None else grid
-    ax.set_facecolor("white")
-    ax.tick_params(direction="out")
+    ax.set_facecolor(_AXES_BG)
+    for spine in ax.spines.values():
+        spine.set_color(_SPINE_COLOR)
+        spine.set_linewidth(style.axes_linewidth)
+    ax.tick_params(direction="out", colors=_TEXT_SECONDARY)
+    ax.xaxis.label.set_color(_TEXT_PRIMARY)
+    ax.yaxis.label.set_color(_TEXT_PRIMARY)
+    ax.title.set_color(_TEXT_PRIMARY)
     if use_grid:
-        ax.grid(True, alpha=style.grid_alpha if grid_alpha is None else grid_alpha)
+        ax.grid(True, color=_GRID_COLOR, alpha=style.grid_alpha if grid_alpha is None else grid_alpha)
     else:
         ax.grid(False)
 
@@ -309,10 +406,44 @@ def apply_minimal_legend(legend: Optional[plt.Legend]) -> None:
     if legend is None:
         return
     frame = legend.get_frame()
-    frame.set_alpha(0.0)
+    frame.set_alpha(0.96)
     frame.set_linewidth(0.0)
-    frame.set_facecolor("white")
+    frame.set_facecolor(_FIGURE_BG)
     frame.set_edgecolor("none")
+    for text in legend.get_texts():
+        text.set_color(_TEXT_PRIMARY)
+    legend.set_title(None)
+
+
+def add_figure_legend(
+    fig: plt.Figure,
+    handles,
+    labels,
+    *,
+    ncol: Optional[int] = None,
+    y: float = 1.01,
+    loc: str = "lower center",
+) -> Optional[plt.Legend]:
+    """在画布顶部空白区放置统一图例，避免遮挡坐标轴内部数据。"""
+    labels_list = list(labels)
+    handles_list = list(handles)
+    if len(handles_list) == 0 or len(labels_list) == 0:
+        return None
+
+    style = get_style("paper")
+    legend = fig.legend(
+        handles_list,
+        labels_list,
+        loc=loc,
+        bbox_to_anchor=(0.5, y),
+        ncol=min(len(labels_list), 4) if ncol is None else int(ncol),
+        frameon=True,
+        handlelength=style.legend_handlelength,
+        columnspacing=style.legend_columnspacing,
+        borderaxespad=0.0,
+    )
+    apply_minimal_legend(legend)
+    return legend
 
 
 def save_figure(fig: plt.Figure, out_stem: Path, fmt: str = "png") -> None:

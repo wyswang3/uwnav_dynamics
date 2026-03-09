@@ -46,8 +46,8 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
     load_semantic_layout_from_metrics_path,
 )
 from uwnav_dynamics.viz.style.sci_style import (
+    add_figure_legend,
     apply_axes_style,
-    apply_minimal_legend,
     apply_shared_xlabels,
     get_figure_size,
     get_group_styles,
@@ -157,8 +157,9 @@ def build_rollout_sample_figure(
         apply_axes_style(ax, grid=False)
 
     apply_shared_xlabels(list(axes), "Prediction horizon (s)")
-    leg = axes[0].legend(loc="upper right")
-    apply_minimal_legend(leg)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.subplots_adjust(top=0.86)
+    add_figure_legend(fig, handles, labels, ncol=2, y=0.985)
     return fig, (axes[0], axes[1], axes[2])
 
 

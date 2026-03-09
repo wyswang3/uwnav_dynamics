@@ -44,8 +44,8 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
     load_semantic_layout_from_metrics_path,
 )
 from uwnav_dynamics.viz.style.sci_style import (
+    add_figure_legend,
     apply_axes_style,
-    apply_minimal_legend,
     get_figure_size,
     get_xyz_styles,
     save_figure,
@@ -158,7 +158,9 @@ def build_component_residual_figure(
             ax.tick_params(axis="x", which="both", labelbottom=False)
     for ax in axes[-1]:
         ax.set_xlabel("Prediction horizon (s)")
-    apply_minimal_legend(flat_axes[0].legend(loc="upper right"))
+    handles, labels = flat_axes[0].get_legend_handles_labels()
+    fig.subplots_adjust(top=0.89)
+    add_figure_legend(fig, handles, labels, ncol=2, y=0.99)
     return fig, flat_axes
 
 

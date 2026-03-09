@@ -216,8 +216,17 @@ def add_xyz_legend(
     layout: Imu3RowLayout,
     *,
     labels: Tuple[str, str, str] = IMU_AXIS_LABELS,
-    loc: str = "upper right",
+    loc: str = "lower right",
 ) -> None:
     """为三轴曲线添加一次性 legend。"""
-    leg = ax.legend(list(lines), list(labels), loc=loc, frameon=False, fontsize=layout.legend_fs())
+    leg = ax.legend(
+        list(lines),
+        list(labels),
+        loc=loc,
+        bbox_to_anchor=(1.0, 1.02),
+        frameon=False,
+        fontsize=layout.legend_fs(),
+        borderaxespad=0.0,
+        ncol=3,
+    )
     apply_legend_style(leg)

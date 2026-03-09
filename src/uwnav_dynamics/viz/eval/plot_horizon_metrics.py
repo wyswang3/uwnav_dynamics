@@ -50,11 +50,11 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
     load_semantic_layout_from_metrics_dict,
 )
 from uwnav_dynamics.viz.style.sci_style import (
+    add_figure_legend,
     apply_axes_style,
-    apply_minimal_legend,
     get_figure_size,
     get_group_styles,
-    get_model_role_style,
+    get_model_role_styles,
     infer_model_role,
     save_figure,
     setup_mpl,
@@ -162,7 +162,9 @@ def build_groups_vs_horizon_figure(
     fig, ax = plt.subplots(1, 1, figsize=get_figure_size("single"))
 
     group_styles = get_group_styles()
-    for eval_dir, lab in zip(eval_dirs, labels):
+    legend_ncol = 3 if len(eval_dirs) == 1 else min(len(labels), 4)
+    resolved_role_styles = get_model_role_styles([infer_model_role(label) for label in labels])
+    for idx, (eval_dir, lab) in enumerate(zip(eval_dirs, labels)):
         hd, _, semantic_layout = _metric_from_dir(eval_dir, cfg.metric, artifact_variant=artifact_variant)
         curves = _group_curves(hd, semantic_layout)
 
@@ -181,8 +183,7 @@ def build_groups_vs_horizon_figure(
                     zorder=sty.zorder,
                 )
         else:
-            role = infer_model_role(lab)
-            sty = get_model_role_style(role)
+            sty = resolved_role_styles[idx]
             ax.plot(
                 x,
                 curves["vel"],
@@ -197,7 +198,9 @@ def build_groups_vs_horizon_figure(
     ax.set_xlabel("Prediction horizon (s)" if cfg.use_seconds else "Prediction step (k)")
     ax.set_ylabel(cfg.metric.upper())
     apply_axes_style(ax, grid=False)
-    apply_minimal_legend(ax.legend(loc="best"))
+    handles, legend_labels = ax.get_legend_handles_labels()
+    fig.subplots_adjust(top=0.80)
+    add_figure_legend(fig, handles, legend_labels, ncol=legend_ncol, y=0.98)
     return fig, ax
 
 
