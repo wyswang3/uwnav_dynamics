@@ -7,8 +7,9 @@
 
 主要功能：
 1. 验证 `cli/eval.py` 在无绘图与有绘图两种模式下的命令编排。
-2. 验证绘图阶段失败时返回非零码且保留数值 artifact 的日志语义。
-3. 验证 `cli/pipeline.py` 通过 `cli/eval.py` 进行后续编排。
+2. 验证新接入的 `plot_control_readiness.py` 会进入正式 viz 编排链。
+3. 验证绘图阶段失败时返回非零码且保留数值 artifact 的日志语义。
+4. 验证 `cli/pipeline.py` 通过 `cli/eval.py` 进行后续编排。
 
 数据流：
 临时 train yaml + fake checkpoint
@@ -158,6 +159,7 @@ def test_cli_eval_runs_numeric_then_viz_with_plots(tmp_path, monkeypatch, capsys
         "uwnav_dynamics.eval.evaluate",
         "uwnav_dynamics.viz.eval.plot_horizon_metrics",
         "uwnav_dynamics.viz.eval.plot_horizon_metrics",
+        "uwnav_dynamics.viz.eval.plot_control_readiness",
         "uwnav_dynamics.viz.eval.plot_rollout_samples",
         "uwnav_dynamics.viz.eval.plot_pred_vs_observed",
         "uwnav_dynamics.viz.eval.plot_component_residuals",
@@ -168,9 +170,9 @@ def test_cli_eval_runs_numeric_then_viz_with_plots(tmp_path, monkeypatch, capsys
     assert commands[1][commands[1].index("--out_dir") + 1] == str(plots_dir)
     assert commands[3][commands[3].index("--out_dir") + 1] == str(plots_dir)
     assert commands[1][commands[1].index("--x") + 1] == "step"
-    assert commands[3][commands[3].index("--n") + 1] == "5"
-    assert commands[4][commands[4].index("--mode") + 1] == "component"
-    assert commands[5][commands[5].index("--out_dir") + 1] == str(plots_dir)
+    assert commands[4][commands[4].index("--n") + 1] == "5"
+    assert commands[5][commands[5].index("--mode") + 1] == "component"
+    assert commands[6][commands[6].index("--out_dir") + 1] == str(plots_dir)
 
     out = capsys.readouterr().out
     assert "start visualization stage under" in out

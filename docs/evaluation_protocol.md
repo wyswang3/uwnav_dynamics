@@ -69,6 +69,8 @@ PR5 第一阶段后，若启用 mask-aware 评估，同一评估目录还应并�
   的主语义以物理量纲为准。
 - `*_zspace.*` 只作为辅助调参与排障产物，不作为论文和系统辨识主结论依据。
 - `pred_context.npz` 用于给 viz 层补充 `target_mask / sample_index / component metadata`。
+- `metrics.yaml["control_readiness"]` 用于记录控制前离线筛查诊断，
+  但不应被误解为闭环可用性的最终证明。
 
 这些文件都应由 `src/uwnav_dynamics/eval/evaluate.py` 直接负责生成。
 
@@ -200,6 +202,48 @@ supervision:
 - 不新增 `pred_sample_masks.npz`
 - sample-level 有效性信息通过 `pred_context.npz["target_mask"]` 提供给 viz 层
 
+## 4.4 control_readiness 诊断摘要
+
+为避免仅凭全局 `RMSE/MAE` 直接判断“模型已可进入控制”，
+当前 `metrics.yaml` 额外记录 `control_readiness` 摘要。
+
+它的用途是：
+
+- 辅助筛查 rollout 末步误差是否过大
+- 辅助筛查误差是否随 horizon 快速放大
+- 辅助筛查是否存在明显尾部误差与系统偏差
+
+推荐最小结构如下：
+
+```yaml
+control_readiness:
+  schema_version: control_readiness_v1
+  intended_use: offline_screening_for_control
+  closed_loop_proof: false
+  physical:
+    dense:
+      final_step:
+        rmse_global: 0.0
+        mae_global: 0.0
+      rollout_growth:
+        rmse_last_over_first: 1.0
+        mae_last_over_first: 1.0
+      tail_error:
+        abs_p95_global: 0.0
+        abs_p99_global: 0.0
+      bias:
+        worst_component: acc_x
+        worst_abs_bias: 0.0
+    masked:
+      ...
+```
+
+边界说明：
+
+- 该摘要只反映离线 rollout 质量
+- 它不能替代 controller-in-the-loop 或闭环仿真验证
+- 是否进入后续控制实验，仍需结合任务目标、控制频率与闭环稳定性判断
+
 ## 4.2 legacy artifact fallback
 
 对于 PR4 之前生成、缺少 `layout.semantic` 的旧评估产物，
@@ -254,6 +298,7 @@ out/ckpts/pooltest02_s1_lstm/B0/
     └── plots/
         ├── rmse_horizon_groups.png
         ├── mae_horizon_groups.png
+        ├── control_readiness_summary.png
         ├── rollout_sample_000.png
         ├── pred_vs_observed_component_000.png
         └── residual_component_000.png

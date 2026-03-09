@@ -2,16 +2,18 @@
 模块名称：rollout 样例绘图
 
 模块职责：
-从评估阶段落盘的 `pred_samples.npz` 中读取模型预测与监督目标，
+从评估阶段落盘的 `pred_samples.npz` 与可选 `pred_context.npz` 中读取模型预测、
+监督目标与监督有效性，
 生成论文友好的 rollout 样例图，用于快速检查时域拟合质量。
 
 主要功能：
 1. 读取 `pred_samples.npz` 中的 `y_hat / y_true / logvar`。
 2. 优先根据 `metrics.yaml.layout.semantic` 分组，并在每个组内取范数。
-3. 以 3×1 共享 x 轴布局输出 `rollout_sample_*.png|pdf`。
+3. 若存在 `pred_context.npz["target_mask"]`，用轻量标记显示 masked-out 目标位置。
+4. 以 3×1 共享 x 轴布局输出 `rollout_sample_*.png|pdf`。
 
 数据流：
-pred_samples.npz
+pred_samples.npz + optional pred_context.npz
     ↓
 按 [Acc3, Gyro3, Vel3] 分组
     ↓
@@ -28,7 +30,8 @@ plots/rollout_sample_000.png|pdf
 - 当前图中的 “observed/true” 来自评估监督目标 `y_true`，不等同于未经处理的原始传感器输出。
 - `logvar` 当前只保留供未来不确定度带扩展，不改变本次最小 patch 的默认显示。
 - 若旧 artifact 缺少 layout metadata，则统一 warning 并回退到 canonical `acc/gyro/vel` 分组。
-- PR5 第一阶段不接入 sample-level masked visualization，后续若需要单样本监督有效性显示，应通过独立 artifact 扩展。
+- `pred_samples.npz` 主三键 schema 保持不变；sample-level masked visualization 通过独立的
+  `pred_context.npz["target_mask"]` 扩展，不反向修改数值评估主 artifact。
 """
 
 from __future__ import annotations
@@ -93,11 +96,39 @@ def _load_pred_npz(pred_npz: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return y_hat, y_true, logvar
 
 
+def _load_target_mask(pred_npz: Path, *, shape: tuple[int, int, int]) -> np.ndarray | None:
+    context_npz = pred_npz.parent / "pred_context.npz"
+    if not context_npz.exists():
+        return None
+    with np.load(context_npz, allow_pickle=False) as z:
+        if "target_mask" not in z:
+            return None
+        target_mask = np.asarray(z["target_mask"], dtype=bool)
+    if target_mask.shape != shape:
+        raise ValueError(f"pred_context target_mask shape mismatch: {target_mask.shape} vs {shape}")
+    return target_mask
+
+
 def _group_specs(semantic_layout: SemanticOutputLayout) -> tuple[tuple[str, tuple[int, ...], str], ...]:
     return tuple(
         (group_key, semantic_layout.group_indices[group_key], _GROUP_YLABELS[group_key])
         for group_key in ("acc", "gyro", "vel")
     )
+
+
+def _collect_unique_legend_entries(axes: tuple[plt.Axes, ...]) -> tuple[list[object], list[str]]:
+    handles: list[object] = []
+    labels: list[str] = []
+    seen: set[str] = set()
+    for ax in axes:
+        ax_handles, ax_labels = ax.get_legend_handles_labels()
+        for handle, label in zip(ax_handles, ax_labels):
+            if not label or label in seen:
+                continue
+            handles.append(handle)
+            labels.append(label)
+            seen.add(label)
+    return handles, labels
 
 
 def build_rollout_sample_figure(
@@ -106,6 +137,7 @@ def build_rollout_sample_figure(
     y_true: np.ndarray,
     dt_s: float,
     semantic_layout: SemanticOutputLayout | None = None,
+    target_mask: np.ndarray | None = None,
 ) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes, plt.Axes]]:
     """构建单个样本窗口的 rollout 三行图。"""
     setup_mpl()
@@ -119,6 +151,8 @@ def build_rollout_sample_figure(
             "Sample feature dim does not match semantic layout: "
             f"{y_hat.shape[-1]} vs {len(semantic_layout.component_labels)}"
         )
+    if target_mask is not None and target_mask.shape != y_hat.shape:
+        raise ValueError(f"target_mask shape mismatch: {target_mask.shape} vs {y_hat.shape}")
 
     H = y_hat.shape[0]
     t = np.arange(1, H + 1, dtype=float) * float(dt_s)
@@ -154,14 +188,28 @@ def build_rollout_sample_figure(
             alpha=pred_style.alpha,
             zorder=pred_style.zorder,
         )
+        if target_mask is not None:
+            group_valid = np.all(target_mask[:, list(indices)], axis=1)
+            invalid = ~group_valid
+            if np.any(invalid):
+                ax.scatter(
+                    t[invalid],
+                    obs[invalid],
+                    label="Masked-out target",
+                    s=16.0,
+                    facecolors="white",
+                    edgecolors="#8C9199",
+                    linewidths=0.75,
+                    zorder=5,
+                )
         ax.set_ylabel(ylabel)
         apply_axes_style(ax, grid=False)
 
     apply_shared_xlabels(list(axes), "Prediction horizon (s)")
     align_ylabels(axes)
-    handles, labels = axes[0].get_legend_handles_labels()
+    handles, labels = _collect_unique_legend_entries((axes[0], axes[1], axes[2]))
     fig.subplots_adjust(top=0.86)
-    add_figure_legend(fig, handles, labels, ncol=2, y=0.985)
+    add_figure_legend(fig, handles, labels, ncol=min(3, max(1, len(labels))), y=0.985)
     return fig, (axes[0], axes[1], axes[2])
 
 
@@ -180,6 +228,7 @@ def plot_rollout_samples_from_npz(
 
     y_hat, y_true, _ = _load_pred_npz(pred_npz)
     semantic_layout = load_semantic_layout_from_metrics_path(pred_npz.parent / "metrics.yaml", dout=y_hat.shape[-1])
+    target_mask_all = _load_target_mask(pred_npz, shape=y_hat.shape)
     N = y_hat.shape[0]
     nplot = min(int(n), int(N))
 
@@ -189,6 +238,7 @@ def plot_rollout_samples_from_npz(
             y_true=y_true[i],
             dt_s=dt_s,
             semantic_layout=semantic_layout,
+            target_mask=None if target_mask_all is None else target_mask_all[i],
         )
         save_figure(fig, out_dir / f"rollout_sample_{i:03d}", fmt=fmt)
         plt.close(fig)

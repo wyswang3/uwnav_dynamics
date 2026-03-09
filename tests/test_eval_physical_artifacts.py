@@ -3,13 +3,15 @@
 
 模块职责：
 验证评估主程序已经把物理量纲指标与样例产物作为主输出落盘，
-并并行保留 z-score 空间的辅助 artifact，方便调参与审查同时进行。
+并并行保留 z-score 空间的辅助 artifact 与控制前诊断摘要，
+方便调参与审查同时进行。
 
 主要功能：
 1. 构造非单位 `y_scaler` 的最小评估场景。
 2. 验证 `metrics.yaml` 中主指标使用物理量纲，且并行记录 zspace 指标。
-3. 验证 `pred_samples.npz` 为物理量纲，`pred_samples_zspace.npz` 为标准化空间。
-4. 验证 `pred_context.npz` 与 `component_metrics*.csv` 一并落盘。
+3. 验证 `control_readiness` 摘要与主评估结果保持一致。
+4. 验证 `pred_samples.npz` 为物理量纲，`pred_samples_zspace.npz` 为标准化空间。
+5. 验证 `pred_context.npz` 与 `component_metrics*.csv` 一并落盘。
 
 数据流：
 synthetic dataset + non-identity scaler + zero checkpoint
@@ -214,6 +216,22 @@ def test_evaluate_writes_physical_primary_artifacts_and_parallel_zspace_artifact
     assert metrics["mae_global"] == pytest.approx(2.0)
     assert metrics["rmse_global_zspace"] == pytest.approx(1.0)
     assert metrics["mae_global_zspace"] == pytest.approx(1.0)
+    assert metrics["control_readiness"]["schema_version"] == "control_readiness_v1"
+    assert metrics["control_readiness"]["intended_use"] == "offline_screening_for_control"
+    assert metrics["control_readiness"]["closed_loop_proof"] is False
+    dense_diag = metrics["control_readiness"]["physical"]["dense"]
+    assert dense_diag["final_step"]["rmse_global"] == pytest.approx(2.0)
+    assert dense_diag["final_step"]["mae_global"] == pytest.approx(2.0)
+    assert dense_diag["tail_error"]["abs_p95_global"] == pytest.approx(2.0)
+    assert dense_diag["tail_error"]["abs_p99_global"] == pytest.approx(2.0)
+    assert dense_diag["tail_error"]["final_step_abs_p95_global"] == pytest.approx(2.0)
+    assert dense_diag["rollout_growth"]["rmse_last_over_first"] == pytest.approx(1.0)
+    assert dense_diag["rollout_growth"]["mae_last_over_first"] == pytest.approx(1.0)
+    assert dense_diag["bias"]["worst_component"] == "acc_x"
+    assert dense_diag["bias"]["worst_abs_bias"] == pytest.approx(2.0)
+    assert dense_diag["final_step"]["group_rmse"]["acc"] == pytest.approx(2.0)
+    assert dense_diag["final_step"]["group_rmse"]["gyro"] == pytest.approx(2.0)
+    assert dense_diag["final_step"]["group_rmse"]["vel"] == pytest.approx(2.0)
 
     with np.load(out_dir / "pred_samples.npz", allow_pickle=False) as pred_npz:
         assert np.allclose(pred_npz["y_hat"], 10.0)

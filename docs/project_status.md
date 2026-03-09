@@ -186,7 +186,7 @@
 
 建议按以下顺序推进：
 
-1. `PR5` 后续阶段：sample-level masked visualization 与更细粒度稀疏监督表达
+1. `PR5` 后续阶段：更细粒度的 masked visualization 与稀疏监督表达
 
 排序原则：
 
@@ -199,7 +199,8 @@
 
 当前仍需重点跟踪的技术债：
 
-- sample-level masked visualization 尚未进入正式 artifact
+- rollout 样例图已支持读取 `pred_context.npz["target_mask"]`，
+  但更细粒度的 masked visualization 仍可继续完善
 - 评估和绘图的更细粒度 masked 表达仍可继续完善
 - 历史 `split_indices.npz` 可能缺少 `split_strategy` 元数据，当前仅通过 warning 做兼容提示
 - 理论文档需持续跟进工程真实状态

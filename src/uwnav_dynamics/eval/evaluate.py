@@ -3,14 +3,16 @@
 
 模块职责：
 负责加载训练阶段产出的数据划分、归一化器与 checkpoint，
-执行纯数值 rollout 评估，并把“物理量纲主输出 + z-space 辅助输出”稳定落盘。
+执行纯数值 rollout 评估，并把“物理量纲主输出 + z-space 辅助输出 +
+控制前诊断指标”稳定落盘。
 
 主要功能：
 1. 复用训练阶段的 split / scaler artifact，执行确定性的离线评估。
 2. 计算全局、group 与 horizon 级 RMSE / MAE 指标，并并行写出 dense / masked artifact。
 3. 以物理量纲写出主 `pred_samples.npz`，同时保留 `pred_samples_zspace.npz` 供调参与排障。
 4. 额外导出 `pred_context.npz` 与 `component_metrics*.csv`，供 component/residual 可视化复用。
-5. 对经过 scaler 后仍残留在输入 `X` 中的非有限值做最小清洗，与训练消费端保持一致。
+5. 在 `metrics.yaml` 中写出控制前诊断摘要，用于筛查长时漂移、尾部误差与系统偏差。
+6. 对经过 scaler 后仍残留在输入 `X` 中的非有限值做最小清洗，与训练消费端保持一致。
 
 数据流：
 train yaml + checkpoint + run_dir artifacts
@@ -21,7 +23,7 @@ EvalConfig / S1PredictorConfig
     ↓
 model rollout(z-space) + inverse_transform(physical) + target_mask-aware metric aggregation
     ↓
-metrics.yaml(metric_space + layout + supervision) +
+metrics.yaml(metric_space + layout + supervision + control_readiness) +
 rmse/mae_by_horizon*.csv +
 component_metrics*.csv +
 pred_samples.npz + pred_samples_zspace.npz + pred_context.npz
@@ -38,6 +40,8 @@ cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 - 本模块只负责数值评估与 artifact 落盘。
 - 正式用户入口为 `cli/eval.py` 与 `cli/pipeline.py`；`evaluate.py` 不直接编排绘图。
 - 主指标与主样例产物使用物理量纲；z-space 指标只作为并行辅助信息保留。
+- `control_readiness` 只提供“是否值得进入后续控制验证”的离线筛查信息，
+  不能替代真正的闭环控制验证。
 - runtime mask 的唯一执行真源是评估 batch 中的 `target_mask`。
 - 输入 `X` 中由稀疏辅助通道保留的 NaN 不会回写 dataset artifact，
   仅在评估消费端被清洗为 0.0（对应 z-score 后的 train 均值）。
@@ -50,7 +54,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
-from typing import Any, Dict, Tuple, List, Sequence
+from typing import Any, Dict, Tuple, List, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -75,6 +79,7 @@ from uwnav_dynamics.supervision_mask import build_dense_target_mask, build_targe
 
 
 SUPERVISION_SCHEMA_VERSION = "supervision_v1"
+CONTROL_READINESS_SCHEMA_VERSION = "control_readiness_v1"
 PRIMARY_METRIC_SPACE = "physical"
 SECONDARY_METRIC_SPACE = "zspace"
 
@@ -271,6 +276,143 @@ def _write_component_metric_csv(path: Path, rows: Sequence[dict[str, Any]]) -> N
             )
         )
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _global_rmse_mae_np(
+    y_hat: np.ndarray,
+    y_true: np.ndarray,
+    target_mask: np.ndarray | None = None,
+) -> tuple[float, float]:
+    if y_hat.shape != y_true.shape:
+        raise ValueError(f"y_hat/y_true shape mismatch: {y_hat.shape} vs {y_true.shape}")
+    err = np.asarray(y_hat - y_true, dtype=np.float64)
+    if target_mask is None:
+        vals = err.reshape(-1)
+    else:
+        valid = np.asarray(target_mask, dtype=bool)
+        if valid.shape != err.shape:
+            raise ValueError(f"target_mask shape mismatch: {valid.shape} vs {err.shape}")
+        vals = err[valid]
+    if vals.size == 0:
+        return float("nan"), float("nan")
+    return float(np.sqrt(np.mean(vals * vals))), float(np.mean(np.abs(vals)))
+
+
+def _abs_error_percentiles(
+    y_hat: np.ndarray,
+    y_true: np.ndarray,
+    *,
+    target_mask: np.ndarray | None = None,
+    percentiles: Sequence[float] = (95.0, 99.0),
+) -> dict[str, float]:
+    if y_hat.shape != y_true.shape:
+        raise ValueError(f"y_hat/y_true shape mismatch: {y_hat.shape} vs {y_true.shape}")
+    abs_err = np.abs(np.asarray(y_hat - y_true, dtype=np.float64))
+    if target_mask is None:
+        vals = abs_err.reshape(-1)
+    else:
+        valid = np.asarray(target_mask, dtype=bool)
+        if valid.shape != abs_err.shape:
+            raise ValueError(f"target_mask shape mismatch: {valid.shape} vs {abs_err.shape}")
+        vals = abs_err[valid]
+
+    out: dict[str, float] = {}
+    for q in percentiles:
+        key = f"p{int(q)}"
+        out[key] = float(np.percentile(vals, q)) if vals.size > 0 else float("nan")
+    return out
+
+
+def _last_finite_value(curve: Sequence[float]) -> float:
+    arr = np.asarray(curve, dtype=np.float64)
+    finite_idx = np.flatnonzero(np.isfinite(arr))
+    if finite_idx.size == 0:
+        return float("nan")
+    return float(arr[finite_idx[-1]])
+
+
+def _edge_ratio(curve: Sequence[float]) -> float:
+    arr = np.asarray(curve, dtype=np.float64)
+    finite_idx = np.flatnonzero(np.isfinite(arr))
+    if finite_idx.size == 0:
+        return float("nan")
+    first = float(arr[finite_idx[0]])
+    last = float(arr[finite_idx[-1]])
+    eps = 1e-12
+    if abs(first) <= eps:
+        return 1.0 if abs(last) <= eps else float("inf")
+    return float(last / first)
+
+
+def _worst_component_abs_bias(rows: Sequence[dict[str, Any]]) -> tuple[str | None, float]:
+    best_label: str | None = None
+    best_abs_bias = float("nan")
+    for row in rows:
+        bias = float(row["bias"])
+        if not np.isfinite(bias):
+            continue
+        abs_bias = abs(bias)
+        if best_label is None or abs_bias > best_abs_bias:
+            best_label = str(row["component"])
+            best_abs_bias = float(abs_bias)
+    return best_label, best_abs_bias
+
+
+def _build_control_readiness_summary(
+    *,
+    y_hat: np.ndarray,
+    y_true: np.ndarray,
+    rmse_groups: Mapping[str, Sequence[float]],
+    mae_groups: Mapping[str, Sequence[float]],
+    component_metrics: Sequence[dict[str, Any]],
+    target_mask: np.ndarray | None = None,
+) -> dict[str, Any]:
+    target_mask_first = None if target_mask is None else np.asarray(target_mask[:, :1, :], dtype=bool)
+    target_mask_last = None if target_mask is None else np.asarray(target_mask[:, -1:, :], dtype=bool)
+    first_rmse, first_mae = _global_rmse_mae_np(
+        y_hat[:, :1, :],
+        y_true[:, :1, :],
+        target_mask=target_mask_first,
+    )
+    final_rmse, final_mae = _global_rmse_mae_np(
+        y_hat[:, -1:, :],
+        y_true[:, -1:, :],
+        target_mask=target_mask_last,
+    )
+    overall_tail = _abs_error_percentiles(y_hat, y_true, target_mask=target_mask, percentiles=(95.0, 99.0))
+    final_tail = _abs_error_percentiles(
+        y_hat[:, -1:, :],
+        y_true[:, -1:, :],
+        target_mask=target_mask_last,
+        percentiles=(95.0,),
+    )
+    worst_component_label, worst_abs_bias = _worst_component_abs_bias(component_metrics)
+    rmse_last_over_first = _edge_ratio([first_rmse, final_rmse])
+    mae_last_over_first = _edge_ratio([first_mae, final_mae])
+
+    return {
+        "final_step": {
+            "rmse_global": final_rmse,
+            "mae_global": final_mae,
+            "group_rmse": {key: _last_finite_value(curve) for key, curve in rmse_groups.items()},
+            "group_mae": {key: _last_finite_value(curve) for key, curve in mae_groups.items()},
+        },
+        "rollout_growth": {
+            "rmse_last_over_first": rmse_last_over_first,
+            "mae_last_over_first": mae_last_over_first,
+            "group_rmse_last_over_first": {key: _edge_ratio(curve) for key, curve in rmse_groups.items()},
+            "group_mae_last_over_first": {key: _edge_ratio(curve) for key, curve in mae_groups.items()},
+        },
+        "tail_error": {
+            "abs_p95_global": overall_tail["p95"],
+            "abs_p99_global": overall_tail["p99"],
+            "final_step_abs_p95_global": final_tail["p95"],
+        },
+        "bias": {
+            "worst_component": worst_component_label,
+            "worst_abs_bias": worst_abs_bias,
+        },
+    }
 
 
 def _component_metadata(semantic_layout: SemanticOutputLayout) -> tuple[list[str], list[str], list[str]]:
@@ -484,6 +626,22 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         component_units=["z-score"] * len(component_labels),
         target_mask=target_mask_np_eval,
     )
+    control_readiness_dense = _build_control_readiness_summary(
+        y_hat=y_hat_phys_np,
+        y_true=y_true_phys_np,
+        rmse_groups=rmse_groups,
+        mae_groups=mae_groups,
+        component_metrics=component_metrics,
+        target_mask=None,
+    )
+    control_readiness_masked = _build_control_readiness_summary(
+        y_hat=y_hat_phys_np,
+        y_true=y_true_phys_np,
+        rmse_groups=rmse_groups_masked,
+        mae_groups=mae_groups_masked,
+        component_metrics=component_metrics_masked,
+        target_mask=target_mask_np_eval,
+    )
 
     # 样本类 artifact 只保留前 `save_samples` 个窗口，避免评估目录无限膨胀。
     n_samp = int(min(cfg_eval.save_samples, y_hat_all.shape[0]))
@@ -537,6 +695,8 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         "component_metrics_masked": component_metrics_masked,
         "component_metrics_zspace": component_metrics_z,
         "component_metrics_masked_zspace": component_metrics_masked_z,
+        "control_readiness_dense": control_readiness_dense,
+        "control_readiness_masked": control_readiness_masked,
         "semantic_layout": semantic_layout,
         "raw_mask_source": raw_mask_source,
         "samples": samp,
@@ -643,6 +803,15 @@ def main() -> int:
                     "rmse": "rmse_by_horizon_masked.csv",
                     "mae": "mae_by_horizon_masked.csv",
                 },
+            },
+        },
+        "control_readiness": {
+            "schema_version": CONTROL_READINESS_SCHEMA_VERSION,
+            "intended_use": "offline_screening_for_control",
+            "closed_loop_proof": False,
+            "physical": {
+                "dense": res["control_readiness_dense"],
+                "masked": res["control_readiness_masked"],
             },
         },
         "artifacts": {

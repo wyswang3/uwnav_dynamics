@@ -154,11 +154,14 @@
   - `mae_by_horizon_masked.csv`
 - `metrics.yaml` 新增最小 `supervision` metadata
 - `plot_horizon_metrics.py` 与 `plot_model_compare.py` 支持 dense / masked 图并行存在
+- `plot_rollout_samples.py` 现可从 `pred_context.npz["target_mask"]` 读取 sample-level 有效性，
+  并在 rollout 样例图中标出 masked-out 目标位置
 
 ### 当前边界
 
 - 第一阶段不新增 `pred_sample_masks.npz`
-- sample-level masked visualization 继续留到后续 patch
+- 更细粒度的 sample-level masked visualization 仍可继续扩展，但当前主链路已支持
+  基于 `pred_context.npz["target_mask"]` 的 rollout 样例标注
 - `meta.yaml` 与 `metrics.yaml` 只做记录，不参与运行时 mask 裁决
 
 ## 6. 工程执行原则

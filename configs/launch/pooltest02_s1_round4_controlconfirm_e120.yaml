@@ -1,0 +1,151 @@
+# Round 4 single-source matrix:
+# - stop broad architecture search; round3 already showed B4+U1 default is the best candidate
+# - keep only the strongest challenger U1 and the current best primary B4+U1 default
+# - do not introduce new training-parameter branches in this round
+# - extend seeds to verify whether control-readiness diagnostics stay stable
+# - use the new control_readiness evaluation/plot path as the main offline screening signal
+
+base_train_yaml: configs/train/pooltest02_s1_lstm_v0.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_s1_round4_controlconfirm_e120
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 1024
+  plots: false
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_s1_round4_controlconfirm_e120
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1
+    batch_size: 512
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: u1_seed2
+    label: U1 uncertainty seed2
+    role: ablation
+    overrides:
+      run:
+        seed: 2
+        variant: U1_uncertainty_seed2_e120
+      model:
+        blocks:
+          uncertainty:
+            enabled: true
+
+  - name: u1_seed3
+    label: U1 uncertainty seed3
+    role: ablation
+    overrides:
+      run:
+        seed: 3
+        variant: U1_uncertainty_seed3_e120
+      model:
+        blocks:
+          uncertainty:
+            enabled: true
+
+  - name: u1_seed4
+    label: U1 uncertainty seed4
+    role: ablation
+    overrides:
+      run:
+        seed: 4
+        variant: U1_uncertainty_seed4_e120
+      model:
+        blocks:
+          uncertainty:
+            enabled: true
+
+  - name: u1_seed5
+    label: U1 uncertainty seed5
+    role: ablation
+    overrides:
+      run:
+        seed: 5
+        variant: U1_uncertainty_seed5_e120
+      model:
+        blocks:
+          uncertainty:
+            enabled: true
+
+  - name: b4u1_seed2
+    label: B4+U1 control-confirm seed2
+    role: primary
+    overrides:
+      run:
+        seed: 2
+        variant: B4U1_thruster_hydro_uncertainty_seed2_e120
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+          uncertainty:
+            enabled: true
+
+  - name: b4u1_seed3
+    label: B4+U1 control-confirm seed3
+    role: primary
+    overrides:
+      run:
+        seed: 3
+        variant: B4U1_thruster_hydro_uncertainty_seed3_e120
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+          uncertainty:
+            enabled: true
+
+  - name: b4u1_seed4
+    label: B4+U1 control-confirm seed4
+    role: primary
+    overrides:
+      run:
+        seed: 4
+        variant: B4U1_thruster_hydro_uncertainty_seed4_e120
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+          uncertainty:
+            enabled: true
+
+  - name: b4u1_seed5
+    label: B4+U1 control-confirm seed5
+    role: primary
+    overrides:
+      run:
+        seed: 5
+        variant: B4U1_thruster_hydro_uncertainty_seed5_e120
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+          uncertainty:
+            enabled: true

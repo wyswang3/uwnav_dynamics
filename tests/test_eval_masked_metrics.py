@@ -3,12 +3,14 @@
 
 模块职责：
 验证 PR5 第一阶段的评估主路径能够并行产出 dense 与 masked 指标，
-并保持 `pred_samples.npz` 三键 schema 不变。
+并保持 `pred_samples.npz` 三键 schema 不变，
+同时让控制前诊断摘要正确复用 `target_mask`。
 
 主要功能：
 1. 构造带 `dvl_mask` 的最小评估数据集。
 2. 验证 dense / masked horizon CSV 同时落盘。
 3. 验证 masked velocity 指标只由 `target_mask` 决定，而不是 forward-fill 数值本身。
+4. 验证 `control_readiness.masked` 只统计有效监督位置。
 
 数据流：
 synthetic features/labels + split/scaler + zero checkpoint
@@ -221,6 +223,14 @@ def test_evaluate_main_writes_dense_and_masked_horizon_artifacts(tmp_path, monke
     assert metrics["supervision"]["masked_metrics"]["applies_to_groups"] == ["vel"]
     assert metrics["supervision"]["masked_metrics"]["group_source"] == "canonical_acc_gyro_vel_v1"
     assert metrics["rmse_global_masked"] < metrics["rmse_global"]
+    assert metrics["control_readiness"]["schema_version"] == "control_readiness_v1"
+    dense_diag = metrics["control_readiness"]["physical"]["dense"]
+    masked_diag = metrics["control_readiness"]["physical"]["masked"]
+    assert dense_diag["final_step"]["rmse_global"] > 0.0
+    assert masked_diag["final_step"]["rmse_global"] == pytest.approx(0.0)
+    assert masked_diag["tail_error"]["abs_p95_global"] == pytest.approx(0.0)
+    assert masked_diag["bias"]["worst_abs_bias"] == pytest.approx(0.0)
+    assert masked_diag["final_step"]["group_rmse"]["vel"] == pytest.approx(0.0)
 
     dense_rmse = np.loadtxt(out_dir / "rmse_by_horizon.csv", delimiter=",", skiprows=1)[:, 1:]
     masked_rmse = np.loadtxt(out_dir / "rmse_by_horizon_masked.csv", delimiter=",", skiprows=1)[:, 1:]

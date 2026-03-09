@@ -183,6 +183,8 @@
 - 优先使用 3×1 共享 x 轴布局
 - 行语义使用 `||Acc||`、`||Gyro||`、`||Vel||`
 - `Observed target` 与 `Prediction` 使用线型主导区分
+- 读取 `pred_samples.npz` 与可选 `pred_context.npz`
+- 若存在 `target_mask`，masked-out 位置应以轻量标记显示在对应 group 曲线上
 
 ### 10.4 Pred-vs-Observed 图
 
@@ -207,6 +209,18 @@
 - `baseline` 必须弱化但仍可辨认
 - `global summary` 仅作为补充，不应抢占主图结论
 
+### 10.7 Control Readiness 图
+
+- 读取 `metrics.yaml["control_readiness"]`
+- 第一版优先使用 2×2 summary / compare 布局
+- 四个面板固定表达：
+  - `Final-step RMSE`
+  - `RMSE growth`
+  - `Final-step abs P95`
+  - `Worst |bias|`
+- 单模型图与多模型 compare 图都应保持纯白底、无网格
+- 该图只表达离线控制前筛查结果，不应被写成“闭环可用性证明”
+
 ## 11. Export and Naming Policy
 
 当前正式评估链路默认只保留图片文件：
@@ -230,6 +244,11 @@
   - `pred_vs_observed_component_000.png`
 - component residual：
   - `residual_component_000.png`
+- control readiness：
+  - `control_readiness_summary.png`
+  - `control_readiness_summary_masked.png`
+  - `control_readiness_compare.png`
+  - `control_readiness_compare_masked.png`
 - 多模型 compare 主图：
   - `rmse_model_compare_horizon.png`
   - `mae_model_compare_horizon.png`

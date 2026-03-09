@@ -23,7 +23,7 @@ train.run_train
     ↓
 cli.eval
     ↓
-summary.csv + compare plots
+summary.csv + horizon/control_readiness compare plots
 
 依赖模块：
 - yaml
@@ -518,6 +518,7 @@ def _generate_compare_outputs(
         print("[MATRIX] skip compare: fewer than 2 successful evaluated runs")
         return
 
+    from uwnav_dynamics.viz.eval.plot_control_readiness import ControlReadinessPlotCfg, plot_control_readiness
     from uwnav_dynamics.viz.eval.plot_model_compare import ModelCompareCfg, plot_horizon_compare
 
     compare_dir = compare_root / f"compare_{cfg.eval_split}"
@@ -539,6 +540,15 @@ def _generate_compare_outputs(
             ),
         )
         print(f"[MATRIX] wrote compare plots for metric={metric} under: {compare_dir}")
+
+    plot_control_readiness(
+        eval_dirs=eval_dirs,
+        labels=labels,
+        roles=roles,
+        out_dir=compare_dir,
+        cfg=ControlReadinessPlotCfg(fmt=cfg.plot_fmt),
+    )
+    print(f"[MATRIX] wrote control-readiness compare plots under: {compare_dir}")
 
 
 def run_matrix_launcher(cfg: MatrixLauncherConfig, *, repo_root: Path) -> int:

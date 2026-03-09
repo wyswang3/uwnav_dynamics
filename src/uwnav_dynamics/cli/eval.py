@@ -18,8 +18,9 @@ cli.utils 解析 ckpt / eval_dir / plots_dir
 eval.evaluate 写出 metrics.yaml / horizon CSV / component CSV /
 pred_samples.npz / pred_samples_zspace.npz / pred_context.npz
     ↓
-    viz.eval.plot_horizon_metrics + viz.eval.plot_rollout_samples +
-    viz.eval.plot_pred_vs_observed + viz.eval.plot_component_residuals
+    viz.eval.plot_horizon_metrics + viz.eval.plot_control_readiness +
+    viz.eval.plot_rollout_samples + viz.eval.plot_pred_vs_observed +
+    viz.eval.plot_component_residuals
     ↓
 plots/*
 
@@ -27,6 +28,7 @@ plots/*
 - uwnav_dynamics.cli.utils
 - uwnav_dynamics.eval.evaluate
 - uwnav_dynamics.viz.eval.plot_horizon_metrics
+- uwnav_dynamics.viz.eval.plot_control_readiness
 - uwnav_dynamics.viz.eval.plot_rollout_samples
 
 备注：
@@ -146,6 +148,20 @@ def main() -> int:
                 str(args.dt),
                 "--x",
                 args.x_axis,
+                "--fmt",
+                args.plot_fmt,
+            ],
+        ),
+        (
+            "PLOT_CONTROL_READINESS",
+            [
+                sys.executable,
+                "-m",
+                "uwnav_dynamics.viz.eval.plot_control_readiness",
+                "--eval_dir",
+                str(eval_out_dir),
+                "--out_dir",
+                str(plots_dir),
                 "--fmt",
                 args.plot_fmt,
             ],
