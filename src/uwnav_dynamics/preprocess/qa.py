@@ -40,6 +40,7 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class QaIssue:
+    """单条 QA 发现项，记录级别、错误码和说明。"""
     level: str  # "error" | "warning"
     code: str
     message: str
@@ -47,6 +48,7 @@ class QaIssue:
 
 @dataclass(frozen=True)
 class QaCoverage:
+    """某类可用性掩码或观测列的覆盖率统计。"""
     name: str
     col: str
     ratio: float
@@ -56,6 +58,7 @@ class QaCoverage:
 
 @dataclass(frozen=True)
 class QaNumericStat:
+    """单个数值列的基础统计摘要。"""
     col: str
     n_total: int
     n_nonfinite: int
@@ -67,6 +70,7 @@ class QaNumericStat:
 
 @dataclass(frozen=True)
 class TrainBaseQaReport:
+    """一次 train_base QA 执行的完整结构化报告。"""
     stage: str
     n_rows: int
     time_col: str

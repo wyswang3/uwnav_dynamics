@@ -1,20 +1,30 @@
-# src/uwnav_dynamics/analysis/imu_stats.py
+"""
+模块名称：IMU 统计分析
+
+模块职责：
+对 IMU reader 输出做离线统计与诊断，
+生成便于实验归档和质量审查的结构化统计结果与文本报告。
+
+主要功能：
+1. 统计时间轴单调性、采样间隔抖动和 NaN/Inf 比例。
+2. 在起始静止窗内估计加速度、角速度和姿态角的基本统计量。
+3. 生成 `ImuStats` 结构与稳定的文本报告。
+
+数据流：
+ImuFrame
+    ↓
+analyze_imu()
+    ↓
+ImuStats
+    ↓
+render_imu_stats_txt() / save_imu_stats_txt()
+
+依赖模块：
+- numpy
+- uwnav_dynamics.io.readers.imu_reader
+"""
+
 from __future__ import annotations
-
-"""
-IMU stats / diagnostics (analysis only; no filtering, no alignment).
-
-- Input: ImuFrame (from uwnav_dynamics.io.readers.imu_reader)
-- Output:
-    1) ImuStats (dataclass)
-    2) a human-readable TXT report saved under:
-         <out_root>/<imu_file_stem>/imu_stats.txt
-
-This module is intended for:
-  - quickly validating data integrity (time monotonicity, NaNs, sampling jitter)
-  - summarizing bias/noise levels from an initial "bias window"
-  - producing stable artifacts for experiment archiving / debugging
-"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +37,7 @@ from uwnav_dynamics.io.readers.imu_reader import ImuFrame
 
 @dataclass(frozen=True)
 class AxisStats:
+    """三轴信号的均值、方差与绝对值统计。"""
     mean: np.ndarray      # (3,)
     std: np.ndarray       # (3,)
     p95_abs: np.ndarray   # (3,)
@@ -35,6 +46,7 @@ class AxisStats:
 
 @dataclass(frozen=True)
 class ImuStats:
+    """单个 IMU 文件的时间轴与静止窗统计汇总。"""
     path: Path
     kind: str
     time_col: str
@@ -99,6 +111,7 @@ def analyze_imu(
     bias_window_s: float = 20.0,
     dt_large_threshold_s: float = 0.05,
 ) -> ImuStats:
+    """对单个 IMU 序列做时间轴与静止窗统计，并返回结构化诊断结果。"""
     t = imu.t_s
     dt = imu.dt_s
 
@@ -173,9 +186,7 @@ def _fmt_vec3(v: np.ndarray, fmt: str = "{:+.6f}") -> str:
 
 
 def render_imu_stats_txt(stats: ImuStats) -> str:
-    """
-    Create a stable, human-readable TXT report (suitable for archiving and diff).
-    """
+    """把 `ImuStats` 渲染成稳定、可读且适合归档 diff 的文本报告。"""
     lines = []
     lines.append("[IMU-STATS]")
     lines.append(f"file: {stats.path}")
@@ -232,10 +243,7 @@ def save_imu_stats_txt(
     *,
     out_root: str | Path = "out/imu_stats",
 ) -> Path:
-    """
-    Save imu_stats.txt under:
-      <out_root>/<imu_file_stem>/imu_stats.txt
-    """
+    """按稳定目录约定写出 `imu_stats.txt` 报告文件。"""
     out_root = Path(out_root).expanduser().resolve()
     run_dir = out_root / stats.path.stem
     run_dir.mkdir(parents=True, exist_ok=True)

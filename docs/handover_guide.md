@@ -61,13 +61,31 @@ python -m uwnav_dynamics.cli.eval \
 - `cli/eval.py` 是正式用户入口，会先执行数值评估，再按需调起 viz 层出图。
 - `src/uwnav_dynamics/eval/evaluate.py` 现在只负责数值评估与 artifact 落盘。
 - 若数值评估成功但绘图失败，CLI 会返回非零码，同时保留已生成的数值 artifact。
+- 正式链路默认只保留 `png` 图片，不额外生成 `pdf`。
 
 产物（评估目录）通常包含：
 - `metrics.yaml`
 - `rmse_by_horizon.csv`
 - `mae_by_horizon.csv`
 - `pred_samples.npz`
+- `pred_samples_zspace.npz`
+- `pred_context.npz`
+- `component_metrics.csv`
+- `component_metrics_masked.csv`
 - `plots/*.png`
+
+主目录位置通常是：
+
+- 数值评估：`run.out_dir/run.variant/eval_test/`
+- 图片目录：`run.out_dir/run.variant/eval_test/plots/`
+
+目前常见图片文件名包括：
+
+- `rmse_horizon_groups.png`
+- `mae_horizon_groups.png`
+- `rollout_sample_000.png`
+- `pred_vs_observed_component_000.png`
+- `residual_component_000.png`
 
 ## 5) 一条命令跑训练+评估+绘图（cli/pipeline.py）
 如果想快速全流程回归，可直接：

@@ -63,6 +63,7 @@ _CANONICAL_GROUP_INDICES: dict[str, tuple[int, ...]] = {
 
 @dataclass(frozen=True)
 class SemanticOutputLayout:
+    """模型输出维度的语义标签与分组定义。"""
     source: str
     component_labels: tuple[str, ...]
     group_indices: dict[str, tuple[int, ...]]
@@ -70,6 +71,7 @@ class SemanticOutputLayout:
 
 
 def canonical_semantic_output_layout(dout: int) -> SemanticOutputLayout:
+    """返回当前项目默认的 `acc/gyro/vel` 语义输出布局。"""
     if int(dout) != len(_CANONICAL_COMPONENT_LABELS):
         raise ValueError(
             "Current canonical semantic output layout expects dout=9 "
@@ -88,6 +90,7 @@ def resolve_semantic_output_layout(
     dout: int,
     target_cols: Sequence[str] | None = None,
 ) -> SemanticOutputLayout:
+    """解析输出语义布局，并在可用时用 `target_cols` 做一致性校验。"""
     layout = canonical_semantic_output_layout(dout)
     if target_cols is None:
         return layout
@@ -95,6 +98,7 @@ def resolve_semantic_output_layout(
 
 
 def build_semantic_layout_metadata(layout: SemanticOutputLayout) -> dict[str, object]:
+    """把语义布局对象转换为可落盘的 metadata 字典。"""
     return {
         "source": layout.source,
         "component_labels": list(layout.component_labels),
@@ -109,6 +113,7 @@ def load_semantic_layout_from_metrics_dict(
     dout: int,
     warn_fn: Callable[[str], None] | None = None,
 ) -> SemanticOutputLayout:
+    """从已加载的 `metrics.yaml` 字典中恢复语义布局。"""
     warn = warnings.warn if warn_fn is None else warn_fn
     layout_meta = metrics.get("layout") if isinstance(metrics, Mapping) else None
     if isinstance(layout_meta, Mapping) and "schema_version" in layout_meta:
@@ -148,6 +153,7 @@ def load_semantic_layout_from_metrics_path(
     dout: int,
     warn_fn: Callable[[str], None] | None = None,
 ) -> SemanticOutputLayout:
+    """从 `metrics.yaml` 文件路径恢复语义布局，缺失时回退 canonical 布局。"""
     if not metrics_path.exists():
         warn = warnings.warn if warn_fn is None else warn_fn
         warn(FALLBACK_WARNING)
@@ -161,6 +167,7 @@ def validate_target_cols_against_semantic_layout(
     target_cols: Sequence[str],
     layout: SemanticOutputLayout,
 ) -> SemanticOutputLayout:
+    """校验 `target_cols` 的语义顺序与既定布局完全一致。"""
     normalized = tuple(_normalize_target_col_name(col) for col in target_cols)
     if len(normalized) != len(layout.component_labels):
         raise ValueError(

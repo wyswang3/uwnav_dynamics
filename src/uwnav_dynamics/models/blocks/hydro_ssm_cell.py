@@ -1,3 +1,16 @@
+"""
+模块名称：Hydro-SSM 隐状态单元
+
+模块职责：
+用稳定递推的隐状态吸收尾流、附加质量和流体记忆等缓变效应，
+为主预测网络提供显式的流体动态先验。
+
+主要功能：
+1. 定义 `HydroSSMConfig` 配置。
+2. 构造稳定的隐状态递推单元 `HydroSSMCell`。
+3. 输出整段隐状态序列与最后时刻隐状态，供预测头消费。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
@@ -45,6 +58,7 @@ class HydroSSMConfig:
 
 
 class HydroSSMCell(nn.Module):
+    """对输入与状态序列执行稳定流体记忆递推的隐状态单元。"""
     def __init__(self, cfg: HydroSSMConfig):
         super().__init__()
         self.cfg = cfg

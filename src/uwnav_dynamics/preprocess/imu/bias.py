@@ -1,73 +1,31 @@
+"""
+模块名称：IMU 零偏估计
+
+模块职责：
+在重力补偿之后的 IMU 信号上估计静止段零偏与噪声统计，
+并提供对整段序列应用零偏修正的基础接口。
+
+主要功能：
+1. 自动选择静止时间窗并估计加速度、角速度零偏。
+2. 统计静止段噪声标准差与工程近似随机游走指标。
+3. 输出 bias 诊断信息并对完整序列执行 bias 去除。
+
+数据流：
+`transform` / `gravity` 输出的 IMU 序列
+    -> 静止窗选择
+    -> bias 与噪声统计估计
+    -> 去 bias 的 IMU 序列
+    -> `preprocess.imu.pipeline`
+
+依赖模块：
+1. `numpy`
+2. `dataclasses`
+
+备注：
+随机游走指标采用工程近似，用于调参与比对，不替代严格 Allan 方差分析。
+"""
+
 from __future__ import annotations
-
-"""
-uwnav_dynamics.preprocess.imu.bias
-
-IMU 零偏估计（bias estimation）与随机游走等噪声指标的工程估计模块。
-
-一、模块目标
-
-在已经完成「坐标统一（FRD）+ 单位统一（m/s², rad/s）+ 重力补偿」之后，
-本模块在一段「静止窗」内对 IMU 的输出进行统计，估计出：
-
-  - 加速度零偏：b_a  (3,)
-  - 陀螺零偏：  b_g  (3,)
-  - 静止噪声标准差：std_a / std_g
-  - 随机游走（简单工程估计）：rw_a / rw_g
-  - 其他统计量：样本数、时间长度、窗口 dt 中位数等
-
-注意：
-  - 本模块仅做统计，不做任何滤波。
-  - 真正「去 bias」的操作由 apply_bias(...) 执行。
-  - 随机游走估计为「工程近似」，非严格 Allan 方差分析。
-
-二、输入数据假设
-
-输入加速度与角速度为：
-
-  - a_lin_body_mps2 : (N,3)
-      体坐标系 FRD 下的「线加速度 + bias」：
-        a_lin_b_plus_bias ≈ a_lin_b + b_a
-      其中重力分量已经在 gravity.py 中减去。
-
-  - gyro_body_rad_s : (N,3)
-      体坐标系 FRD 下的角速度测量，单位 rad/s。
-
-  - t_s : (N,)
-      时间戳（秒），按时间递增（单调不减）。
-
-在「静止窗」内假设：
-  - a_lin_b ≈ 0
-  - gyro ≈ 0
-
-则可以通过平均值估计零偏：
-  - b_a ≈ mean(a_lin_body_mps2)
-  - b_g ≈ mean(gyro_body_rad_s)
-
-三、随机游走估计（工程简化版）
-
-我们在静止窗内计算噪声标准差 std：
-
-  - std_a : (3,)  加速度噪声（m/s²）
-  - std_g : (3,)  角速度噪声（rad/s）
-
-令 dt 为静止窗内样本间隔的中位数，单位秒。
-
-则给出一个简单、可用于滤波器调参的随机游走估计：
-
-  - 加速度随机游走（white-noise 等效）：rw_a ≈ std_a * sqrt(dt)
-  - 陀螺随机游走：               rw_g ≈ std_g * sqrt(dt)
-
-注意：
-  - 这是工程上的近似，便于把「离散噪声 std」映射为「连续时间强度」；
-  - 想要更精确的随机游走参数，应使用 Allan 方差分析，本项目后续可单独实现。
-
-四、模块职责
-
-本模块提供两个主要接口：
-  - estimate_bias(...) : 在静止窗内估计 b_a, b_g 以及噪声统计；
-  - apply_bias(...)    : 用估计得到的 b_a, b_g 对整个序列去除零偏。
-"""
 
 from dataclasses import dataclass
 from typing import Dict, Tuple

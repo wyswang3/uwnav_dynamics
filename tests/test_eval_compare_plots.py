@@ -39,6 +39,10 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
 )
 from uwnav_dynamics.viz.eval.plot_horizon_metrics import HorizonPlotCfg, build_groups_vs_horizon_figure, plot_groups_vs_horizon
 from uwnav_dynamics.viz.eval.plot_model_compare import ModelCompareCfg, build_horizon_compare_figure, plot_horizon_compare
+from uwnav_dynamics.viz.eval.plot_component_residuals import (
+    build_component_residual_figure,
+    plot_component_residuals_from_npz,
+)
 from uwnav_dynamics.viz.eval.plot_pred_vs_observed import PredObservedPlotCfg, build_pred_vs_observed_figure, plot_pred_vs_observed_from_npz
 from uwnav_dynamics.viz.eval.plot_rollout_samples import plot_rollout_samples_from_npz
 
@@ -100,6 +104,16 @@ def _make_eval_dir(
     y_hat = y_true + scale * 0.05
     logvar = np.full_like(y_hat, -2.0)
     np.savez_compressed(eval_dir / "pred_samples.npz", y_hat=y_hat, y_true=y_true, logvar=logvar)
+    target_mask = np.ones_like(y_hat, dtype=bool)
+    target_mask[0, -1, 6:] = False
+    np.savez_compressed(
+        eval_dir / "pred_context.npz",
+        target_mask=target_mask,
+        sample_index=np.asarray([0, 1], dtype=np.int64),
+        component_labels=np.asarray(list(canonical_semantic_output_layout(9).component_labels), dtype=str),
+        component_display_labels=np.asarray(["Acc X", "Acc Y", "Acc Z", "Gyro X", "Gyro Y", "Gyro Z", "Vel X", "Vel Y", "Vel Z"], dtype=str),
+        component_units=np.asarray(["m/s^2", "m/s^2", "m/s^2", "rad/s", "rad/s", "rad/s", "m/s", "m/s", "m/s"], dtype=str),
+    )
     return eval_dir
 
 
@@ -117,6 +131,44 @@ def test_pred_vs_observed_group_norm_has_bottom_xlabel_and_single_legend(tmp_pat
 
     plot_pred_vs_observed_from_npz(eval_dir / "pred_samples.npz", eval_dir / "plots", n=1, cfg=cfg)
     assert (eval_dir / "plots" / "pred_vs_observed_group_norm_000.png").exists()
+
+
+def test_pred_vs_observed_component_mode_writes_3x3_component_figure(tmp_path):
+    eval_dir = _make_eval_dir(tmp_path, "eval_component", scale=1.0)
+    z = np.load(eval_dir / "pred_samples.npz")
+    cfg = PredObservedPlotCfg(dt_s=0.02, mode="component", fmt="png")
+
+    fig, axes = build_pred_vs_observed_figure(y_hat=z["y_hat"][0], y_true=z["y_true"][0], cfg=cfg)
+
+    assert len(axes) == 9
+    assert [ax.get_title() for ax in axes] == [""] * 9
+    assert [ax.get_xlabel() for ax in axes[:6]] == [""] * 6
+    assert [ax.get_xlabel() for ax in axes[6:]] == ["Prediction horizon (s)"] * 3
+    assert sum(ax.get_legend() is not None for ax in axes) == 1
+
+    plot_pred_vs_observed_from_npz(eval_dir / "pred_samples.npz", eval_dir / "plots", n=1, cfg=cfg)
+    assert (eval_dir / "plots" / "pred_vs_observed_component_000.png").exists()
+
+
+def test_component_residual_figure_writes_png_and_marks_masked_targets(tmp_path):
+    eval_dir = _make_eval_dir(tmp_path, "eval_residual", scale=1.0)
+    z = np.load(eval_dir / "pred_samples.npz")
+    ctx = np.load(eval_dir / "pred_context.npz", allow_pickle=False)
+
+    fig, axes = build_component_residual_figure(
+        y_hat=z["y_hat"][0],
+        y_true=z["y_true"][0],
+        dt_s=0.02,
+        target_mask=ctx["target_mask"][0],
+    )
+
+    assert len(axes) == 9
+    assert [ax.get_xlabel() for ax in axes[:6]] == [""] * 6
+    assert [ax.get_xlabel() for ax in axes[6:]] == ["Prediction horizon (s)"] * 3
+    assert sum(ax.get_legend() is not None for ax in axes) == 1
+
+    plot_component_residuals_from_npz(eval_dir / "pred_samples.npz", eval_dir / "plots", n=1, dt_s=0.02, fmt="png")
+    assert (eval_dir / "plots" / "residual_component_000.png").exists()
 
 
 def test_model_compare_horizon_highlights_primary_over_baseline(tmp_path):

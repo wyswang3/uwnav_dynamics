@@ -54,6 +54,7 @@ from uwnav_dynamics.preprocess.qa import (
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """train_base QA 报告的命令行入口。"""
     ap = argparse.ArgumentParser("uwnav_dynamics.preprocess.cli_qa")
     ap.add_argument(
         "-y",

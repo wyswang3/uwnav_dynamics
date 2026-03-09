@@ -1,24 +1,31 @@
-# src/uwnav_dynamics/core/timebase.py
+"""
+模块名称：统一时间基工具
+
+模块职责：
+提供与具体传感器解耦的时间网格、聚合和最近邻映射工具，
+为多传感器对齐与采样频率变换提供基础能力。
+
+主要功能：
+1. 用 `TimeGrid` 描述统一等间隔主时间轴。
+2. 从时间数组或 DataFrame 生成时间网格。
+3. 将高频信号按 mean/first/last 聚合到目标网格。
+4. 将低频或稀疏信号按最近邻映射到目标网格，并输出有效性 mask。
+
+数据流：
+source time arrays / DataFrame
+    ↓
+TimeGrid
+    ↓
+aggregate_to_grid() / map_to_grid_nearest()
+    ↓
+aligned arrays + mask
+
+依赖模块：
+- numpy
+- pandas
+"""
+
 from __future__ import annotations
-
-"""
-uwnav_dynamics.core.timebase
-
-统一时间轴与时间网格工具。
-
-设计目标
---------
-- 提供一个轻量的 TimeGrid 抽象，描述统一的等间隔时间网格（如 50 Hz）；
-- 提供从 IMU / 数据帧推导 TimeGrid 的便捷函数；
-- 提供高频数据聚合到时间网格的工具（mean / first / last）；
-- 提供低频数据按最近邻映射到时间网格的工具（带 max_dt 与 mask）。
-
-约定
-----
-- 所有时间轴均使用「秒」为单位的 float64；
-- 默认主频率为 50 Hz（dt = 0.02 s），但接口不写死，可配置；
-- 不依赖具体传感器列，仅做纯时间 / 数组级操作。
-"""
 
 from dataclasses import dataclass
 from typing import Iterable, Literal, Optional, Sequence, Tuple
@@ -93,26 +100,7 @@ def make_time_grid_from_array(
     margin_start_s: float = 0.0,
     margin_end_s: float = 0.0,
 ) -> TimeGrid:
-    """
-    根据给定时间数组 t_s 构造等间隔 TimeGrid。
-
-    常用场景：基于 IMU 处理后的 t_s（100 Hz）构造 50 Hz 主时间轴。
-
-    Parameters
-    ----------
-    t_s : np.ndarray
-        原始时间数组（秒），须单调递增。
-    dt_s : float, default DEFAULT_MAIN_DT_S (50 Hz)
-        目标网格步长。
-    margin_start_s : float, default 0.0
-        起始处裁剪的时间（秒），例如 3.0 表示从 t_s[0] + 3s 开始。
-    margin_end_s : float, default 0.0
-        末尾裁剪的时间（秒），例如 3.0 表示在 t_s[-1] - 3s 结束。
-
-    Returns
-    -------
-    TimeGrid
-    """
+    """根据原始时间数组构造等间隔主时间网格。"""
     t = np.asarray(t_s, dtype=float).reshape(-1)
     if t.size < 2:
         raise ValueError("make_time_grid_from_array requires at least 2 samples.")
@@ -140,11 +128,7 @@ def make_time_grid_from_imu_df(
     margin_start_s: float = 0.0,
     margin_end_s: float = 0.0,
 ) -> TimeGrid:
-    """
-    便捷函数：从 IMU 预处理 CSV DataFrame 构造 TimeGrid。
-
-    默认使用 't_s' 列作为时间轴。
-    """
+    """从包含时间列的 DataFrame 直接推导主时间网格。"""
     if t_col not in imu_df.columns:
         raise ValueError(f"IMU DataFrame missing time column '{t_col}'.")
 
@@ -171,34 +155,7 @@ def aggregate_to_grid(
     *,
     agg: AggKind = "mean",
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    将高频时间序列按 TimeGrid 聚合（binning）。
-
-    用于：
-      - IMU 100 Hz → 50 Hz（mean / last）
-      - PWM 100 Hz → 50 Hz（通常 last）
-
-    Parameters
-    ----------
-    t_src : np.ndarray, shape (Ns,)
-        源时间轴（秒），单调递增。
-    v_src : np.ndarray, shape (Ns,) 或 (Ns, D)
-        源数据。若为一维则自动视为 (Ns,1) 处理。
-    grid : TimeGrid
-        目标时间网格。
-    agg : {"mean", "first", "last"}, default "mean"
-        聚合方式：
-          - "mean": 区间内样本均值；
-          - "first": 区间内第一个样本；
-          - "last": 区间内最后一个样本。
-
-    Returns
-    -------
-    v_grid : np.ndarray, shape (Ng, D)
-        聚合后的数据（对无样本的 bin，填 NaN）。
-    counts : np.ndarray, shape (Ng,)
-        每个网格 bin 包含的源样本数。
-    """
+    """将高频数据按目标时间网格分箱聚合，并返回聚合值与样本计数。"""
     t = np.asarray(t_src, dtype=float).reshape(-1)
     if t.size == 0:
         raise ValueError("aggregate_to_grid: empty t_src.")

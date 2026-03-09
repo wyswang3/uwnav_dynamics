@@ -44,6 +44,7 @@ from uwnav_dynamics.viz.style.sci_style import apply_axes_style, get_figure_size
 
 @dataclass(frozen=True)
 class PowerPlotPaths:
+    """Power 图产物的标准路径集合。"""
     run_dir: Path
     plots_dir: Path
     currents_png: Path
@@ -63,6 +64,7 @@ def save_power_currents_8motors(
     out_root: str | Path = "out/power_plots",
     use_rel_time: bool = False,
 ) -> Path:
+    """保存 8 路电机电流的 4×2 面板图。"""
     setup_mpl()
     paths = _resolve_out_dirs(power, out_root)
 

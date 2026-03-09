@@ -41,6 +41,7 @@ def masked_huber_loss(
     *,
     delta: float = 1.0,
 ) -> torch.Tensor:
+    """在布尔掩码约束下计算 Huber 辅助监督损失。"""
     if y_hat.shape != y_true.shape:
         raise ValueError(f"shape mismatch: y_hat{y_hat.shape}, y_true{y_true.shape}")
     if target_mask.shape != y_hat.shape:

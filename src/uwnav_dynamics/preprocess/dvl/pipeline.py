@@ -1,16 +1,32 @@
+"""
+模块名称：DVL 预处理总管线
+
+模块职责：
+负责将原始 DVL CSV 清洗为可直接参与训练和评估的统一表结构，
+完成时间列选择、速度列归一、简单有效性标记以及标准化输出。
+
+主要功能：
+1. 根据候选列自动选择 DVL 主时间轴。
+2. 将体坐标速度和可选深度字段转换为统一单位与命名。
+3. 调用质量整理模块生成可建模的 DVL 预处理结果。
+
+数据流：
+原始 DVL CSV
+    -> 质量整理与列筛选
+    -> 时间轴选择与速度/深度缩放
+    -> DvlProcessedFrame / processed CSV
+    -> 数据集构建与后续训练
+
+依赖模块：
+1. `uwnav_dynamics.preprocess.dvl.quality`
+2. `numpy`
+3. `pandas`
+
+备注：
+当前实现优先保证产出字段语义一致，复杂门控和异常判别保留在质量整理层扩展。
+"""
+
 from __future__ import annotations
-
-"""
-uwnav_dynamics.preprocess.dvl.pipeline
-
-DVL 预处理总管线（简化版，先保证「可用的 CSV 输出」）：
-
-  原始 CSV  ->  选择时间列（EstS/MonoS/...）
-             -> 选择 BI 速度列（若干命名候选 + 显式配置）
-             -> 单位统一到 m/s
-             -> 简单有效性标记（按 status / quality）
-             -> 写出「动力学建模友好」的 processed CSV
-"""
 
 from dataclasses import dataclass
 from pathlib import Path

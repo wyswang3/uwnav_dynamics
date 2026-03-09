@@ -87,6 +87,7 @@ def train_one_epoch(
     grad_clip: float,
     amp_enabled: bool,
 ) -> float:
+    """执行一个训练 epoch，并返回按样本数加权的平均 loss。"""
     model.train()
     total = 0.0
     n = 0
@@ -122,6 +123,7 @@ def train_one_epoch(
 
 @torch.no_grad()
 def eval_one_epoch(model, loader: DataLoader, loss_fn, device: torch.device) -> float:
+    """执行一个验证 epoch，并返回按样本数加权的平均 loss。"""
     model.eval()
     total = 0.0
     n = 0
@@ -138,6 +140,7 @@ def eval_one_epoch(model, loader: DataLoader, loss_fn, device: torch.device) -> 
 
 
 def _resolve_device(device: Optional[torch.device], cfg_device: str) -> torch.device:
+    """统一解析运行设备；优先使用显式传入的 runtime device。"""
     if device is not None:
         return device
 
@@ -149,6 +152,7 @@ def _resolve_device(device: Optional[torch.device], cfg_device: str) -> torch.de
 
 
 def _resolve_out_dir(run_dir: Optional[Path], cfg_out_dir: Path) -> Path:
+    """统一解析训练输出目录；运行时 `run_dir` 优先级高于配置值。"""
     return Path(run_dir) if run_dir is not None else Path(cfg_out_dir)
 
 
@@ -165,7 +169,9 @@ def fit(
     optimizer: Optional[torch.optim.Optimizer] = None,
 ) -> Dict[str, Any]:
     """
-    返回训练摘要，方便 pipeline/报告消费：
+    执行完整训练循环，并返回供 pipeline/报告消费的训练摘要。
+
+    返回值示例：
       {"best_val":..., "best_path":..., "last_path":..., "device":...}
     """
     out_dir = _resolve_out_dir(run_dir, cfg.out_dir)
@@ -191,6 +197,7 @@ def fit(
     last_path = out_dir / "last.pth"
 
     for ep in range(1, cfg.epochs + 1):
+        # train / val 分开调用，保证日志与 best-checkpoint 选择都基于独立验证集。
         tr = train_one_epoch(
             model, train_loader, optimizer, loss_fn,
             device=device, scaler=scaler,
@@ -202,6 +209,7 @@ def fit(
         print(f"[EPOCH {ep:03d}] train_loss={tr:.6f}  val_loss={va:.6f}")
 
         if getattr(cfg, "save_last", True):
+            # last checkpoint 记录“最近训练状态”，用于排查中断或继续人工分析。
             torch.save(
                 {
                     "epoch": ep,
@@ -216,6 +224,7 @@ def fit(
             )
 
         if getattr(cfg, "save_best", True) and va < best_val:
+            # best checkpoint 只按验证损失更新，不受 train loss 或其他指标影响。
             best_val = va
             torch.save(
                 {

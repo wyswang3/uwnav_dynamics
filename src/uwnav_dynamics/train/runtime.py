@@ -1,3 +1,35 @@
+"""
+模块名称：训练运行时辅助工具
+
+模块职责：
+负责训练入口中的运行时拼装工作，包括随机种子、CLI override、
+device 协调以及 `resolved_train.yaml` 的审计落盘。
+
+主要功能：
+1. 定义训练 CLI 可覆盖的最小字段集合 `TrainCliOverrides`。
+2. 将 CLI override 纯函数式应用到 canonical train config。
+3. 解析运行时 device，并根据设备特性修正数据加载配置。
+4. 把最终实际执行配置序列化为 `resolved_train.yaml`，供复现和审计使用。
+
+数据流：
+train yaml config + CLI override
+    ↓
+apply_train_overrides()
+    ↓
+runtime reconcile(device / pin_memory)
+    ↓
+resolved_train.yaml
+    ↓
+run_train.py / pipeline.py
+
+依赖模块：
+- uwnav_dynamics.train.config
+- uwnav_dynamics.train.data
+
+备注：
+- 本模块不负责训练循环，只处理运行时配置与审计辅助信息。
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass, replace, dataclass
@@ -15,6 +47,7 @@ from uwnav_dynamics.train.data import DataConfig
 
 @dataclass(frozen=True)
 class TrainCliOverrides:
+    """训练 CLI 允许覆盖的运行时字段集合。"""
     data_dir: str | Path | None = None
     device: str | None = None
     epochs: int | None = None
@@ -28,6 +61,7 @@ class TrainCliOverrides:
 
 
 def set_global_seed(seed: int) -> None:
+    """为 Python、NumPy 和 PyTorch 统一设置随机种子。"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -37,12 +71,11 @@ def set_global_seed(seed: int) -> None:
 
 def apply_train_overrides(cfg: TrainYamlConfig, overrides: TrainCliOverrides) -> TrainYamlConfig:
     """
-    Apply CLI overrides without mutating the original config object.
+    在不修改原配置对象的前提下应用 CLI override。
 
-    This function intentionally stays pure so the repository always has a clear
-    boundary between:
-      - canonical config parsed from yaml
-      - runtime-only overrides injected by CLI / pipeline
+    该函数刻意保持纯函数语义，用来清晰区分：
+    - 从 yaml 解析得到的 canonical config
+    - 由 CLI / pipeline 注入的 runtime-only override
     """
     run_cfg = cfg.run
     data_cfg = cfg.data
@@ -81,6 +114,7 @@ def apply_train_overrides(cfg: TrainYamlConfig, overrides: TrainCliOverrides) ->
 
 
 def resolve_runtime_device(device_name: str) -> torch.device:
+    """解析运行设备；若请求 CUDA 但不可用，则显式回退到 CPU。"""
     dev_str = str(device_name).lower()
     if dev_str.startswith("cuda") and not torch.cuda.is_available():
         print("[WARN] CUDA requested but not available -> fallback to CPU")
@@ -89,6 +123,7 @@ def resolve_runtime_device(device_name: str) -> torch.device:
 
 
 def reconcile_data_config_for_device(data_cfg: DataConfig, device: torch.device) -> tuple[DataConfig, str | None]:
+    """按设备类型修正数据配置，并返回需要打印给用户的说明信息。"""
     if device.type == "cpu" and data_cfg.pin_memory:
         return replace(data_cfg, pin_memory=False), "[INFO] CPU training: pin_memory=True is useless; auto set to False."
     return data_cfg, None
@@ -109,12 +144,12 @@ def save_resolved_train_config(
     y_scaler_path: str | Path | None = None,
 ) -> Path:
     """
-    Persist the exact post-override training config snapshot.
+    落盘 override 后的最终训练配置快照。
 
-    `resolved_train.yaml` is meant to be an audit-friendly experiment record:
-      - reproduce the run later without re-guessing CLI overrides
-      - explain how train-time artifacts map to split/scaler files
-      - support future open-source and research review with a compact snapshot
+    `resolved_train.yaml` 的目标是提供审计友好的实验记录：
+    - 复现实验时不必再次反推 CLI override
+    - 说明训练产物与 split/scaler artifact 的映射关系
+    - 为后续开源与科研审查保留一份紧凑快照
     """
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,6 +180,7 @@ def save_resolved_train_config(
 
 
 def _to_serializable(value: Any) -> Any:
+    """递归把 dataclass / Path / tuple 等值转换为 YAML 友好的基础类型。"""
     if isinstance(value, Path):
         return str(value)
     if is_dataclass(value):

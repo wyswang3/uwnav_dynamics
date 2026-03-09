@@ -176,9 +176,7 @@ class S1Predictor(nn.Module):
         validate_execution_layout(cfg.y_in_idx, din=cfg.din, dout=cfg.dout)
         semantic_layout = canonical_semantic_output_layout(cfg.dout)
 
-        # ---------------------------
-        # Index buffers (avoid per-forward tensor creation)
-        # ---------------------------
+        # 这些索引在每个 forward 都会用到，注册成 buffer 可以避免反复创建 tensor。
         u_idx = torch.as_tensor(list(cfg.u_in_idx), dtype=torch.long)
         y_idx = torch.as_tensor(list(cfg.y_in_idx), dtype=torch.long)
         self.register_buffer("_u_idx", u_idx, persistent=False)
@@ -205,16 +203,11 @@ class S1Predictor(nn.Module):
             bidirectional=False,
         )
 
-        # ---------------------------
-        # 2) Blocks
-        # ---------------------------
-        # ThrusterLag：enabled=False 时应等价于 identity（u_eff=u）
+        # blocks 的构造顺序与 forward 中的数据流保持一致：输入侧先验 -> 状态侧先验 -> 输出侧先验。
         self.thruster = ThrusterLag(cfg.blocks.thruster_lag, n_thrusters=self.u_in_dim)
 
-        # 这里的 replace() 只是在模块构造阶段补齐运行时维度，
-        # 不是为了让配置对象在训练过程中可变。
-        # 因此上层 dataclass 仍然应该保持 frozen，避免 train/eval 配置漂移。
-        # HydroSSM：避免“就地修改 cfg”，用 replace 构造局部 cfg
+        # `replace()` 只用于把运行时维度补回 block config，
+        # 避免直接改动 frozen dataclass 引起 train / eval 配置漂移。
         hydro_cfg = replace(cfg.blocks.hydro_ssm, u_dim=self.u_in_dim, y_dim=self.y_in_dim)
         self.hydro = HydroSSMCell(hydro_cfg)
 
@@ -235,9 +228,7 @@ class S1Predictor(nn.Module):
         unc_cfg = replace(cfg.blocks.uncertainty, pred_len=cfg.pred_len, y_dim=cfg.dout)
         self.uncertainty = UncertaintyHead(unc_cfg)
 
-        # ---------------------------
-        # 3) Head (baseline dY + logvar)
-        # ---------------------------
+        # 主 head 永远存在；额外 blocks 只是在它的输入或输出上叠加结构先验。
         hydro_hidden = int(hydro_cfg.hidden_dim)  # HydroSSMConfig 必须提供 hidden_dim
         head_in = cfg.rnn_hidden + (hydro_hidden if cfg.use_hydro_feat else 0)
 
@@ -257,8 +248,7 @@ class S1Predictor(nn.Module):
         else:
             self.dvl_obs_head = None
 
-        # ---- uncertainty feature projection ----
-        # 业务逻辑：用可解释特征 (h_last, y_last, u_last) 生成 logvar
+        # uncertainty head 不直接吃整段序列，而是吃最后时刻的可解释摘要特征。
         feat_in = hydro_hidden + self.y_in_dim + self.u_in_dim
         self.unc_feat = nn.Sequential(
             nn.Linear(feat_in, int(unc_cfg.feat_dim)),
@@ -347,34 +337,33 @@ class S1Predictor(nn.Module):
         if x.ndim != 3 or x.shape[-1] != self.cfg.din:
             raise ValueError(f"x must be (B,L,{self.cfg.din}), got {tuple(x.shape)}")
 
-        # 1) 抽取 u/y（供 blocks 使用）
+        # 先把输入拆成“控制量”和“状态量”两个语义子序列，供先验模块分别消费。
         u_seq = self._slice_u(x)  # (B,L,u_dim)
         y_seq = self._slice_y(x)  # (B,L,y_dim)
 
-        # 2) ThrusterLag：得到 u_eff（enabled=False 时等于 u）
+        # 输入侧先验：把原始指令修正成更接近真实推进器响应的等效输入。
         u_eff = self.thruster(u_seq)
 
-        # 3) 将 u_eff 替换回 x（让 backbone 看到“等效输入”）
+        # 如果启用 replacement，就让 backbone 直接看到修正后的输入；否则保留原始 x。
         if self.cfg.blocks.thruster_lag.enabled and self.cfg.use_thruster_as_replacement:
             x_enc = self._replace_u_in_x(x, u_eff)
         else:
             x_enc = x
 
-        # 4) HydroSSM：得到 h_last（enabled=False 时应输出 0）
-        # 约定：HydroSSMCell.forward(u_seq, y_seq) -> (h_seq, h_last)
+        # 状态侧先验：用独立隐状态吸收流体记忆，再决定是否并入 head 特征。
         _, h_last = self.hydro(u_eff, y_seq)  # (B, hidden_dim)
 
-        # 5) Backbone encoder
+        # backbone 仍然是主时序建模器，blocks 是围绕它添加结构化偏置。
         _enc_out, (h_n, _c_n) = self.enc(x_enc)
         h_rnn = h_n[-1]  # (B, rnn_hidden)
 
-        # 6) 拼接 head 特征
+        # 是否拼接 hydro 特征由配置决定，方便做“纯 LSTM vs 加先验”消融。
         if self.cfg.use_hydro_feat:
             h_feat = torch.cat([h_rnn, h_last], dim=-1)
         else:
             h_feat = h_rnn
 
-        # 7) baseline head：输出 dY + logvar
+        # baseline head 先给出最基础的 `dY + logvar`，再由后续 blocks 做可解释修正。
         out = self.head(h_feat)  # (B, H*Dout*2)
         B = out.shape[0]
         H = self.cfg.pred_len
@@ -383,12 +372,12 @@ class S1Predictor(nn.Module):
         dY = out[:, :, :D]
         logvar_base = out[:, :, D:]
 
-        # 8) DampingHead：显式耗散项（只对速度维更合理）
+        # 输出侧先验：阻尼项只加在物理上更合理的 velocity 语义组。
         y_last = y_seq[:, -1, :]               # (B, y_dim=9)
         dY_damp = self.damping(y_last)         # (B,H,Dout)，enabled=False 时应为 0
         dY = dY + dY_damp
 
-        # 9) UncertaintyHead：可选替换 logvar
+        # 不确定度头打开时，完全接管 baseline logvar；关闭时继续沿用 baseline 输出。
         if self.cfg.blocks.uncertainty.enabled:
             u_last = u_eff[:, -1, :]  # (B,u_dim)
             feat_raw = torch.cat([h_last, y_last, u_last], dim=-1)
@@ -399,6 +388,7 @@ class S1Predictor(nn.Module):
 
         aux: dict[str, torch.Tensor | None] = {"dvl_obs": None}
         if self.dvl_obs_head is not None:
+            # 辅助头与主 head 共用同一份高层特征，避免再维护第二条编码器路径。
             dvl_out = self.dvl_obs_head(h_feat).view(B, H, self.dvl_obs_dim)
             aux["dvl_obs"] = dvl_out
 

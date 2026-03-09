@@ -54,6 +54,7 @@ from uwnav_dynamics.viz.style.sci_style import apply_axes_style, get_figure_size
 
 @dataclass(frozen=True)
 class DvlPlotPaths:
+    """原始 DVL 图产物的标准路径集合。"""
     run_dir: Path
     plots_dir: Path
     dvl_vel_png: Path
@@ -74,6 +75,7 @@ def save_dvl_bi_be_vel_2rows(
     layout: Imu3RowLayout = Imu3RowLayout(),
     use_rel_time: bool = False,
 ) -> Path:
+    """保存原始 DVL 的 BI/BE 两行速度图。"""
     setup_mpl()
     paths = _resolve_out_dirs(dvl, out_root)
 
@@ -130,6 +132,7 @@ def save_dvl_bi_be_vel_2rows(
 
 @dataclass(frozen=True)
 class DvlProcPlotPaths:
+    """预处理 DVL 图产物的标准路径集合。"""
     run_dir: Path
     plots_dir: Path
     combined_png: Path
@@ -150,6 +153,7 @@ def save_dvl_proc_figures(
     out_root: str | Path = "out/dvl_plots_proc",
     use_rel_time: bool = False,
 ) -> Path:
+    """从预处理 DVL CSV 生成体速度、垂向速度和深度三行图。"""
     setup_mpl()
     paths = _resolve_proc_out_dirs(proc_csv, out_root)
 

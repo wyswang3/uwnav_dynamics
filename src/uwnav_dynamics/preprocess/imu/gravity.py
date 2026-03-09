@@ -1,88 +1,31 @@
+"""
+模块名称：IMU 重力补偿
+
+模块职责：
+依据统一的 ENU/FRD 坐标约定，将姿态角转换为旋转矩阵，
+并把重力分量从 IMU 比力测量中剥离出来，得到线加速度。
+
+主要功能：
+1. 根据 roll/pitch/yaw 生成 body 到 nav 的旋转矩阵序列。
+2. 将 ENU 中的重力向量转换到体坐标系。
+3. 计算去重力后的线加速度和相关诊断量。
+
+数据流：
+`transform` 输出的体坐标加速度与姿态角
+    -> 旋转矩阵计算
+    -> 体坐标重力分量求解
+    -> 去重力线加速度
+    -> `preprocess.imu.bias`
+
+依赖模块：
+1. `numpy`
+2. `dataclasses`
+
+备注：
+本模块只处理几何与重力项，不负责零偏估计和滤波。
+"""
+
 from __future__ import annotations
-
-"""
-uwnav_dynamics.preprocess.imu.gravity
-
-IMU 重力补偿模块：在统一的坐标与单位约定下，从「比力测量」中减去重力分量，
-得到用于动力学建模与控制的线加速度。
-
-一、坐标系与旋转约定（与 transform.py 保持一致）
-
-1) 体坐标系（body frame）
-   - 采用 FRD（Forward–Right–Down）右手坐标系：
-     - X_b：向前（Forward）
-     - Y_b：向右（Right）
-     - Z_b：向下（Down）
-
-   IMU 在 transform.py 中已经完成：
-     - RFU -> FRD 坐标变换
-     - 单位转换：g -> m/s²
-   因此本模块的输入加速度 acc_body_mps2 已经在 FRD 下。
-
-2) 导航坐标系（navigation frame）
-   - 采用 ENU（East–North–Up）右手坐标系：
-     - X_n：East（东）
-     - Y_n：North（北）
-     - Z_n：Up（上）
-
-   姿态角 roll / pitch / yaw 的定义与 ENU 保持一致：
-     - yaw：绕 Z_n（Up）轴旋转，正方向通常为从 East 指向 North 的逆时针旋转；
-     - pitch：绕中间坐标的 Y 轴；
-     - roll：绕中间坐标的 X 轴；
-   采用标准 ZYX 欧拉角顺序：
-     R_nb = R_z(yaw) * R_y(pitch) * R_x(roll)
-
-   其中：
-     - R_nb：body -> nav，把体坐标向量旋转到 ENU 下
-     - R_bn = R_nb^T：nav -> body，把 ENU 向量旋转到体坐标
-
-二、加速度计输出与重力补偿
-
-1) 加速度计输出的物理语义
-   绝大多数 IMU 的加速度输出是比力（specific force），在体坐标系下满足：
-     a_meas_b = a_lin_b + g_b + b_a + noise
-
-   其中：
-     - a_lin_b：线加速度（真正用于动力学的项）
-     - g_b    ：重力在体坐标系下的分量
-     - b_a    ：加速度计零偏（bias）
-     - noise  ：测量噪声
-
-   在本模块中，我们假设 bias 尚未去除（由 bias.py 处理），
-   只负责从 a_meas_b 中减去 g_b，得到：
-     a_lin_b_plus_bias = a_meas_b - g_b ≈ a_lin_b + b_a
-
-2) 全局重力向量
-   在 ENU 坐标系中，我们采用统一约定：
-     g_n = [0, 0, -g0]^T
-
-   注意：
-     - Z_n 轴向上（Up），因此重力指向 -Z_n；
-     - g0 通常取 9.78 或 9.81（可在配置中调整）。
-
-3) 体坐标系下重力分量
-   已知：
-     - g_n in ENU
-     - R_nb：body -> nav
-   则 nav -> body 的旋转为：
-     R_bn = R_nb^T
-
-   重力在体坐标系下为：
-     g_b = R_bn * g_n
-
-   最终线加速度（仍含 bias）为：
-     a_lin_b_plus_bias = a_meas_b - g_b
-
-三、模块职责
-
-本模块只做两件事：
-  - 提供 rpy_to_R_nb：根据 (roll, pitch, yaw) 生成 R_nb 序列；
-  - 提供 compensate_gravity：给定体坐标加速度 + 姿态，计算 g_b 与 a_lin_b_plus_bias。
-
-不做：
-  - bias 估计与去除（由 bias.py 处理）
-  - 滤波与去毛刺（由 filter.py 处理）
-"""
 
 from dataclasses import dataclass
 from typing import Dict

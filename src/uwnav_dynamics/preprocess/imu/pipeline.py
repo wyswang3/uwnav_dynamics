@@ -1,3 +1,42 @@
+"""
+模块名称：IMU 预处理总管线
+
+模块职责：
+串联 IMU 的坐标/单位统一、重力补偿、零偏估计与滤波步骤，
+输出物理语义一致的 IMU 预处理结果及诊断信息。
+
+主要功能：
+1. 调用 `transform`、`gravity`、`bias`、`filter` 四个子模块完成全链路处理。
+2. 组织预处理结果、诊断统计和可落盘 CSV 的统一字段约定。
+3. 为数据集构建、训练和评估阶段提供直接可用的 IMU 特征表。
+
+数据流：
+原始 IMU CSV / 数组
+    -> `transform` 统一坐标与单位
+    -> `gravity` 扣除重力
+    -> `bias` 估计并去除静止零偏
+    -> `filter` 去毛刺与低通
+    -> `ImuProcessedFrame` / CSV
+    -> 数据集构建与训练评估
+
+系统级数据流：
+IMU 原始采集
+    -> alignment
+    -> IMU preprocess pipeline
+    -> dataset build
+    -> training
+    -> evaluation
+
+依赖模块：
+1. `uwnav_dynamics.preprocess.imu.transform`
+2. `uwnav_dynamics.preprocess.imu.gravity`
+3. `uwnav_dynamics.preprocess.imu.bias`
+4. `uwnav_dynamics.preprocess.imu.filter`
+
+备注：
+本模块负责总装配与字段约定，具体的数学细节保留在各子模块内部。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
@@ -364,7 +403,8 @@ def preprocess_imu_arrays(
     _dbg_nan("gyro_body_filt (after sanitize)", gyro_body_filt)
     _dbg_nan("yaw_rad_filt (after sanitize)", yaw_rad_filt)
 
-    # 6) 计算 ENU 下线加速度（使用“兜底后”的 yaw & a_body）
+    # ENU 加速度显式依赖最终采用的 yaw；
+    # 因此必须在 filter/fallback 之后再做一次 body->ENU 旋转。
     R_nb_filt = rpy_to_R_nb(
         roll_rad=roll_rad,
         pitch_rad=pitch_rad,
@@ -374,7 +414,7 @@ def preprocess_imu_arrays(
     for i in range(N):
         a_lin_enu_filt[i] = R_nb_filt[i] @ a_lin_body_filt[i]
 
-    # 7) 打包 ImuProcessedFrame
+    # 处理结果保存“最终可消费信号”，诊断信息则单独放进 diag，避免 CSV 里混入过多调试字段。
     processed = ImuProcessedFrame(
         t_s=t,
         dt_s=dt_s,
@@ -542,4 +582,3 @@ def run_imu_preprocess_csv(
     df_out.to_csv(out_path, index=False)
 
     return diag
-

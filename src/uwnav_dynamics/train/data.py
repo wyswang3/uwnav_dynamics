@@ -1,3 +1,36 @@
+"""
+模块名称：遗留训练数据加载器
+
+模块职责：
+提供兼容旧训练路径的最小 DataLoader 构建能力，
+基于 `features.npz / labels.npz` 或缓存的 `X.npy / Y.npy` 生成 train/val/test loader。
+
+主要功能：
+1. 将 `features.npz / labels.npz` 转换为便于 memmap 读取的 `X.npy / Y.npy`。
+2. 基于 canonical split helper 构造连续 train/val/test 划分。
+3. 为旧训练入口提供 `WindowDataset` 与 `build_loaders()` 兼容层。
+
+数据流：
+data_dir/features.npz + labels.npz
+    ↓
+_maybe_build_memmap_cache()
+    ↓
+X.npy + Y.npy
+    ↓
+WindowDataset / DataLoader
+    ↓
+legacy train helper
+
+依赖模块：
+- numpy
+- torch
+- uwnav_dynamics.dataset.split
+
+备注：
+- 正式训练链路优先使用 `train.data_pipeline.prepare_train_data()`。
+- 本模块保留的主要目的是兼容历史调用，而不是继续扩展新语义。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +47,7 @@ from uwnav_dynamics.dataset.split import make_split_indices
 
 @dataclass(frozen=True)
 class DataConfig:
+    """遗留 DataLoader 构建路径需要的最小数据配置。"""
     data_dir: Path
     batch_size: int = 256
     num_workers: int = 4
@@ -25,15 +59,15 @@ class DataConfig:
 
 def _maybe_build_memmap_cache(data_dir: Path) -> Tuple[Path, Path]:
     """
-    Convert features.npz/labels.npz to X.npy/Y.npy for memmap reading.
-    This avoids loading huge arrays into RAM every time.
+    把 `features.npz/labels.npz` 转成 `X.npy/Y.npy`，便于用 memmap 读取。
 
-    Expected:
-      - data_dir/features.npz: contains 'X'
-      - data_dir/labels.npz:   contains 'Y'
-    Produces:
-      - data_dir/X.npy
-      - data_dir/Y.npy
+    预期输入：
+    - `data_dir/features.npz`：包含 `X`
+    - `data_dir/labels.npz`：包含 `Y`
+
+    输出：
+    - `data_dir/X.npy`
+    - `data_dir/Y.npy`
     """
     data_dir = Path(data_dir)
     x_npy = data_dir / "X.npy"
@@ -75,13 +109,17 @@ def _maybe_build_memmap_cache(data_dir: Path) -> Tuple[Path, Path]:
 
 class WindowDataset(Dataset):
     """
-    Minimal dataset for:
-      X: (N, L, Din)
-      Y: (N, H, Dout)
-    Both loaded via memmap-backed .npy.
+    遗留训练路径使用的最小窗口数据集。
+
+    数据约定：
+    - `X: (N, L, Din)`
+    - `Y: (N, H, Dout)`
+
+    两者都通过 memmap `.npy` 读取，避免初始化时把全量数组复制进内存。
     """
 
     def __init__(self, x_npy: Path, y_npy: Path, indices: np.ndarray):
+        """绑定 memmap 数组与样本索引，不在初始化阶段复制完整数据。"""
         self.X = np.load(x_npy, mmap_mode="r")
         self.Y = np.load(y_npy, mmap_mode="r")
 
@@ -91,9 +129,11 @@ class WindowDataset(Dataset):
         self.indices = indices.astype(np.int64, copy=False)
 
     def __len__(self) -> int:
+        """返回当前 split 下可见窗口数。"""
         return int(self.indices.shape[0])
 
     def __getitem__(self, i: int):
+        """按索引读取单个窗口，并转成训练侧期望的 float32 tensor。"""
         idx = int(self.indices[i])
         x = np.asarray(self.X[idx], dtype=np.float32)
         y = np.asarray(self.Y[idx], dtype=np.float32)
@@ -102,12 +142,13 @@ class WindowDataset(Dataset):
 
 def build_loaders(cfg: DataConfig) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
-    Legacy convenience loader.
+    为旧训练链路构造 train/val/test DataLoader。
 
-    This path intentionally stays compatibility-only:
-      - it now reuses the canonical split builder to avoid semantic drift,
-      - but it still does not persist split/scaler artifacts under a run dir.
-    Official train/eval flows should use `train.data_pipeline.prepare_train_data`.
+    该路径只保留兼容用途：
+    - 它已经复用 canonical split helper，避免与正式链路的切分语义漂移。
+    - 但它仍不会把 split/scaler artifact 持久化到 run 目录。
+
+    正式 train/eval 流程应优先使用 `train.data_pipeline.prepare_train_data()`。
     """
     warnings.warn(
         "train.data.build_loaders is a legacy helper and does not persist "
@@ -140,6 +181,7 @@ def build_loaders(cfg: DataConfig) -> Tuple[DataLoader, DataLoader, DataLoader]:
     test_ds = WindowDataset(x_npy, y_npy, test_idx)
 
     def _make_loader(ds: Dataset, shuffle: bool) -> DataLoader:
+        """统一构造 train/val/test DataLoader，保持参数收口在单处。"""
         return DataLoader(
             ds,
             batch_size=cfg.batch_size,

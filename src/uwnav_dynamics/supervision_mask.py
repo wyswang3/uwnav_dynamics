@@ -48,6 +48,7 @@ from uwnav_dynamics.models.utils.semantic_output_layout import SemanticOutputLay
 
 
 def build_dense_target_mask(target_shape: Sequence[int]) -> np.ndarray:
+    """构造与监督张量同形状、全部为 `True` 的稠密监督掩码。"""
     shape = tuple(int(v) for v in target_shape)
     if len(shape) != 3:
         raise ValueError(f"target_shape must be (N,H,D), got {shape}")
@@ -77,6 +78,7 @@ def build_target_mask_from_dvl_mask(
     *,
     target_shape: Sequence[int],
 ) -> np.ndarray:
+    """把 DVL 稀疏可用性掩码扩展为与 `Y` 同形状的运行时监督掩码。"""
     mask = build_dense_target_mask(target_shape)
     expected = mask.shape[:2]
     raw = _normalize_dvl_mask_shape(dvl_mask, expected_shape=expected)

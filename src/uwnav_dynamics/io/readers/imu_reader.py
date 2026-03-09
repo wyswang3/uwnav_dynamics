@@ -1,31 +1,17 @@
-# src/uwnav_dynamics/io/readers/imu_reader.py
+"""
+模块名称：IMU 日志读取器
+
+模块职责：
+负责将原始 IMU CSV 读取为统一的 `ImuFrame`，
+只做 I/O 层的时间轴整理与基础单位换算，不引入算法处理。
+
+主要功能：
+1. 读取 IMU CSV 并解析 canonical 时间轴 `t_s / t_rel_s / dt_s`。
+2. 提取加速度、角速度和姿态角原始列。
+3. 做最小单位换算，得到 `acc_mps2 / gyro_rad_s / ang_rad`。
+"""
+
 from __future__ import annotations
-
-"""
-IMU CSV reader (I/O only; no algorithms).
-
-Input CSV columns (typical for min_imu_tb_*.csv):
-  - Time columns (at least one must exist):
-      MonoNS, EstNS, MonoS, EstS
-  - IMU raw measurements:
-      AccX, AccY, AccZ        # unit: g
-      GyroX, GyroY, GyroZ     # unit: deg/s
-      AngX, AngY, AngZ        # unit: deg (Euler angles in vendor convention)
-      YawDeg                  # optional, may be empty
-
-This module:
-  - Reads CSV into DataFrame
-  - Extracts a canonical time axis t_s (seconds), plus t_rel_s and dt_s
-  - Packs arrays into ImuFrame with basic unit conversions:
-      acc_mps2 = acc_g * g0
-      gyro_rad_s = gyro_deg_s * pi/180
-      ang_rad = ang_deg * pi/180
-
-This module must NOT:
-  - do coordinate-frame transforms (RFU/FRD/ENU, etc.)
-  - do gravity compensation / bias correction / filtering
-  - align with DVL/PWM/Volt
-"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +26,7 @@ _TIME_COL_DEFAULT_PRIORITY: Tuple[str, ...] = ("EstS", "MonoS", "EstNS", "MonoNS
 
 @dataclass(frozen=True)
 class ImuFrame:
+    """单个 IMU 文件读取后的原始表、时间轴和派生 SI 单位数组。"""
     path: Path
     kind: str
 
@@ -66,6 +53,7 @@ class ImuFrame:
 
 
 def _pick_time_col(df: pd.DataFrame, priority: Sequence[str]) -> str:
+    """按优先级选择 IMU CSV 中可用的时间列。"""
     for c in priority:
         if c in df.columns:
             return c
@@ -73,6 +61,7 @@ def _pick_time_col(df: pd.DataFrame, priority: Sequence[str]) -> str:
 
 
 def _extract_time_s(df: pd.DataFrame, time_col: str) -> np.ndarray:
+    """把秒或纳秒时间列统一转换为秒级时间轴。"""
     t = df[time_col].to_numpy(dtype=float)
     if time_col.endswith("NS"):
         t = t * 1e-9
@@ -86,24 +75,7 @@ def read_imu_csv(
     time_priority: Sequence[str] = _TIME_COL_DEFAULT_PRIORITY,
     g0_mps2: float = 9.78,
 ) -> ImuFrame:
-    """
-    Read IMU CSV and return an ImuFrame.
-
-    Parameters
-    ----------
-    path : str | Path
-        Absolute or relative path to IMU CSV.
-    kind : str
-        Tag from dataset selection, e.g. "min_tb".
-    time_priority : Sequence[str]
-        Preferred time columns order.
-    g0_mps2 : float
-        Conversion from g to m/s^2 (project convention).
-
-    Returns
-    -------
-    ImuFrame
-    """
+    """读取 IMU CSV，并返回带原始值与 SI 单位派生值的 `ImuFrame`。"""
     p = Path(path).expanduser().resolve()
     if not p.exists():
         raise FileNotFoundError(f"IMU CSV not found: {p}")

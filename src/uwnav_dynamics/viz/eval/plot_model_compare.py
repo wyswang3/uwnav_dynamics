@@ -59,6 +59,7 @@ from uwnav_dynamics.viz.style.sci_style import (
 
 @dataclass(frozen=True)
 class ModelCompareCfg:
+    """多模型比较图的时间轴、指标类型和导出格式配置。"""
     dt_s: float = 0.01
     use_seconds: bool = True
     metric: str = "rmse"
@@ -85,6 +86,7 @@ def build_horizon_compare_figure(
     roles: Optional[Sequence[str]] = None,
     artifact_variant: str = "dense",
 ) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes, plt.Axes]]:
+    """构建多模型按组分行的 horizon 比较图。"""
     setup_mpl()
 
     if len(eval_dirs) == 0:
@@ -144,6 +146,7 @@ def plot_horizon_compare(
     cfg: ModelCompareCfg,
     roles: Optional[Sequence[str]] = None,
 ) -> None:
+    """读取多个评估目录并导出多模型比较图片。"""
     _ensure_dir(out_dir)
     fig, _ = build_horizon_compare_figure(
         eval_dirs=eval_dirs,
@@ -176,6 +179,7 @@ def plot_horizon_compare(
 
 
 def main() -> int:
+    """多模型 horizon 比较图命令行入口。"""
     ap = argparse.ArgumentParser("uwnav_dynamics.viz.plot_model_compare")
     ap.add_argument("--eval_dir", type=str, nargs="+", required=True, help="evaluation dirs to compare")
     ap.add_argument("--label", type=str, nargs="*", default=None, help="display labels for each eval dir")

@@ -52,6 +52,7 @@ _SENSOR_3ROW_SIZE = get_figure_size("sensor_3row", preset="paper")
 
 @dataclass(frozen=True)
 class Imu3RowLayout:
+    """三行共享 x 轴传感器图的布局参数集合。"""
     fig_w_in: float = _SENSOR_3ROW_SIZE[0]
     fig_h_in: float = _SENSOR_3ROW_SIZE[1]
     dpi: int = _PAPER_STYLE.figure_dpi
@@ -103,10 +104,12 @@ IMU_AXIS_LABELS: Tuple[str, str, str] = ("X axis", "Y axis", "Z axis")
 
 
 def apply_legend_style(leg: Optional[plt.Legend]) -> None:
+    """对传感器图图例应用统一极简样式。"""
     apply_minimal_legend(leg)
 
 
 def set_y_ticks_pretty_3(ax: plt.Axes, *, y_pad_frac: float = 0.03) -> None:
+    """把 y 轴刻度收敛到最多 3 个较易读的主刻度。"""
     ax.relim()
     ax.autoscale(enable=True, axis="y", tight=False)
 
@@ -148,6 +151,7 @@ def set_y_ticks_pretty_3(ax: plt.Axes, *, y_pad_frac: float = 0.03) -> None:
 def make_imu_3rows_canvas(
     layout: Imu3RowLayout = Imu3RowLayout(),
 ) -> Tuple[plt.Figure, Sequence[plt.Axes], Imu3RowLayout]:
+    """创建标准三行共享 x 轴的传感器画布。"""
     fig, axes = plt.subplots(
         3,
         1,
@@ -183,6 +187,7 @@ def make_imu_3rows_canvas(
 
 
 def finalize_imu_axes(axes: Sequence[plt.Axes], *, y_pad_frac: float = 0.03) -> None:
+    """对三行传感器图统一收尾 y 轴刻度。"""
     for ax in axes:
         set_y_ticks_pretty_3(ax, y_pad_frac=y_pad_frac)
 
@@ -195,6 +200,7 @@ def plot_xyz_lines(
     linewidth: float,
     colors: Tuple[str, str, str] = IMU_AXIS_COLORS,
 ) -> Tuple[plt.Line2D, plt.Line2D, plt.Line2D]:
+    """在单个坐标轴上绘制三轴时序曲线。"""
     x = np.asarray(xyz, dtype=float)
     if x.ndim != 2 or x.shape[1] != 3:
         raise ValueError(f"xyz must be (N,3), got {x.shape}")
@@ -212,5 +218,6 @@ def add_xyz_legend(
     labels: Tuple[str, str, str] = IMU_AXIS_LABELS,
     loc: str = "upper right",
 ) -> None:
+    """为三轴曲线添加一次性 legend。"""
     leg = ax.legend(list(lines), list(labels), loc=loc, frameon=False, fontsize=layout.legend_fs())
     apply_legend_style(leg)

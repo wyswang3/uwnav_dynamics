@@ -59,6 +59,7 @@ from uwnav_dynamics.models.utils.execution_layout import validate_execution_layo
 
 @dataclass(frozen=True)
 class LossConfig:
+    """训练损失配置，包含主损失类型与辅助监督权重。"""
     type: str = "nll_diag"
     logvar_clip_min: float = -10.0
     logvar_clip_max: float = 6.0
@@ -69,23 +70,27 @@ class LossConfig:
 
 @dataclass(frozen=True)
 class AuxHeadConfig:
+    """单个辅助预测头的开关与隐藏维配置。"""
     enabled: bool = False
     hidden: int = 128
 
 
 @dataclass(frozen=True)
 class ModelAuxHeadsConfig:
+    """模型全部辅助预测头的聚合配置。"""
     dvl_obs: AuxHeadConfig = field(default_factory=AuxHeadConfig)
 
 
 @dataclass(frozen=True)
 class RolloutConfig:
+    """rollout 执行契约配置。"""
     y0_source: str = "x_last_state"   # "x_last_state" only for v0
     mode: str = "delta_cumsum"        # "delta_cumsum" only for v0
 
 
 @dataclass(frozen=True)
 class RunConfig:
+    """单次训练运行的设备、目录和变体命名配置。"""
     name: str
     seed: int = 0
     device: str = "cuda"
@@ -96,6 +101,7 @@ class RunConfig:
 
 @dataclass(frozen=True)
 class TrainYamlConfig:
+    """训练 YAML 的顶层强类型配置对象。"""
     run: RunConfig
     data: DataConfig
     model: S1PredictorConfig
@@ -188,6 +194,7 @@ def _warn_if_out_dir_repeats_variant(out_dir: Path, variant: str) -> None:
 
 
 def load_yaml(path: Path) -> Dict[str, Any]:
+    """读取并校验训练 YAML 的顶层字典结构。"""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"YAML not found: {path}")
@@ -368,7 +375,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     Runtime overrides may replace selected fields later, but downstream code
     should not re-interpret the yaml independently.
     """
-    # ---------------- run ----------------
+    # `run` 段只描述实验运行环境与落盘路径，不承载模型或数据语义。
     run_d = _req(d, "run", where="root")
     if not isinstance(run_d, dict):
         raise TypeError("run must be a dict")
@@ -389,7 +396,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     )
     _warn_if_out_dir_repeats_variant(run.out_dir, run.variant)
 
-    # ---------------- data ----------------
+    # `data` 段只允许出现训练时真正消费的数据路径和 split 比例。
     data_d = _req(d, "data", where="root")
     if not isinstance(data_d, dict):
         raise TypeError("data must be a dict")
@@ -421,7 +428,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         seed=run.seed,
     )
 
-    # ---------------- model ----------------
+    # `model` 段是最严格的 schema：一旦字段未知，就立即 fail-fast，
+    # 避免 train / eval 对同一份 yaml 做出不同解释。
     model_d = _req(d, "model", where="root")
     if not isinstance(model_d, dict):
         raise TypeError("model must be a dict")
@@ -450,7 +458,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         where="model",
     )
 
-    # 强制要求 blocks 写全
+    # blocks 必须显式写全，防止“默认值悄悄生效”导致实验不可审计。
     blocks = _parse_blocks(model_d, where="model")
     model_aux_heads = _parse_model_aux_heads(model_d, where="model")
 
@@ -472,7 +480,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     validate_feature_indices(model.u_in_idx, upper_bound=model.din, name="model.u_in_idx")
     validate_execution_layout(model.y_in_idx, din=model.din, dout=model.dout)
 
-    # ---------------- rollout ----------------
+    # rollout 契约目前只支持一条执行路径；
+    # parser 在这里提前收口，后面的 train / eval 就不再分叉解释。
     rollout_d = d.get("rollout", {}) or {}
     if not isinstance(rollout_d, dict):
         raise TypeError("rollout must be a dict")
@@ -488,7 +497,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     if rollout.mode != "delta_cumsum":
         raise ValueError(f"Unsupported rollout.mode={rollout.mode!r} (v0 only supports 'delta_cumsum')")
 
-    # ---------------- loss ----------------
+    # loss 段同时约束主损失和辅助头权重，避免“开了权重但没开 head”的静默配置错误。
     loss_d = d.get("loss", {}) or {}
     if not isinstance(loss_d, dict):
         raise TypeError("loss must be a dict")
@@ -527,7 +536,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         dvl_obs_delta=dvl_obs_delta,
     )
 
-    # ---------------- optim/train -> TrainConfig ----------------
+    # `optim` 与 `train` 最终收敛成 `TrainConfig`，
+    # 运行时只消费这一份强类型对象，不再回看原始 yaml。
     optim_d = d.get("optim", {}) or {}
     if not isinstance(optim_d, dict):
         raise TypeError("optim must be a dict")

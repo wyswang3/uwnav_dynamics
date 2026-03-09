@@ -1,92 +1,31 @@
+"""
+模块名称：IMU 滤波
+
+模块职责：
+在完成坐标统一、重力补偿和零偏去除后，对 IMU 序列进行去毛刺与低通滤波，
+输出更平滑、适合建模和控制的信号。
+
+主要功能：
+1. 对加速度、角速度和 yaw 通道执行单步阈值去毛刺。
+2. 通过一阶 IIR 低通滤波抑制高频噪声。
+3. 汇总各通道毛刺统计和滤波后结果。
+
+数据流：
+去重力且去 bias 的 IMU 序列
+    -> 单点毛刺替换
+    -> 一阶低通滤波
+    -> 滤波后的 IMU 序列
+    -> `preprocess.imu.pipeline`
+
+依赖模块：
+1. `numpy`
+2. `dataclasses`
+
+备注：
+yaw 通道先做 unwrap 再滤波，避免跨 `±pi` 的相位跳变破坏平滑结果。
+"""
+
 from __future__ import annotations
-
-"""
-uwnav_dynamics.preprocess.imu.filter
-
-IMU 滤波模块：在完成「坐标统一（FRD）+ 单位统一（m/s², rad/s）+
-重力补偿 + 零偏估计」之后，对信号进行去毛刺 + 低通滤波。
-
-一、输入信号的工程语义
-
-本模块假定输入已经经过前面几个步骤：
-
-  1) transform.py:
-     - RFU -> FRD（体坐标系）
-     - g -> m/s², deg/s -> rad/s
-     - yaw -> rad 且 wrap 到 (-π, π]
-
-  2) gravity.py:
-     - 从测量比力中减去重力分量，得到 a_lin_body_mps2
-
-  3) bias.py:
-     - 在静止窗内估计出零偏 b_a, b_g
-     - apply_bias(...) 得到「去 bias 后」的线加速度与角速度
-
-因此本模块的输入具有如下物理含义：
-
-  - a_lin_body_mps2 : (N,3)
-        体坐标系 FRD 下的线加速度，单位 [m/s²]，
-        已经去重力、去零偏，仍然包含高频噪声和偶发毛刺。
-
-  - gyro_body_rad_s : (N,3)
-        体坐标系 FRD 下的角速度，单位 [rad/s]，
-        已经去零偏，仍然包含高频噪声和偶发毛刺。
-
-  - yaw_rad : (N,)
-        体坐标系姿态的 yaw 角，单位 [rad]，
-        已由 transform.py 根据 ENU 语义处理过并 wrap 到 (-π, π]。
-
-本模块只做「信号质量提升」，不改变任何物理模型假设。
-
-二、滤波策略
-
-1) 去毛刺（despike）
-
-  - 工程中常见的单点离群值（spike），通常源自串口抖动、
-    数值溢出、偶发解析异常等，不代表真正物理运动。
-  - 简化策略：对每个标量序列 x[k]：
-      若 |x[k] - x[k-1]| > 阈值 thresh，则认为 x[k] 是毛刺，用 x[k-1] 替代。
-
-    优点：
-      - 实现简单、可解释；
-      - 能有效去除单点极大跳变。
-
-    阈值需要按物理量分别设置（加速度 / 角速度 / yaw）。
-
-2) 一阶 IIR 低通滤波
-
-  - 对离散信号 x[k]，给定采样周期 dt、中值：
-      alpha = 2π fc dt / (1 + 2π fc dt)
-
-      y[k] = y[k-1] + alpha * (x[k] - y[k-1])
-
-    其中 fc 为截止频率，按工程经验配置。
-    这个形式对应一阶连续时间低通在离散域的近似。
-
-  - 对于 yaw，需要注意「2π wrap」问题：
-      - 我们先对 yaw 做 unwrap（消除跳变），
-      - 在 unwrap 后的连续角度上低通，
-      - 最后再 wrap 回 (-π, π]。
-
-三、坐标与单位的保持
-
-  - 本模块不进行坐标变换：
-      输入 / 输出均在体坐标系 FRD 下。
-  - 本模块不改变单位：
-      加速度保持 [m/s²]，角速度保持 [rad/s]，角度保持 [rad]。
-
-四、模块职责
-
-  - 提供基础工具：
-      - despike_stepwise(x, thresh)
-      - iir_lowpass(x, dt, fc)
-
-  - 提供主接口：
-      filter_signals(dt_med, a_lin_body_mps2, gyro_body_rad_s, yaw_rad, cfg)
-
-    统一对线加速度 / 角速度 / yaw 进行去毛刺 + 低通，
-    并返回滤波结果及毛刺统计。
-"""
 
 from dataclasses import dataclass
 from typing import Dict, Tuple

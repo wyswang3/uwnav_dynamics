@@ -1,4 +1,16 @@
-# src/uwnav_dynamics/preprocess/align/cli_align.py
+"""
+模块名称：多传感器对齐 CLI 入口
+
+模块职责：
+解析对齐 yaml，并调用 `aligner.py` 生成统一主时间轴下的 `train_base.csv`，
+作为数据集构建的直接上游入口。
+
+主要功能：
+1. 读取 `configs/align/*.yaml`。
+2. 解析 `AlignConfig`。
+3. 调用 `save_training_table_imu_main()` 落盘对齐结果。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -11,6 +23,7 @@ from uwnav_dynamics.preprocess.align.aligner import (
 )
 
 def main() -> int:
+    """解析对齐配置并执行训练基础表生成。"""
     parser = argparse.ArgumentParser(
         description="Align IMU / PWM / DVL / Power logs to training base table."
     )

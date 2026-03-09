@@ -50,6 +50,7 @@ def validate_feature_indices(
     expected_len: int | None = None,
     name: str,
 ) -> tuple[int, ...]:
+    """校验特征索引的长度、唯一性和范围是否合法。"""
     normalized = _normalize_indices(indices, name=name)
     if expected_len is not None and len(normalized) != int(expected_len):
         raise ValueError(f"{name} length mismatch: expect {expected_len}, got {len(normalized)}")
@@ -66,6 +67,7 @@ def validate_execution_layout(
     din: int,
     dout: int,
 ) -> tuple[int, ...]:
+    """校验模型执行布局中的 `y_in_idx` 契约。"""
     return validate_feature_indices(
         y_in_idx,
         upper_bound=int(din),
@@ -75,6 +77,7 @@ def validate_execution_layout(
 
 
 def build_execution_layout_metadata(y_in_idx: Sequence[int] | Iterable[int]) -> dict[str, object]:
+    """生成写入 `metrics.yaml` 的最小执行布局 metadata。"""
     return {
         "source": "cfg_model.y_in_idx",
         "y_in_idx": [int(i) for i in y_in_idx],
@@ -82,6 +85,7 @@ def build_execution_layout_metadata(y_in_idx: Sequence[int] | Iterable[int]) -> 
 
 
 def extract_y0_from_x_last(x: torch.Tensor, y_in_idx: Sequence[int] | Iterable[int]) -> torch.Tensor:
+    """从输入序列最后一个历史时刻提取 rollout 所需的 `y0`。"""
     if x.ndim != 3:
         raise ValueError(f"x must be 3D tensor (B,L,Din), got shape={tuple(x.shape)}")
     idx_tuple = validate_feature_indices(

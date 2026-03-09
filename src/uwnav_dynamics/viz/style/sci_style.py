@@ -40,12 +40,14 @@ from cycler import cycler
 
 @dataclass(frozen=True)
 class FigurePreset:
+    """基础画布宽高配置。"""
     width: float
     height: float
 
 
 @dataclass(frozen=True)
 class SeriesStyle:
+    """单条曲线的颜色、线型和层级样式。"""
     color: str
     linestyle: str = "-"
     linewidth: float = 1.2
@@ -55,6 +57,7 @@ class SeriesStyle:
 
 @dataclass(frozen=True)
 class MplGlobalStyle:
+    """全局 matplotlib 风格 token 集合。"""
     preset: str
     font_family: str
     font_serif: Tuple[str, ...]
@@ -77,6 +80,7 @@ class MplGlobalStyle:
     sensor_4x2_size: Tuple[float, float]
     compare_3row_size: Tuple[float, float]
     rollout_3row_size: Tuple[float, float]
+    component_3x3_size: Tuple[float, float]
     prop_cycle: Tuple[str, ...]
     legend_frameon: bool
     legend_borderaxespad: float
@@ -106,6 +110,7 @@ _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
         sensor_4x2_size=(6.2, 5.2),
         compare_3row_size=(5.8, 4.8),
         rollout_3row_size=(5.0, 4.0),
+        component_3x3_size=(6.5, 5.4),
         prop_cycle=(
             "#4C78A8",
             "#54A24B",
@@ -140,6 +145,7 @@ _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
         sensor_4x2_size=(7.6, 6.4),
         compare_3row_size=(7.0, 5.9),
         rollout_3row_size=(6.5, 5.0),
+        component_3x3_size=(8.0, 6.6),
         prop_cycle=(
             "#4C78A8",
             "#54A24B",
@@ -179,12 +185,14 @@ _MODEL_ROLE_SERIES: Dict[str, SeriesStyle] = {
 
 
 def get_style(preset: str = "paper") -> MplGlobalStyle:
+    """按 preset 名称返回全局绘图风格对象。"""
     if preset not in _STYLE_PRESETS:
         raise KeyError(f"Unknown plot preset: {preset!r}")
     return _STYLE_PRESETS[preset]
 
 
 def get_figure_size(kind: str, preset: str = "paper") -> Tuple[float, float]:
+    """根据图类型和 preset 获取标准画布尺寸。"""
     style = get_style(preset)
     mapping = {
         "single": style.single_size,
@@ -194,6 +202,7 @@ def get_figure_size(kind: str, preset: str = "paper") -> Tuple[float, float]:
         "sensor_4x2": style.sensor_4x2_size,
         "compare_3row": style.compare_3row_size,
         "rollout_3row": style.rollout_3row_size,
+        "component_3x3": style.component_3x3_size,
     }
     if kind not in mapping:
         raise KeyError(f"Unknown figure kind: {kind!r}")
@@ -201,18 +210,22 @@ def get_figure_size(kind: str, preset: str = "paper") -> Tuple[float, float]:
 
 
 def get_xyz_styles() -> Dict[str, SeriesStyle]:
+    """返回 X/Y/Z 三轴的稳定视觉编码。"""
     return dict(_XYZ_SERIES)
 
 
 def get_group_styles() -> Dict[str, SeriesStyle]:
+    """返回 Acc/Gyro/Vel 三组的稳定视觉编码。"""
     return dict(_GROUP_SERIES)
 
 
 def get_observed_pred_styles() -> Dict[str, SeriesStyle]:
+    """返回监督目标与预测曲线的默认样式。"""
     return dict(_OBSERVED_PRED_SERIES)
 
 
 def infer_model_role(label: str, explicit_role: Optional[str] = None) -> str:
+    """根据标签文本或显式提示推断模型角色。"""
     if explicit_role is not None:
         role = explicit_role.lower()
         if role not in _MODEL_ROLE_SERIES:
@@ -228,6 +241,7 @@ def infer_model_role(label: str, explicit_role: Optional[str] = None) -> str:
 
 
 def get_model_role_style(role: str) -> SeriesStyle:
+    """返回 primary/baseline/ablation 对应的曲线样式。"""
     role_key = role.lower()
     if role_key not in _MODEL_ROLE_SERIES:
         raise KeyError(f"Unknown model role: {role!r}")
@@ -235,6 +249,7 @@ def get_model_role_style(role: str) -> SeriesStyle:
 
 
 def setup_mpl(style: Optional[MplGlobalStyle] = None) -> None:
+    """把仓库统一科研绘图风格写入 matplotlib 全局配置。"""
     style = style or get_style("paper")
     plt.rcParams.update(
         {
@@ -268,6 +283,7 @@ def setup_mpl(style: Optional[MplGlobalStyle] = None) -> None:
 
 
 def apply_axes_style(ax: plt.Axes, *, grid: Optional[bool] = None, grid_alpha: Optional[float] = None) -> None:
+    """对单个坐标轴应用统一边框、刻度和网格风格。"""
     style = get_style("paper")
     use_grid = style.grid if grid is None else grid
     ax.set_facecolor("white")
@@ -279,6 +295,7 @@ def apply_axes_style(ax: plt.Axes, *, grid: Optional[bool] = None, grid_alpha: O
 
 
 def apply_shared_xlabels(axes: Sequence[plt.Axes], xlabel: str) -> None:
+    """为共享 x 轴的一组坐标轴设置底部公共 x 标签。"""
     if len(axes) == 0:
         return
     for ax in axes[:-1]:
@@ -288,6 +305,7 @@ def apply_shared_xlabels(axes: Sequence[plt.Axes], xlabel: str) -> None:
 
 
 def apply_minimal_legend(legend: Optional[plt.Legend]) -> None:
+    """把图例收敛到仓库统一的极简样式。"""
     if legend is None:
         return
     frame = legend.get_frame()
@@ -298,6 +316,7 @@ def apply_minimal_legend(legend: Optional[plt.Legend]) -> None:
 
 
 def save_figure(fig: plt.Figure, out_stem: Path, fmt: str = "png") -> None:
+    """按约定格式导出图片文件。"""
     stem = Path(out_stem)
     if fmt in ("png", "both"):
         fig.savefig(stem.with_suffix(".png"))
@@ -307,6 +326,7 @@ def save_figure(fig: plt.Figure, out_stem: Path, fmt: str = "png") -> None:
 
 @dataclass(frozen=True)
 class TrajStyle:
+    """二维轨迹线与起终点的样式配置。"""
     traj_lw: float = 1.0
     traj_alpha: float = 0.95
     start_marker: str = "o"
@@ -324,6 +344,7 @@ _TRAJ = TrajStyle()
 
 
 def apply_axes_2d(ax: plt.Axes) -> None:
+    """对二维轨迹图坐标轴应用统一样式。"""
     apply_axes_style(ax, grid=False)
 
 
@@ -339,6 +360,7 @@ def plot_start_end(
     label_start: Optional[str] = "Start",
     label_end: Optional[str] = "End",
 ) -> None:
+    """在二维轨迹图上标注起点与终点。"""
     ax.scatter(
         [x0],
         [y0],
@@ -374,9 +396,11 @@ def plot_traj_line(
     label: Optional[str] = None,
     ts: TrajStyle = _TRAJ,
 ) -> None:
+    """绘制一条二维轨迹折线。"""
     ax.plot(x, y, color=color, linewidth=ts.traj_lw, alpha=ts.traj_alpha, label=label, zorder=2)
 
 
 def get_figsize_two_panels(style: Optional[MplGlobalStyle] = None) -> Tuple[float, float]:
+    """返回两面板布局常用的标准画布尺寸。"""
     active = style or get_style("paper")
     return active.wide_size

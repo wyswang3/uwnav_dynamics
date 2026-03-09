@@ -1,4 +1,16 @@
-# src/uwnav_dynamics/dataset/dataset_spec.py
+"""
+模块名称：数据集规范解析
+
+模块职责：
+负责把 `configs/dataset/*.yaml` 解析为强类型数据集规范对象，
+统一管理数据根目录、传感器选择和时间基映射等配置语义。
+
+主要功能：
+1. 解析 dataset yaml 为 `DatasetSpec`。
+2. 解析各传感器的文件选择、有效时间窗和 PWM 时间基映射。
+3. 为 reader 与预处理管线提供稳定的路径和参数入口。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
@@ -42,6 +54,7 @@ class ValidWindowSpec:
 
 @dataclass(frozen=True)
 class DatasetMeta:
+    """数据集标识、根目录和原始数据目录等元信息。"""
     name: str
     dataset_id: str
     data_root: str = ""   # yaml value; may be empty
@@ -91,6 +104,7 @@ class DatasetSpec:
     # -------------------------
     @staticmethod
     def load(yaml_path: str | Path) -> "DatasetSpec":
+        """从 dataset yaml 构造强类型配置对象。"""
         yaml_path = Path(yaml_path).expanduser().resolve()
         if not yaml_path.exists():
             raise FileNotFoundError(f"Dataset yaml not found: {yaml_path}")
@@ -338,5 +352,3 @@ class DatasetSpec:
             "csv_path": Path(p),
             "kind": kind,
         }
-
-

@@ -1,3 +1,16 @@
+"""
+模块名称：不确定度输出头
+
+模块职责：
+为主预测输出补充对角异方差 `logvar`，
+支撑基于高斯 NLL 的异方差训练与后续不确定度可视化扩展。
+
+主要功能：
+1. 定义 `UncertaintyHeadConfig` 配置。
+2. 从特征向量预测 `(H, y_dim)` 形状的 `logvar`。
+3. 在禁用时退化为固定噪声水平，保持主路径兼容。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
@@ -36,6 +49,7 @@ class UncertaintyHeadConfig:
 
 
 class UncertaintyHead(nn.Module):
+    """从特征向量预测每个未来步长的对角 `logvar`。"""
     def __init__(self, cfg: UncertaintyHeadConfig):
         super().__init__()
         self.cfg = cfg

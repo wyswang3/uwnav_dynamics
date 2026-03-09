@@ -1,60 +1,32 @@
-# src/uwnav_dynamics/preprocess/dvl/quality.py
+"""
+模块名称：DVL 质量整理与分类
+
+模块职责：
+负责将原始 DVL 记录按来源语义拆分为体速度、ENU 速度和深度三类数据，
+并统一字段命名，便于后续预处理、数据集构建和系统辨识分析。
+
+主要功能：
+1. 识别并保留 BI/BS/BE/BD 等与建模相关的记录来源。
+2. 将原始速度、深度和时间字段整理为统一列集合。
+3. 提供基础去尖刺和质量统计，为上层 DVL 管线提供诊断信息。
+
+数据流：
+原始 DVL CSV
+    -> 来源分类与时间列选择
+    -> 速度/深度列映射与冗余列裁剪
+    -> 质量诊断与清洗后 DataFrame
+    -> `preprocess.dvl.pipeline`
+
+依赖模块：
+1. `numpy`
+2. `pandas`
+3. `dataclasses`
+
+备注：
+本模块聚焦语义整理与轻量清洗，不在这里引入强假设的物理门控规则。
+"""
+
 from __future__ import annotations
-
-"""
-uwnav_dynamics.preprocess.dvl.quality
-
-DVL 质量整理 / 分类模块（BI/BS/BE/BD 拆分 + 列裁剪）。
-
-目标场景：
-  - 为“水下动力学建模 / 神经网络系统辨识”提供干净的一致数据；
-  - 明确区分：
-      * BI / BS: 体坐标系下速度 v_body (m/s)
-      * BE     : 全局 ENU 坐标系下速度 v_enu (m/s)
-      * BD     : 深度测量 Depth(m)
-  - 删除对建模价值不大的冗余列（De_enu, E, N, U, Valid* 等）。
-
-输入原始 CSV 示例列（来自采集程序）：
-  - 时间戳:
-      MonoNS, EstNS, MonoS, EstS
-  - 标识:
-      SensorID, Src
-  - 速度:
-      Vx_body(m_s), Vy_body(m_s), Vz_body(m_s)
-      Ve_enu(m_s),  Vn_enu(m_s), Vu_enu(m_s)
-  - 位置 / 深度:
-      De_enu(m), Dn_enu(m), Du_enu(m)
-      Depth(m), E(m), N(m), U(m)
-  - 其他:
-      Valid, ValidFlag, IsWaterMass
-
-Src 典型取值：
-  - "BI" : Bottom-track, body frame velocity    -> v_body
-  - "BS" : 也是体坐标速度（状态/辅助），可归入体速度组   -> v_body
-  - "BE" : ENU 坐标系下速度，仅平面速度可靠，垂向可参考 -> v_enu
-  - "BD" : Depth-only 测量，深度在 Depth(m)
-
-本模块输出的「清洗结果 CSV」包含：
-  - 时间：
-      MonoNS, EstNS, MonoS, EstS（若存在则保留）
-      t_s           : 选定的“主时间轴”（优先 EstS, 次之 MonoS, 再 NS）
-  - 源标记：
-      Src           : 原始 Src 字段（BI/BS/BE/BD/TS/SA 等）
-  - 体速度（FRD）：
-      VelX_body_mps, VelY_body_mps, VelZ_body_mps
-        * 对 BI/BS 行：来自 Vx_body(m_s)/Vy_body(m_s)/Vz_body(m_s)
-        * 对 BE/BD/其他行：设为 NaN
-  - ENU 速度：
-      VelE_enu_mps, VelN_enu_mps, VelU_enu_mps
-        * 对 BE 行：来自 Ve_enu(m_s)/Vn_enu(m_s)/Vu_enu(m_s)
-        * 对 BI/BS/BD/其他行：设为 NaN
-  - 深度：
-      Depth_m       : 对 BD 行来自 Depth(m)，其他行 NaN
-
-注意：
-  - 本模块不做数值门控（threshold gating），仅做“分类 + 列裁剪 + 语义统一”；
-  - 后续若需要根据速度大小 / ValidFlag / 底追状态做门控，可以在此模块基础上扩展。
-"""
 
 from dataclasses import dataclass
 from pathlib import Path

@@ -135,6 +135,7 @@ def build_loss_fn(
 
 
 def main() -> int:
+    """命令行训练入口，解析配置、执行训练并落盘产物。"""
     ap = argparse.ArgumentParser("uwnav_dynamics.train.run_train")
     ap.add_argument("-y", "--yaml", type=str, required=True, help="configs/train/*.yaml")
 

@@ -1,3 +1,11 @@
+"""
+模块名称：训练运行时辅助测试
+
+模块职责：
+验证训练运行时 override、设备协调与 `resolved_train.yaml` 落盘逻辑稳定，
+保证 CLI 覆盖项不会破坏 canonical config 契约。
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -48,6 +48,7 @@ def _run(cmd: list[str]) -> None:
 
 
 def main() -> int:
+    """训练后评估与绘图联动的命令行入口。"""
     ap = argparse.ArgumentParser("uwnav_dynamics.cli.pipeline")
     ap.add_argument("-y", "--yaml", type=str, required=True, help="train yaml")
     ap.add_argument("--device", type=str, default=None, help="override training device")

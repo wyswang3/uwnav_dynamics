@@ -1,0 +1,120 @@
+base_train_yaml: configs/train/pooltest02_s1_lstm_v0.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_s1_8gpu
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 1024
+  plots: false
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_s1_8gpu
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1
+    batch_size: 512
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: b0_seed0
+    label: B0 baseline seed0
+    role: baseline
+    overrides:
+      run:
+        seed: 0
+        variant: B0_baseline_seed0
+
+  - name: b0_seed1
+    label: B0 baseline seed1
+    role: baseline
+    overrides:
+      run:
+        seed: 1
+        variant: B0_baseline_seed1
+
+  - name: b0_big512
+    label: B0 hidden512
+    role: ablation
+    overrides:
+      run:
+        seed: 0
+        variant: B0_hidden512_seed0
+      model:
+        rnn_hidden: 512
+
+  - name: b0_deep512x3
+    label: B0 512x3
+    role: ablation
+    overrides:
+      run:
+        seed: 0
+        variant: B0_hidden512_layers3_seed0
+      model:
+        rnn_hidden: 512
+        rnn_layers: 3
+        dropout: 0.1
+
+  - name: b1_thruster
+    label: B1 thruster
+    role: ablation
+    overrides:
+      run:
+        seed: 0
+        variant: B1_thruster_seed0
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+
+  - name: b2_hydro
+    label: B2 hydro
+    role: ablation
+    overrides:
+      run:
+        seed: 0
+        variant: B2_hydro_seed0
+      model:
+        blocks:
+          hydro_ssm:
+            enabled: true
+
+  - name: u1_uncertainty
+    label: U1 uncertainty
+    role: primary
+    overrides:
+      run:
+        seed: 0
+        variant: U1_uncertainty_seed0
+      model:
+        blocks:
+          uncertainty:
+            enabled: true
+
+  - name: b4_thruster_hydro
+    label: B4 thruster+hydro
+    role: primary
+    overrides:
+      run:
+        seed: 0
+        variant: B4_thruster_hydro_seed0
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true

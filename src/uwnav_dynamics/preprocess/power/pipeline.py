@@ -1,3 +1,32 @@
+"""
+模块名称：功率辅助数据预处理
+
+模块职责：
+从数据集选择配置中读取电压/功率相关原始文件，
+整理出统一时间轴下的 8 路电机功率辅助表，供训练与分析阶段复用。
+
+主要功能：
+1. 按 `DatasetSpec` 解析电压/功率传感器输入。
+2. 保留原始时间戳并生成统一的 `t_s` 时间列。
+3. 将 8 路功率写成标准 CSV，供后续数据集构建使用。
+
+数据流：
+`DatasetSpec` 中的 volt 选择
+    -> `power_reader` 解析原始功率数据
+    -> 统一时间列与 8 路功率表
+    -> `aux_power/*.csv`
+    -> dataset build / analysis
+
+依赖模块：
+1. `uwnav_dynamics.io.readers.power_reader`
+2. `uwnav_dynamics.io.dataset_spec`
+3. `numpy`
+4. `pandas`
+
+备注：
+当前流程只做轻量整理，不引入额外重采样或滤波逻辑。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
@@ -27,14 +56,7 @@ def build_aux_power_from_dataset(
     cfg: Optional[PowerPreprocessConfig] = None,
 ) -> Path:
     """
-    从 DatasetSpec 中的 volt 选择，生成 8 电机功率辅助数据 CSV：
-
-      out/<cfg.out_root>/aux_power/<stem>_power8.csv
-
-    列包括：
-      - MonoNS, EstNS, MonoS, EstS （如果存在）
-      - t_s
-      - P0_W ... P7_W
+    依据数据集配置生成统一格式的 8 路电机功率辅助 CSV。
     """
     if cfg is None:
         cfg = PowerPreprocessConfig()

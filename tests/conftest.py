@@ -1,3 +1,11 @@
+"""
+模块名称：pytest 会话公共配置
+
+模块职责：
+为测试会话补充 `src` 导入路径，
+确保仓库在未安装为 site-packages 时也能直接运行 pytest。
+"""
+
 from __future__ import annotations
 
 import sys

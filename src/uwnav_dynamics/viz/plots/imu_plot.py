@@ -56,6 +56,7 @@ from uwnav_dynamics.viz.style.sci_style import apply_axes_style, get_figure_size
 
 @dataclass(frozen=True)
 class ImuPlotPaths:
+    """IMU 原始图产物的标准路径集合。"""
     run_dir: Path
     plots_dir: Path
     imu_raw_9axis_png: Path
@@ -82,6 +83,7 @@ def save_imu_raw_9axis(
     layout: Imu3RowLayout = Imu3RowLayout(),
     use_rel_time: bool = False,
 ) -> Path:
+    """保存原始 IMU 9 轴三行图。"""
     setup_mpl()
     paths = _resolve_out_dirs(imu, out_root)
 
@@ -114,6 +116,7 @@ def save_imu_dt(
     out_root: str | Path = "out/imu_plots",
     use_rel_time: bool = True,
 ) -> Path:
+    """保存 IMU 采样间隔 `dt` 诊断图。"""
     setup_mpl()
     paths = _resolve_out_dirs(imu, out_root)
 
@@ -143,6 +146,7 @@ def save_imu_raw_figures(
     layout: Imu3RowLayout = Imu3RowLayout(),
     use_rel_time: bool = False,
 ) -> Tuple[Path, Path]:
+    """一次性生成原始 IMU 主图和 `dt` 诊断图。"""
     p1 = save_imu_raw_9axis(imu, out_root=out_root, layout=layout, use_rel_time=use_rel_time)
     p2 = save_imu_dt(imu, out_root=out_root, use_rel_time=True)
     return p1, p2
@@ -171,6 +175,7 @@ def save_imu_proc_3rows_from_csv(
     layout: Imu3RowLayout = Imu3RowLayout(),
     use_rel_time: bool = False,
 ) -> Path:
+    """从预处理 IMU CSV 生成三行共享 x 轴波形图。"""
     setup_mpl()
 
     proc_path = Path(proc_csv).expanduser().resolve()

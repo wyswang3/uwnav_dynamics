@@ -15,9 +15,11 @@ train yaml + ckpt/run_dir + CLI runtime args
     ↓
 cli.utils 解析 ckpt / eval_dir / plots_dir
     ↓
-eval.evaluate 写出 metrics.yaml / CSV / pred_samples.npz
+eval.evaluate 写出 metrics.yaml / horizon CSV / component CSV /
+pred_samples.npz / pred_samples_zspace.npz / pred_context.npz
     ↓
-viz.eval.plot_horizon_metrics + viz.eval.plot_rollout_samples
+    viz.eval.plot_horizon_metrics + viz.eval.plot_rollout_samples +
+    viz.eval.plot_pred_vs_observed + viz.eval.plot_component_residuals
     ↓
 plots/*
 
@@ -52,6 +54,7 @@ def _run_stage(stage_name: str, cmd: list[str]) -> int:
 
 
 def main() -> int:
+    """评估与出图的统一命令行入口。"""
     ap = argparse.ArgumentParser("uwnav_dynamics.cli.eval")
     ap.add_argument("-y", "--yaml", type=str, required=True, help="train yaml")
     ap.add_argument("--ckpt", type=str, default=None, help="ckpt path OR run_dir (contains best/last)")
@@ -153,6 +156,44 @@ def main() -> int:
                 sys.executable,
                 "-m",
                 "uwnav_dynamics.viz.eval.plot_rollout_samples",
+                "--eval_dir",
+                str(eval_out_dir),
+                "--out_dir",
+                str(plots_dir),
+                "--n",
+                str(args.n_plot_samples),
+                "--dt",
+                str(args.dt),
+                "--fmt",
+                args.plot_fmt,
+            ],
+        ),
+        (
+            "PLOT_COMPONENT_TRACE",
+            [
+                sys.executable,
+                "-m",
+                "uwnav_dynamics.viz.eval.plot_pred_vs_observed",
+                "--eval_dir",
+                str(eval_out_dir),
+                "--out_dir",
+                str(plots_dir),
+                "--n",
+                str(args.n_plot_samples),
+                "--dt",
+                str(args.dt),
+                "--mode",
+                "component",
+                "--fmt",
+                args.plot_fmt,
+            ],
+        ),
+        (
+            "PLOT_COMPONENT_RESIDUAL",
+            [
+                sys.executable,
+                "-m",
+                "uwnav_dynamics.viz.eval.plot_component_residuals",
                 "--eval_dir",
                 str(eval_out_dir),
                 "--out_dir",

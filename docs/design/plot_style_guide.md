@@ -20,6 +20,7 @@
 
 - 传感器诊断图（IMU / DVL / Power）
 - 单模型评估图（horizon / rollout / pred-vs-observed）
+- 单模型分量审查图（component trace / residual）
 - 多模型比较图（优先支持 horizon compare）
 
 未来若新增控制、轨迹或不确定性图，也应继承同一视觉语言。
@@ -100,6 +101,7 @@
 - `sensor_2row`：DVL raw 两行图
 - `sensor_4x2`：Power 4×2 面板
 - `compare_3row`：多模型 horizon compare
+- `component_3x3`：9 分量逐轴对比或残差图
 
 ## 7. 坐标轴规则
 
@@ -174,9 +176,18 @@
 - 第一版默认读取 `pred_samples.npz`
 - 其中 `observed` 明确指评估阶段的监督目标 `y_true`
 - 它不等同于未经处理的原始传感器输出
-- 默认使用 `group_norm` mode，未来可扩展到 `component` mode
+- 当前正式支持：
+  - `group_norm` mode：3×1 总览图
+  - `component` mode：3×3 分量逐轴图
 
-### 10.5 Model Compare 图
+### 10.5 Component Residual 图
+
+- 读取 `pred_samples.npz` 与可选 `pred_context.npz`
+- 每个输出分量单独绘制 `prediction - target`
+- 若存在 `target_mask`，masked-out 位置应以轻量标记显示
+- 风格上沿用 `X/Y/Z` 稳定配色，不额外引入新调色板
+
+### 10.6 Model Compare 图
 
 - 第一版优先支持 horizon compare
 - `primary / proposed` 必须视觉主导
@@ -185,27 +196,30 @@
 
 ## 11. Export and Naming Policy
 
-推荐支持：
+当前正式评估链路默认只保留图片文件：
 
-- `png`：快速浏览、调试、日志
-- `pdf`：论文与正式汇报
+- `png`：快速浏览、实验审查、结果归档
+
+若未来确需论文排版专用导出，再单独扩展，不应影响当前主产物命名。
 
 命名必须稳定，优先使用以下约定：
 
 - horizon 单模型：
-  - `rmse_horizon_groups.png|pdf`
-  - `mae_horizon_groups.png|pdf`
+  - `rmse_horizon_groups.png`
+  - `mae_horizon_groups.png`
 - horizon 多模型比较：
-  - `rmse_horizon_compare.png|pdf`
-  - `mae_horizon_compare.png|pdf`
+  - `rmse_horizon_compare.png`
+  - `mae_horizon_compare.png`
 - rollout 样例：
-  - `rollout_sample_000.png|pdf`
+  - `rollout_sample_000.png`
 - pred-vs-observed：
-  - `pred_vs_observed_group_norm_000.png|pdf`
-  - 未来若支持 component mode，再使用 `pred_vs_observed_component_000.png|pdf`
+  - `pred_vs_observed_group_norm_000.png`
+  - `pred_vs_observed_component_000.png`
+- component residual：
+  - `residual_component_000.png`
 - 多模型 compare 主图：
-  - `rmse_model_compare_horizon.png|pdf`
-  - `mae_model_compare_horizon.png|pdf`
+  - `rmse_model_compare_horizon.png`
+  - `mae_model_compare_horizon.png`
 
 新增图型不得随意改变已有核心 artifact 名称；若确有必要，必须先更新本规范。
 

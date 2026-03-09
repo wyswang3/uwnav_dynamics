@@ -1,3 +1,30 @@
+"""
+模块名称：IMU 坐标与单位整理
+
+模块职责：
+将原始 IMU 采集数据从设备坐标和原始单位转换到项目统一的 FRD/ENU 约定，
+为后续重力补偿、零偏估计和滤波提供标准化输入。
+
+主要功能：
+1. 完成 RFU 到 FRD 的坐标变换。
+2. 将加速度、角速度和姿态角转换为项目统一物理单位。
+3. 生成规范化时间轴、姿态角与体坐标 IMU 序列。
+
+数据流：
+原始 IMU CSV / 数组
+    -> 时间列选择与姿态角解析
+    -> 坐标系与单位变换
+    -> 统一后的 IMU 序列
+    -> `gravity` / `bias` / `filter`
+
+依赖模块：
+1. `numpy`
+2. `dataclasses`
+
+备注：
+本模块只做确定性变换，不引入滤波、零偏或动力学假设。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
@@ -349,4 +376,3 @@ def transform_raw(
         "yaw_rad": yaw_rad,
         "yaw_source_used": yaw_src,
     }
-

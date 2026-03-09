@@ -1,3 +1,16 @@
+"""
+模块名称：推进器滞后功能块
+
+模块职责：
+把原始 PWM 或 duty 指令变换为包含死区、饱和和一阶滞后的等效推力输入，
+减少主网络在隐状态中“歪学”输入非理想性的负担。
+
+主要功能：
+1. 定义 `ThrusterLagConfig` 配置。
+2. 提供 PWM 归一化、死区和饱和近似。
+3. 通过可学习时间常数实现一阶滞后递推。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
@@ -58,6 +71,7 @@ class ThrusterLagConfig:
 
 
 class ThrusterLag(nn.Module):
+    """将原始推进器指令映射为带滞后的等效输入序列。"""
     def __init__(self, cfg: ThrusterLagConfig, *, n_thrusters: int = 8):
         super().__init__()
         self.cfg = cfg

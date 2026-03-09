@@ -1,44 +1,17 @@
-# src/uwnav_dynamics/io/readers/power_reader.py
+"""
+模块名称：Power 日志读取器
+
+模块职责：
+负责读取 Volt32 等电压电流日志，
+整理为统一的 `PowerFrame`，供辅助功率特征构建和质量审查使用。
+
+主要功能：
+1. 解析 16 通道原始字符串并整理成 8 路电机电流/功率。
+2. 统一时间列并保留原始时间戳列。
+3. 根据当前工程约定生成固定电压和放大后的电流值。
+"""
+
 from __future__ import annotations
-
-"""
-uwnav_dynamics.io.readers.power_reader
-
-电机电压/电流采集板（Volt32 等）日志读取模块。
-
-原始 CSV 示例：
-
-  MonoNS,EstNS,MonoS,EstS,
-  CH0,CH1,CH2,CH3,CH4,CH5,CH6,CH7,CH8,CH9,CH10,CH11,CH12,CH13,CH14,CH15
-  1080042607500,1080042607500,1080.0426075,1080.0426075,1.707V,0.004A,...
-
-约定：
-  - 一共 16 个通道：CH0 ... CH15
-  - 偶数通道（CH0, CH2, ..., CH14）为电压通道（单位 V，字符串末尾带 "V"）
-  - 奇数通道（CH1, CH3, ..., CH15）为电流通道（单位 A，字符串末尾带 "A"）
-  - 每两个通道为一组，对应一个电机：
-      Motor0: (CH0[V], CH1[A])
-      Motor1: (CH2[V], CH3[A])
-      ...
-      Motor7: (CH14[V], CH15[A])
-
-工程处理策略：
-  - 电压：不使用测量值，统一视为 NOMINAL_VOLTAGE_V（默认 12.0 V）；
-  - 电流：把原始字符串去掉 "A" 后转为 float，再乘以 CURRENT_GAIN（默认 40 倍）。
-
-输出：
-  - PowerFrame:
-      path          : Path
-      time_col      : 选用的时间列名（"EstS"/"MonoS"/"EstNS"/"MonoNS"）
-      t_s           : 时间（秒，float，若原始为 *NS 则做 1e-9 换算）
-      time_cols_raw : dict[str, np.ndarray]，保存原始时间戳列（若存在），
-                      键为 "MonoNS"/"EstNS"/"MonoS"/"EstS" 的子集
-      est_ns        : 若存在 EstNS 列，则为 int64 ns 数组，否则 None
-      mono_ns       : 若存在 MonoNS 列，则为 int64 ns 数组，否则 None
-      volt_motors   : (N, 8) float32，单位 V，当前策略全部为 NOMINAL_VOLTAGE_V
-      curr_motors   : (N, 8) float32，单位 A，已经乘以 CURRENT_GAIN
-      power_motors  : (N, 8) float32，单位 W，等于 volt_motors * curr_motors
-"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,12 +92,7 @@ class PowerFrame:
 
 
 def _pick_time_s(df: pd.DataFrame) -> Tuple[np.ndarray, str]:
-    """
-    从 _TIME_CANDIDATES 中选择一个时间列并转换为秒。
-
-    返回：
-      t_s (float64, 秒), time_col 名称
-    """
+    """按统一优先级选择时间列，并输出秒级时间轴。"""
     for c in _TIME_CANDIDATES:
         if c in df.columns:
             col = df[c].to_numpy()
@@ -142,14 +110,7 @@ def _pick_time_s(df: pd.DataFrame) -> Tuple[np.ndarray, str]:
 
 
 def _collect_time_cols_raw(df: pd.DataFrame) -> Dict[str, np.ndarray]:
-    """
-    从 MonoNS/EstNS/MonoS/EstS 中收集存在的列，原样保存。
-
-    Returns
-    -------
-    Dict[str, np.ndarray]
-        key 为列名，value 为 np.ndarray（dtype 由 pandas 推断）。
-    """
+    """收集原始时间戳列，供调试与后续导出复用。"""
     out: Dict[str, np.ndarray] = {}
     for c in ("MonoNS", "EstNS", "MonoS", "EstS"):
         if c in df.columns:
@@ -158,21 +119,7 @@ def _collect_time_cols_raw(df: pd.DataFrame) -> Dict[str, np.ndarray]:
 
 
 def _parse_channel_numeric(series: pd.Series, unit_suffix: str) -> np.ndarray:
-    """
-    将形如 '1.707V' 或 '0.004A' 的字符串转换为 float 数值。
-
-    Parameters
-    ----------
-    series : pd.Series
-        原始列（CHk）。
-    unit_suffix : str
-        末尾单位字符："V" 或 "A"。
-
-    Returns
-    -------
-    np.ndarray
-        float64 数组。解析失败的项为 NaN。
-    """
+    """把带单位后缀的字符串通道解析成浮点数组。"""
     s = series.astype(str).str.strip()
     # 去掉末尾单位（如果没有该字符也不会报错）
     s_num = s.str.replace(unit_suffix, "", regex=False)
@@ -190,21 +137,7 @@ def read_power_csv(
     *,
     kind: str = "motor_data",
 ) -> PowerFrame:
-    """
-    读取电机功率采集 CSV 并解析为 PowerFrame。
-
-    Parameters
-    ----------
-    csv_path : str or Path
-        原始 CSV 路径。
-    kind : str, default "motor_data"
-        预留参数，目前未使用，仅为了与 DatasetSpec.volt_reader_kwargs
-        保持接口一致，方便将来扩展不同格式。
-
-    Returns
-    -------
-    PowerFrame
-    """
+    """读取电压电流日志，并生成 8 路电机功率序列。"""
     path = Path(csv_path).expanduser().resolve()
     if not path.exists():
         raise FileNotFoundError(f"[POWER-READER] csv_path not found: {path}")

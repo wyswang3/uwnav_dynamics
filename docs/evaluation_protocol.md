@@ -44,19 +44,37 @@
 - `rmse_by_horizon.csv`
 - `mae_by_horizon.csv`
 - `pred_samples.npz`
+- `component_metrics.csv`
+- `pred_context.npz`
 
 PR5 第一阶段后，若启用 mask-aware 评估，同一评估目录还应并行产出：
 
 - `rmse_by_horizon_masked.csv`
 - `mae_by_horizon_masked.csv`
+- `component_metrics_masked.csv`
 
-其中前四项是 dense 主产物；
-masked 两项属于 PR5 第一阶段新增的并行数值评估产物。
+为便于调参与数值排障，同一评估目录还应并行保留 z-score 空间辅助产物：
+
+- `rmse_by_horizon_zspace.csv`
+- `mae_by_horizon_zspace.csv`
+- `rmse_by_horizon_masked_zspace.csv`
+- `mae_by_horizon_masked_zspace.csv`
+- `pred_samples_zspace.npz`
+- `component_metrics_zspace.csv`
+- `component_metrics_masked_zspace.csv`
+
+其中：
+
+- `metrics.yaml`、`rmse/mae_by_horizon*.csv`、`pred_samples.npz`、`component_metrics*.csv`
+  的主语义以物理量纲为准。
+- `*_zspace.*` 只作为辅助调参与排障产物，不作为论文和系统辨识主结论依据。
+- `pred_context.npz` 用于给 viz 层补充 `target_mask / sample_index / component metadata`。
+
 这些文件都应由 `src/uwnav_dynamics/eval/evaluate.py` 直接负责生成。
 
 若启用绘图，还应额外保存：
 
-- `plots/*.png` 或 `plots/*.pdf`
+- `plots/*.png`
 
 这些 `plots/*` 属于 CLI / viz orchestration 触发的后处理产物，
 而不是数值评估配置契约的一部分。
@@ -93,12 +111,27 @@ layout:
   - 只记录输出组件标签与 group 解释
   - 供指标聚合与 viz 读盘使用
 
-`pred_samples.npz` 的 schema 在 PR4 中保持不变，
-仍只包含：
+`pred_samples.npz` 与 `pred_samples_zspace.npz` 的样例 schema 保持一致，
+均只包含：
 
 - `y_hat`
 - `y_true`
 - `logvar`
+
+其中：
+
+- `pred_samples.npz`
+  - `y_hat / y_true / logvar` 使用物理量纲
+- `pred_samples_zspace.npz`
+  - `y_hat / y_true / logvar` 使用标准化空间
+
+`pred_context.npz` 最小约定为：
+
+- `target_mask`
+- `sample_index`
+- `component_labels`
+- `component_display_labels`
+- `component_units`
 
 ## 4.3 supervision metadata 与 dense/masked 并存策略
 
@@ -161,11 +194,11 @@ supervision:
 
 除上述两种形状外，其他 `dvl_mask` 形状仍视为非法输入并显式报错。
 
-当前第一阶段保持：
+当前阶段保持：
 
-- `pred_samples.npz` 三键 schema 不变
+- `pred_samples.npz` 与 `pred_samples_zspace.npz` 三键 schema 一致
 - 不新增 `pred_sample_masks.npz`
-- sample-level masked visualization 留到后续 patch 再接入
+- sample-level 有效性信息通过 `pred_context.npz["target_mask"]` 提供给 viz 层
 
 ## 4.2 legacy artifact fallback
 
@@ -194,6 +227,58 @@ viz 层采用统一 fallback 规则：
 - 关键命令行参数
 
 建议把这些内容视为论文附录或科研审查的最小材料包。
+
+### 5.1 主落盘位置
+
+若训练 run 目录为：
+
+`run.out_dir/run.variant/`
+
+则评估与绘图主目录通常为：
+
+- 数值评估：`run.out_dir/run.variant/eval_test/` 或 `eval_val/`
+- 图片输出：`run.out_dir/run.variant/eval_test/plots/`
+
+例如：
+
+```text
+out/ckpts/pooltest02_s1_lstm/B0/
+└── eval_test/
+    ├── metrics.yaml
+    ├── rmse_by_horizon.csv
+    ├── rmse_by_horizon_zspace.csv
+    ├── component_metrics.csv
+    ├── pred_samples.npz
+    ├── pred_samples_zspace.npz
+    ├── pred_context.npz
+    └── plots/
+        ├── rmse_horizon_groups.png
+        ├── mae_horizon_groups.png
+        ├── rollout_sample_000.png
+        ├── pred_vs_observed_component_000.png
+        └── residual_component_000.png
+```
+
+### 5.2 正式命令方式
+
+推荐正式入口：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.eval \
+  -y configs/train/pooltest02_s1_lstm_v0.yaml \
+  --split test \
+  --plots \
+  --plot_fmt png
+```
+
+若只想做数值评估，不出图：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.eval.evaluate \
+  -y configs/train/pooltest02_s1_lstm_v0.yaml \
+  --ckpt out/ckpts/pooltest02_s1_lstm/B0/best.pth \
+  --split test
+```
 
 ## 6. smoke test
 

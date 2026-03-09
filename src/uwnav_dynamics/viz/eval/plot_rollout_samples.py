@@ -63,9 +63,9 @@ _GROUP_DISPLAY_NAMES = {
     "vel": "Vel",
 }
 _GROUP_YLABELS = {
-    "acc": r"||Acc||",
-    "gyro": r"||Gyro||",
-    "vel": r"||Vel||",
+    "acc": r"||Acc|| (m/s^2)",
+    "gyro": r"||Gyro|| (rad/s)",
+    "vel": r"||Vel|| (m/s)",
 }
 
 
@@ -106,6 +106,7 @@ def build_rollout_sample_figure(
     dt_s: float,
     semantic_layout: SemanticOutputLayout | None = None,
 ) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes, plt.Axes]]:
+    """构建单个样本窗口的 rollout 三行图。"""
     setup_mpl()
 
     if y_hat.ndim != 2 or y_true.ndim != 2 or y_hat.shape != y_true.shape:
@@ -169,6 +170,7 @@ def plot_rollout_samples_from_npz(
     n: int = 8,
     fmt: str = "png",
 ) -> None:
+    """从评估样本 artifact 读盘并导出 rollout 样例图。"""
     pred_npz = Path(pred_npz)
     out_dir = Path(out_dir)
     _ensure_dir(out_dir)
@@ -190,6 +192,7 @@ def plot_rollout_samples_from_npz(
 
 
 def main() -> int:
+    """rollout 样例图命令行入口。"""
     ap = argparse.ArgumentParser("uwnav_dynamics.viz.plot_rollout_samples")
     ap.add_argument("--eval_dir", type=str, required=True, help="evaluation dir containing pred_samples.npz")
     ap.add_argument("--out_dir", type=str, default=None)

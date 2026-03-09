@@ -89,6 +89,7 @@ from uwnav_dynamics.train.data import DataConfig
 
 @dataclass(frozen=True)
 class PreparedTrainData:
+    """训练阶段准备好的 DataLoader 与相关统计信息。"""
     train_loader: DataLoader
     val_loader: DataLoader
     test_loader: DataLoader
@@ -162,6 +163,8 @@ def _load_dataset_arrays(data_dir: Path) -> _LoadedDatasetArrays:
     if X.shape[0] != Y.shape[0]:
         raise ValueError(f"X and Y window counts mismatch: {X.shape[0]} vs {Y.shape[0]}")
 
+    # 运行时监督掩码不直接相信历史 artifact 的“列名约定”，
+    # 而是先恢复 semantic layout，再把稀疏 dvl_mask 扩展到 `(N,H,D)`。
     semantic_layout = resolve_semantic_output_layout(dout=Y.shape[-1], target_cols=target_cols)
     target_mask, raw_mask_source = _build_target_mask(
         dvl_mask=dvl_mask,
@@ -312,6 +315,7 @@ def _make_loader(
 
 
 def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainData:
+    """按运行目录契约准备训练/验证/测试数据与 scaler/split artifact。"""
     loaded = _load_dataset_arrays(Path(cfg.data_dir))
     X_all = loaded.X
     Y_all = loaded.Y
@@ -321,6 +325,7 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
         print(f"[DATA] found mask tensors: {loaded.mask_shapes}")
         print(f"[DATA] target_mask source={loaded.raw_mask_source}")
 
+    # split artifact 是 train / eval 共享的真源；已有则复用，没有才创建。
     split_path = run_layout.split_indices_path
     if split_path.exists():
         split_indices = load_split_indices(split_path)
@@ -344,6 +349,7 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
     test_idx = np.asarray(split_indices["test"], dtype=np.int64)
     print(f"[SPLIT] N={n_total} train={train_idx.size} val={val_idx.size} test={test_idx.size}")
 
+    # scaler 只允许在 train split 上拟合，避免把验证/测试统计量泄漏回训练阶段。
     x_scaler_path = run_layout.x_scaler_path
     y_scaler_path = run_layout.y_scaler_path
     if x_scaler_path.exists() and y_scaler_path.exists():
@@ -361,6 +367,8 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
     mask_val = target_mask_all[val_idx]
     mask_test = target_mask_all[test_idx]
 
+    # 先做 split-specific transform，再做最小非有限值兜底；
+    # 这样保留了“scaler 在 z-space 里工作”的语义，也避免 NaN 直接进模型。
     X_train = _sanitize_scaled_inputs(
         transform(X_all[train_idx], x_scaler).astype(np.float32, copy=False),
         split_name="train",
@@ -389,6 +397,7 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
         split_name="test",
     )
 
+    # 三个 loader 的张量结构保持完全一致，差别只在 shuffle 和样本子集。
     train_loader = _make_loader(
         X_train,
         Y_train,

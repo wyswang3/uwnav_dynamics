@@ -1,4 +1,16 @@
-# src/uwnav_dynamics/io/readers/pwm_reader.py
+"""
+模块名称：PWM 日志读取器
+
+模块职责：
+负责读取 PWM 控制日志，并根据时间基锚点映射到统一的 EstS/EstNS 时间系统，
+为训练、对齐和控制分析提供结构化输入。
+
+主要功能：
+1. 读取 PWM 命令与执行值 8 通道数据。
+2. 基于锚点 `ests0_pwm / ts0_pwm` 计算统一时间轴。
+3. 返回含原始 DataFrame 的 `PwmData`，便于调试和后续 join。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -57,33 +69,7 @@ def read_pwm_csv(
     applied_cols: Optional[Sequence[str]] = None,
     add_time_columns: bool = True,
 ) -> PwmData:
-    """
-    Read PWM log CSV and add sensor-time columns (EstS/EstNS).
-
-    Time mapping
-    -----------
-    EstS = ests0_pwm + (t_s - ts0_pwm)
-
-    Parameters
-    ----------
-    csv_path : str | Path
-        PWM csv path.
-    ests0_pwm : float
-        PWM timebase anchor in sensor EstS system.
-    ts0_pwm : float, default 0.0
-        The t_s value that corresponds to ests0_pwm (usually first t_s).
-    timebase_method : str, default "none"
-        Reserved for future use (e.g. "filename_offset_to_imu_ests0").
-        Currently not used in math; only stored for traceability.
-    cmd_cols / applied_cols : optional
-        Column names for command/applied channels. Defaults to ch1..ch8.
-    add_time_columns : bool, default True
-        If True, add 'EstS' and 'EstNS' columns into returned df.
-
-    Returns
-    -------
-    PwmData
-    """
+    """读取 PWM 日志，并按给定时间基锚点补齐 `EstS/EstNS` 时间列。"""
     csv_path = Path(csv_path).expanduser().resolve()
     if not csv_path.exists():
         raise FileNotFoundError(f"PWM csv not found: {csv_path}")

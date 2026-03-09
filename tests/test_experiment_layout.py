@@ -1,3 +1,11 @@
+"""
+模块名称：实验目录布局测试
+
+模块职责：
+验证 train yaml 到 `RunLayout` 的路径推导契约稳定，
+避免 CLI、训练与评估阶段对 run 目录的解释发生漂移。
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

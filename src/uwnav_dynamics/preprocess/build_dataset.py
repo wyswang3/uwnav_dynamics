@@ -1,4 +1,3 @@
-# src/uwnav_dynamics/preprocess/build_dataset.py
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
@@ -58,12 +57,14 @@ from uwnav_dynamics.preprocess.sliding_window import (
 
 @dataclass
 class DatasetOutputConfig:
+    """数据集构建输出目录与标准化策略配置。"""
     dir: Path
     normalize: str  # "standard" | "none"
 
 
 @dataclass
 class DatasetConfig:
+    """训练数据集构建所需的完整配置。"""
     name: str
     base_csv: Path
     time_col: str
@@ -122,6 +123,7 @@ def _build_mask_windows_from_idx0(
 # YAML 解析
 # ---------------------------------------------------------------------
 def load_dataset_config(yaml_path: Path) -> DatasetConfig:
+    """从 dataset YAML 读取并构造数据集构建配置。"""
     yaml_path = yaml_path.expanduser().resolve()
     with open(yaml_path, "r", encoding="utf-8") as f:
         cfg_raw = yaml.safe_load(f)
@@ -216,6 +218,7 @@ def _add_state_velocity_cols(df: pd.DataFrame) -> pd.DataFrame:
 # 主流程
 # ---------------------------------------------------------------------
 def build_dataset_from_config(cfg: DatasetConfig) -> None:
+    """按配置从 `train_base.csv` 构建训练所需的滑窗数据集 artifact。"""
     print(f"[BUILD] Dataset name : {cfg.name}")
     print(f"[BUILD] Base CSV     : {cfg.base_csv}")
     print(f"[BUILD] Time column  : {cfg.time_col}")
@@ -232,6 +235,7 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
     if df.empty:
         raise RuntimeError(f"Base CSV is empty: {cfg.base_csv}")
     df = _add_state_velocity_cols(df)
+    # 滑窗前先做 fail-fast QA；一旦 dense target 或时间轴异常，直接阻断数据集构建。
     qa_report = run_train_base_qa(
         df,
         stage="base_csv",
@@ -253,7 +257,8 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
 
     print(f"[BUILD] X shape = {X_raw.shape}, Y shape = {Y_raw.shape}")
 
-    # 3) 仅保存原始窗口数据（无全量标准化，避免数据泄漏）
+    # 只写原始窗口，不在这里做全量标准化；
+    # 真正的 scaler 必须等 train split 确定后再拟合，避免数据泄漏。
     if cfg.output.normalize != "none":
         print(
             "[BUILD] NOTE: output.normalize is ignored here; "
@@ -262,7 +267,7 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
     X = X_raw
     Y = Y_raw
 
-    # 3.1) 生成 mask 窗口（用于下游 mask-aware 训练/评估）
+    # mask 也必须按滑窗起点 `idx0` 对齐切片，这样 train/eval 才能和 `Y` 同步消费。
     dvl_mask_1d = _resolve_mask_series(
         df,
         candidates=("dvl_mask", "has_dvl", "has_dvl_bi", "has_dvl_bi_mask"),
@@ -286,7 +291,7 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
         pred_len=int(cfg.sliding_cfg.pred_len),
     )
 
-    # 4) 写出 features / labels / meta
+    # features / labels 放数组大件，meta.yaml 只放可读性更强的索引与摘要信息。
     feat_path = cfg.output.dir / "features.npz"
     label_path = cfg.output.dir / "labels.npz"
     meta_path = cfg.output.dir / "meta.yaml"
@@ -365,6 +370,7 @@ def __call_sliding(
 # CLI
 # ---------------------------------------------------------------------
 def main() -> int:
+    """训练数据集构建命令行入口。"""
     parser = argparse.ArgumentParser(
         description="Build training dataset (sliding window) from aligned base CSV."
     )

@@ -58,6 +58,7 @@ def gaussian_nll_diag_masked(
     logvar: torch.Tensor,
     target_mask: torch.Tensor,
 ) -> torch.Tensor:
+    """计算带 `target_mask` 的对角高斯负对数似然。"""
     if target_mask.shape != y_hat.shape:
         raise ValueError(f"target_mask shape mismatch: expect {y_hat.shape}, got {target_mask.shape}")
 

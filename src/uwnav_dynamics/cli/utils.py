@@ -1,4 +1,3 @@
-# src/uwnav_dynamics/cli/utils.py
 """
 模块名称：CLI 路径与 checkpoint 解析工具
 

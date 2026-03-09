@@ -1,3 +1,16 @@
+"""
+模块名称：阻尼一致性输出头
+
+模块职责：
+提供显式速度阻尼先验，把耗散项作为可学习增量注入预测结果，
+提升多步 rollout 的稳定性与物理一致性。
+
+主要功能：
+1. 定义阻尼头配置 `DampingHeadConfig`。
+2. 支持 simple 和 mlp 两种阻尼系数建模方式。
+3. 输出仅作用于速度维度的阻尼增量张量。
+"""
+
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
@@ -47,6 +60,7 @@ class DampingHeadConfig:
 
 
 class DampingHead(nn.Module):
+    """根据当前速度状态生成阻尼增量的输出头。"""
     def __init__(self, cfg: DampingHeadConfig):
         super().__init__()
         self.cfg = cfg

@@ -1,32 +1,32 @@
-# src/uwnav_dynamics/preprocess/sliding_window.py
+"""
+模块名称：滑动窗口数据集构造
+
+模块职责：
+把已经对齐好的基础时序表切分成监督学习窗口，
+输出训练所需的历史输入张量、未来目标张量以及窗口索引信息。
+
+主要功能：
+1. 根据历史长度、预测长度和步长生成窗口起点。
+2. 从基础表中切片构造 `X/Y` 张量与时间索引。
+3. 按有效率阈值过滤包含过多无效观测的窗口。
+
+数据流：
+对齐后的 train base 表
+    -> 窗口起点生成
+    -> 历史输入/未来目标切片
+    -> `SlidingWindowResult`
+    -> dataset build / training
+
+依赖模块：
+1. `numpy`
+2. `pandas`
+3. `dataclasses`
+
+备注：
+本模块不关心字段物理含义，只负责时间维度切片与窗口合法性控制。
+"""
+
 from __future__ import annotations
-
-"""
-滑动窗口数据集构造器（通用版）
-
-核心场景（配合 100 Hz 控制频率）：
-  - 已有一张按时间排序、对齐到「主时间轴」的训练基础表 train_base：
-        t_s,  PWM（控制量）, IMU / DVL（观测量）, 其他辅助量 ...
-  - 希望构造监督学习样本，用于「控制导向」的动力学建模：
-
-        X: (N_win, L, D_in)   # 历史窗口，通常包含：
-                              #   - 过去 L 步的控制输入（PWM 等）
-                              #   - 过去 L 步的观测（IMU a/ω, DVL v 等）
-        Y: (N_win, H, D_out)  # 预测窗口，通常是：
-                              #   - 未来 H 步的观测量（例如 a, v, ω）
-
-  典型用法（概念上）：
-    - input_cols  = control_cols + obs_cols
-    - target_cols = future_obs_cols （同一个表里的列，只是时间上平移 H 步）
-
-  其中：
-    - hist_len L  : 历史长度（例如 100 → 1s）
-    - pred_len H  : 预测长度（例如 50 → 0.5s）
-    - stride      : 窗口滑动步长（通常为 1）
-
-  可选：
-    - valid_mask_col : 用于剔除包含大量无效样本的窗口（例如 DVL 掉测）。
-"""
 
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Dict, Any

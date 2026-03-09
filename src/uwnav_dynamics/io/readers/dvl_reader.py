@@ -1,4 +1,16 @@
-# src/uwnav_dynamics/io/readers/dvl_reader.py
+"""
+模块名称：DVL 日志读取器
+
+模块职责：
+负责把 DVL CSV 日志读取成统一的 `DvlFrame` 结构，
+为后续质量整理、对齐和导航建模提供稳定输入。
+
+主要功能：
+1. 解析 DVL 时间列并统一为秒级时间轴。
+2. 读取体速度、ENU 速度、位置和深度等字段。
+3. 按 Src 类型提供布尔掩码和子视图，便于下游消费 BI/BE/BD 数据。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

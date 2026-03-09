@@ -1,11 +1,34 @@
+"""
+模块名称：数据集划分工具
+
+模块职责：
+负责生成并持久化滑窗样本的 train/val/test 划分索引，
+保证训练与评估共享完全一致的样本边界。
+
+主要功能：
+1. 规范化 `train/val/test` ratio 输入。
+2. 生成当前仓库默认的连续时间划分索引。
+3. 读写 `split_indices.npz`，供 train/eval 共用。
+
+数据流：
+window count + split ratios
+    ↓
+make_split_indices()
+    ↓
+split_indices.npz
+    ↓
+train / eval 读取同一份索引 artifact
+
+依赖模块：
+- numpy
+- pathlib
+
+备注：
+- 当前 canonical 策略是 `contiguous_v1`，不是随机打乱划分。
+- `seed` 只为兼容旧接口保留，在连续划分语义下不影响结果。
+"""
+
 from __future__ import annotations
-
-"""
-Deterministic dataset split helpers.
-
-These utilities persist the exact train/val/test window indices so training and
-evaluation can share the same subset boundaries without recomputing them.
-"""
 
 from pathlib import Path
 from typing import Dict, Mapping, Sequence
@@ -19,7 +42,7 @@ DEFAULT_SPLIT_STRATEGY = "contiguous_v1"
 
 
 def _parse_ratios(ratios: Mapping[str, float] | Sequence[float]) -> tuple[float, float, float]:
-    """Normalize mapping/sequence ratio inputs to an explicit train/val/test triple."""
+    """把 mapping 或 sequence 形式的比例输入规范成显式 train/val/test 三元组。"""
     if isinstance(ratios, Mapping):
         tr = float(ratios.get("train", 0.0))
         va = float(ratios.get("val", 0.0))
@@ -48,21 +71,12 @@ def make_split_indices(
     ratios: Mapping[str, float] | Sequence[float],
 ) -> SplitIndices:
     """
-    Build deterministic contiguous train/val/test splits on window indices.
+    在窗口索引轴上构造确定性的连续 train/val/test 划分。
 
-    Design note:
-      - For sliding-window datasets, random permutation is not equivalent to
-        "no leakage" because neighboring windows may still share most of their
-        time support.
-      - The current canonical experiment contract therefore uses a contiguous
-        split on the time-ordered window index axis.
-      - `seed` is kept only for API compatibility with older callers; in the
-        contiguous strategy it does not affect the result.
-
-    Split sizes follow floor strategy:
-      n_train = int(n * train_ratio)
-      n_val   = int(n * val_ratio)
-      n_test  = n - n_train - n_val
+    设计原因：
+    - 对滑窗任务而言，随机打散并不天然等于“无泄漏”，因为相邻窗口仍可能高度重叠。
+    - 当前实验契约因此固定采用时间顺序连续切分。
+    - `seed` 仅为兼容旧调用方保留，在该策略下不会改变结果。
     """
     n = int(n)
     if n <= 0:
@@ -95,13 +109,7 @@ def make_split_indices(
 
 
 def save_split_indices(path: str | Path, indices: SplitIndices) -> Path:
-    """
-    Persist split indices as a compact `.npz` artifact under the run directory.
-
-    Besides the raw index arrays, we also write a minimal strategy marker so
-    future code can distinguish current contiguous semantics from older files
-    that may have been produced before the strategy was recorded explicitly.
-    """
+    """把 split 索引与最小策略标记一起写成紧凑的 `.npz` artifact。"""
     p = Path(path).expanduser().resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -115,13 +123,7 @@ def save_split_indices(path: str | Path, indices: SplitIndices) -> Path:
 
 
 def load_split_indices(path: str | Path) -> SplitIndices:
-    """
-    Load previously persisted split indices for exact train/eval reuse.
-
-    Legacy artifacts may not carry `split_strategy` metadata. We keep them
-    loadable for compatibility, but warn so users know the file may predate the
-    current contiguous split contract.
-    """
+    """读取既有 split artifact，并对缺失或不一致的策略元信息给出兼容告警。"""
     p = Path(path).expanduser().resolve()
     if not p.exists():
         raise FileNotFoundError(f"split indices not found: {p}")

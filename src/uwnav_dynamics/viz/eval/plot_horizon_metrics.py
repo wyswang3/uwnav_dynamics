@@ -100,6 +100,7 @@ def _ensure_dir(p: Path) -> None:
 
 @dataclass(frozen=True)
 class HorizonPlotCfg:
+    """horizon 指标图的时间轴、指标类型和导出格式配置。"""
     dt_s: float = 0.01
     use_seconds: bool = True
     metric: str = "rmse"   # "rmse" | "mae"
@@ -151,6 +152,7 @@ def build_groups_vs_horizon_figure(
     cfg: HorizonPlotCfg,
     artifact_variant: str = "dense",
 ) -> Tuple[plt.Figure, plt.Axes]:
+    """构建按组聚合的 horizon 指标曲线图。"""
     setup_mpl()
 
     hd0, _, semantic_layout0 = _metric_from_dir(eval_dirs[0], cfg.metric, artifact_variant=artifact_variant)
@@ -205,6 +207,7 @@ def plot_groups_vs_horizon(
     out_dir: Path,
     cfg: HorizonPlotCfg,
 ) -> None:
+    """从评估目录读盘并导出 horizon 指标图片。"""
     _ensure_dir(out_dir)
     fig, _ = build_groups_vs_horizon_figure(
         eval_dirs=eval_dirs,
@@ -235,6 +238,7 @@ def plot_groups_vs_horizon(
 
 
 def main() -> int:
+    """horizon 指标绘图命令行入口。"""
     ap = argparse.ArgumentParser("uwnav_dynamics.viz.plot_horizon_metrics")
     ap.add_argument("--eval_dir", type=str, nargs="+", required=True,
                     help="One or more evaluation output dirs (containing metrics.yaml, rmse_by_horizon.csv, ...)")
