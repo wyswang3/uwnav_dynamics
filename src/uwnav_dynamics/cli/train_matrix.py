@@ -53,6 +53,13 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from uwnav_dynamics.experiment.layout import RunLayout, load_yaml_dict
+from uwnav_dynamics.experiment.paths import relative_path_str
+from uwnav_dynamics.experiment.reporting import (
+    EVAL_SUMMARY_FIELDS,
+    TRAIN_SUMMARY_FIELDS,
+    flatten_eval_metrics,
+    flatten_train_summary,
+)
 
 
 _ROLE_CHOICES = {"primary", "baseline", "ablation"}
@@ -349,8 +356,10 @@ def _format_cmd(cmd: Sequence[str]) -> str:
 
 def _open_stage_log(path: Path, *, stage: str, gpu: str, cmd: Sequence[str]):
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(path, "a", encoding="utf-8")
-    handle.write(f"\n===== stage={stage} gpu={gpu} =====\n")
+    mode = "w" if stage == "train" else "a"
+    handle = open(path, mode, encoding="utf-8")
+    prefix = "" if mode == "w" else "\n"
+    handle.write(f"{prefix}===== stage={stage} gpu={gpu} =====\n")
     handle.write(f"{_format_cmd(cmd)}\n")
     handle.flush()
     return handle
@@ -436,11 +445,7 @@ def _write_summary(
         "run_dir",
         "eval_dir",
         "log_path",
-        "rmse_global",
-        "mae_global",
-        "rmse_global_masked",
-        "mae_global_masked",
-    ]
+    ] + TRAIN_SUMMARY_FIELDS + EVAL_SUMMARY_FIELDS
     with open(summary_csv, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -453,22 +458,19 @@ def _write_summary(
                 "status": outcome.status,
                 "failed_stage": outcome.failed_stage or "",
                 "returncode": outcome.returncode,
-                "yaml_path": str(outcome.yaml_path),
-                "run_dir": str(outcome.run_dir),
-                "eval_dir": str(outcome.eval_dir),
-                "log_path": str(outcome.log_path),
-                "rmse_global": "",
-                "mae_global": "",
-                "rmse_global_masked": "",
-                "mae_global_masked": "",
+                "yaml_path": relative_path_str(outcome.yaml_path, base_dir=summary_csv.parent),
+                "run_dir": relative_path_str(outcome.run_dir, base_dir=summary_csv.parent),
+                "eval_dir": relative_path_str(outcome.eval_dir, base_dir=summary_csv.parent),
+                "log_path": relative_path_str(outcome.log_path, base_dir=summary_csv.parent),
             }
+            row.update({field: "" for field in TRAIN_SUMMARY_FIELDS})
+            row.update({field: "" for field in EVAL_SUMMARY_FIELDS})
+            train_summary_path = outcome.run_dir / "train_summary.yaml"
+            if train_summary_path.exists():
+                row.update(flatten_train_summary(load_yaml_dict(train_summary_path)))
             metrics_path = outcome.eval_dir / "metrics.yaml"
             if cfg.run_eval and outcome.status == "ok" and metrics_path.exists():
-                metrics = load_yaml_dict(metrics_path)
-                row["rmse_global"] = metrics.get("rmse_global", "")
-                row["mae_global"] = metrics.get("mae_global", "")
-                row["rmse_global_masked"] = metrics.get("rmse_global_masked", "")
-                row["mae_global_masked"] = metrics.get("mae_global_masked", "")
+                row.update(flatten_eval_metrics(load_yaml_dict(metrics_path)))
             writer.writerow(row)
 
 
@@ -479,8 +481,8 @@ def _write_manifest(
     path: Path,
 ) -> None:
     payload = {
-        "base_train_yaml": str(cfg.base_train_yaml),
-        "work_dir": str(cfg.work_dir),
+        "base_train_yaml": relative_path_str(cfg.base_train_yaml, base_dir=path.parent),
+        "work_dir": relative_path_str(cfg.work_dir, base_dir=path.parent),
         "gpus": list(cfg.gpus),
         "max_parallel": cfg.max_parallel,
         "run_eval": cfg.run_eval,
@@ -492,10 +494,10 @@ def _write_manifest(
                 "name": run.spec.name,
                 "label": run.spec.label,
                 "role": run.spec.role,
-                "yaml_path": str(run.yaml_path),
-                "run_dir": str(run.run_dir),
-                "eval_dir": str(run.eval_dir),
-                "log_path": str(run.log_path),
+                "yaml_path": relative_path_str(run.yaml_path, base_dir=path.parent),
+                "run_dir": relative_path_str(run.run_dir, base_dir=path.parent),
+                "eval_dir": relative_path_str(run.eval_dir, base_dir=path.parent),
+                "log_path": relative_path_str(run.log_path, base_dir=path.parent),
             }
             for run in prepared_runs
         ],

@@ -83,6 +83,11 @@ optim:
   lr: 1.0e-3                               # 学习率：baseline 常用；发散可降到 3e-4/1e-4
   weight_decay: 1.0e-4                     # 权重衰减：抑制过拟合；可扫 0~1e-3
   grad_clip: 1.0                           # 梯度裁剪：防 RNN 梯度爆；可扫 0.5~5.0
+  scheduler:
+    name: "reduce_on_plateau"              # 学习率调度：按 val_loss 无改进自动降 LR
+    factor: 0.5                            # 每次触发时 LR 乘以该系数（需在 0~1 之间）
+    patience: 5                            # 连续多少次评估无改进后触发降 LR
+    min_lr: 1.0e-5                         # LR 下限，防止衰减到数值无意义区间
 
 train:
   epochs: 3                                # 本地冒烟测试；服务器上建议 >=30 起步，再配 early-stopping
@@ -90,3 +95,6 @@ train:
   save_best: true                          # 保存 val 最优 ckpt
   save_last: true                          # 保存最后一轮 ckpt（便于中断续训）
   metric: "val_loss"                       # best 的选择指标（当前用 val_loss）
+  early_stopping:
+    patience: 12                           # 连续多少次评估无显著改进后提前停止（0=关闭）
+    min_delta: 1.0e-4                      # 判定“显著改进”的最小阈值

@@ -73,6 +73,11 @@ optim:
   lr: 1.0e-3
   weight_decay: 1.0e-4
   grad_clip: 1.0
+  scheduler:
+    name: "none"
+    factor: 0.5
+    patience: 2
+    min_lr: 1.0e-5
 
 train:
   epochs: 1
@@ -80,3 +85,6 @@ train:
   save_best: true
   save_last: true
   metric: "val_loss"
+  early_stopping:
+    patience: 0
+    min_delta: 0.0

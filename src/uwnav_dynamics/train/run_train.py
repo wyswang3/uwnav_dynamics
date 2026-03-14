@@ -42,13 +42,16 @@ best.pth / last.pth
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
+import shutil
 
 from dataclasses import replace
 import torch
+import yaml
 
 from uwnav_dynamics.experiment.layout import RunLayout
-from uwnav_dynamics.dataset.split import DEFAULT_SPLIT_STRATEGY
+from uwnav_dynamics.experiment.paths import relative_path_str
 from uwnav_dynamics.train.config import load_train_config
 from uwnav_dynamics.train.data_pipeline import prepare_train_data
 from uwnav_dynamics.train.runtime import (
@@ -66,6 +69,64 @@ from uwnav_dynamics.models.utils.rollout import rollout_from_delta
 from uwnav_dynamics.models.utils.semantic_output_layout import canonical_semantic_output_layout
 from uwnav_dynamics.models.losses.auxiliary import masked_huber_loss
 from uwnav_dynamics.models.losses.nll import gaussian_nll_diag, gaussian_nll_diag_masked
+
+
+def _copy_source_train_yaml(source_yaml: Path, run_dir: Path) -> Path:
+    """把原始 train yaml 复制到 run 目录中，作为不可变配置快照。"""
+    dst = run_dir / "source_train.yaml"
+    shutil.copyfile(source_yaml, dst)
+    return dst
+
+
+def _write_train_history_csv(path: Path, rows: list[dict[str, object]]) -> Path:
+    """写出 epoch 级训练历史，供后续画 loss/lr 曲线。"""
+    fieldnames = ["epoch", "train_loss", "val_loss", "lr", "evaluated", "is_best"]
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+    return path
+
+
+def _write_train_summary_yaml(
+    path: Path,
+    *,
+    fit_result: dict[str, object],
+    prepared,
+    run_dir: Path,
+    source_snapshot_path: Path,
+    path_root: Path,
+) -> Path:
+    """把训练阶段关键摘要统一写成审计友好的 yaml。"""
+    payload = {
+        "schema_version": "train_summary_v1",
+        "best_val": float(fit_result["best_val"]),
+        "best_epoch": int(fit_result["best_epoch"]),
+        "epochs_ran": int(fit_result["epochs_ran"]),
+        "stopped_early": bool(fit_result["stopped_early"]),
+        "final_lr": float(fit_result["final_lr"]),
+        "scheduler_name": str(fit_result["scheduler_name"]),
+        "eval_every": int(fit_result["eval_every"]),
+        "train_wall_time_sec": float(fit_result["train_wall_time_sec"]),
+        "split_strategy": str(prepared.split_strategy),
+        "split_sizes": {str(k): int(v) for k, v in prepared.split_sizes.items()},
+        "dropped_window_count": int(prepared.dropped_window_count),
+        "artifacts": {
+            "run_dir": relative_path_str(run_dir, base_dir=path_root),
+            "source_train_yaml": relative_path_str(source_snapshot_path, base_dir=path_root),
+            "resolved_train_yaml": relative_path_str(run_dir / "resolved_train.yaml", base_dir=path_root),
+            "train_history_csv": relative_path_str(run_dir / "train_history.csv", base_dir=path_root),
+            "best_ckpt": relative_path_str(Path(str(fit_result["best_path"])), base_dir=path_root),
+            "last_ckpt": relative_path_str(Path(str(fit_result["last_path"])), base_dir=path_root),
+            "split_indices": relative_path_str(run_dir / "split_indices.npz", base_dir=path_root),
+            "x_scaler": relative_path_str(run_dir / "scalers" / "x_scaler.npz", base_dir=path_root),
+            "y_scaler": relative_path_str(run_dir / "scalers" / "y_scaler.npz", base_dir=path_root),
+        },
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(payload, f, sort_keys=False, allow_unicode=True)
+    return path
 
 
 def build_loss_fn(
@@ -200,6 +261,7 @@ def main() -> int:
     print(f"[RUN] variant={variant}")
     print(f"[RUN] run_dir={run_dir}")
     print(f"[RUN] data_dir={cfg.data.data_dir}")
+    source_snapshot_path = _copy_source_train_yaml(Path(args.yaml), run_dir)
 
     # ------------------------------
     # Seed / device
@@ -210,6 +272,11 @@ def main() -> int:
     if pin_memory_note is not None:
         print(pin_memory_note)
         cfg = replace(cfg, data=data_cfg)
+
+    # ------------------------------
+    # Data / split / scaler (no leakage)
+    # ------------------------------
+    prepared = prepare_train_data(cfg.data, run_layout)
     print(f"[RUN] resolved_config={run_dir / 'resolved_train.yaml'}")
     save_resolved_train_config(
         run_dir / "resolved_train.yaml",
@@ -220,15 +287,14 @@ def main() -> int:
         runtime_device=str(device),
         run_dir=run_dir,
         split_indices_path=run_layout.split_indices_path,
-        split_strategy=DEFAULT_SPLIT_STRATEGY,
+        split_strategy=prepared.split_strategy,
         x_scaler_path=run_layout.x_scaler_path,
         y_scaler_path=run_layout.y_scaler_path,
+        source_snapshot_path=source_snapshot_path,
+        split_sizes=prepared.split_sizes,
+        dropped_window_count=prepared.dropped_window_count,
+        path_root=Path.cwd(),
     )
-
-    # ------------------------------
-    # Data / split / scaler (no leakage)
-    # ------------------------------
-    prepared = prepare_train_data(cfg.data, run_layout)
 
     model = S1Predictor(cfg)
 
@@ -244,7 +310,7 @@ def main() -> int:
     # ------------------------------
     # Fit (pipeline-style): pass device/run_dir/amp
     # ------------------------------
-    fit(
+    fit_result = fit(
         model,
         prepared.train_loader,
         prepared.val_loader,
@@ -253,6 +319,15 @@ def main() -> int:
         device=device,
         run_dir=run_dir,
         amp=bool(cfg.run.amp),
+    )
+    _write_train_history_csv(run_dir / "train_history.csv", fit_result["history"])
+    _write_train_summary_yaml(
+        run_dir / "train_summary.yaml",
+        fit_result=fit_result,
+        prepared=prepared,
+        run_dir=run_dir,
+        source_snapshot_path=source_snapshot_path,
+        path_root=Path.cwd(),
     )
     return 0
 

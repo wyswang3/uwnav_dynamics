@@ -8,7 +8,8 @@
 主要功能：
 1. 解析用户传入的 train yaml、checkpoint 与评估运行参数。
 2. 先调用纯数值的 `uwnav_dynamics.eval.evaluate` 生成评估 artifact。
-3. 若请求绘图，再调用 `uwnav_dynamics.viz.eval.*` 从 artifact 读盘出图。
+3. 若请求绘图，再调用 `uwnav_dynamics.viz.eval.*` 从 artifact 读盘出图，
+   包括 horizon/control-readiness/残差图与总览 dashboard。
 
 数据流：
 train yaml + ckpt/run_dir + CLI runtime args
@@ -20,7 +21,7 @@ pred_samples.npz / pred_samples_zspace.npz / pred_context.npz
     ↓
     viz.eval.plot_horizon_metrics + viz.eval.plot_control_readiness +
     viz.eval.plot_rollout_samples + viz.eval.plot_pred_vs_observed +
-    viz.eval.plot_component_residuals
+    viz.eval.plot_component_residuals + viz.eval.plot_metrics_dashboard
     ↓
 plots/*
 
@@ -218,6 +219,20 @@ def main() -> int:
                 str(args.n_plot_samples),
                 "--dt",
                 str(args.dt),
+                "--fmt",
+                args.plot_fmt,
+            ],
+        ),
+        (
+            "PLOT_METRICS_DASHBOARD",
+            [
+                sys.executable,
+                "-m",
+                "uwnav_dynamics.viz.eval.plot_metrics_dashboard",
+                "--eval_dir",
+                str(eval_out_dir),
+                "--out_dir",
+                str(plots_dir),
                 "--fmt",
                 args.plot_fmt,
             ],

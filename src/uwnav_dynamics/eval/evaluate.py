@@ -52,6 +52,7 @@ cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 import sys
 from typing import Any, Dict, Tuple, List, Mapping, Sequence
@@ -63,6 +64,7 @@ import yaml
 from uwnav_dynamics.dataset.normalize import inverse_transform, load_scaler, transform
 from uwnav_dynamics.dataset.split import load_split_indices
 from uwnav_dynamics.eval.config import EvalConfig, build_eval_config
+from uwnav_dynamics.experiment.paths import relative_path_str, to_snapshot_value
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor, S1PredictorConfig
 from uwnav_dynamics.models.utils.execution_layout import (
     build_execution_layout_metadata,
@@ -94,6 +96,35 @@ _COMPONENT_DISPLAY = {
     "vel_y": ("Vel Y", "m/s"),
     "vel_z": ("Vel Z", "m/s"),
 }
+
+
+@dataclass(frozen=True)
+class LoadedEvalArtifacts:
+    """评估阶段共享的数据 artifact 真源。"""
+    X: np.ndarray
+    Y: np.ndarray
+    target_mask: np.ndarray
+    split_indices: Dict[str, np.ndarray]
+    x_scaler: Dict[str, Any]
+    y_scaler: Dict[str, Any]
+    semantic_layout: SemanticOutputLayout
+    raw_mask_source: str
+    n_total: int
+
+
+@dataclass(frozen=True)
+class SplitEvalArtifacts:
+    """单个 split 切片后的评估输入。"""
+    X_scaled: np.ndarray
+    Y_scaled: np.ndarray
+    target_mask: np.ndarray
+    sample_index: np.ndarray
+    x_scaler: Dict[str, Any]
+    y_scaler: Dict[str, Any]
+    semantic_layout: SemanticOutputLayout
+    raw_mask_source: str
+    split_name: str
+    n_total: int
 
 
 def _ensure_dir(p: Path) -> None:
@@ -470,17 +501,8 @@ def _build_eval_target_mask(
     )
 
 
-# =============================================================================
-# Main evaluation
-# =============================================================================
-
-@torch.no_grad()
-def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict[str, Any]:
-    """执行一次完整数值评估并返回待落盘的指标与样本 artifact。"""
-    device = torch.device(cfg_eval.device)
-
-    # 先完整恢复 features / labels，再在评估侧按 split 做切片；
-    # 这样能严格复用训练阶段保存的 split/scaler 真源。
+def load_eval_artifacts(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> LoadedEvalArtifacts:
+    """加载评估所需的 dataset / split / scaler 真源，但不执行模型前向。"""
     feat = _np_load_npz(cfg_eval.data_dir / "features.npz")
     lab = _np_load_npz(cfg_eval.data_dir / "labels.npz")
     X = feat["X"]  # (N,L,Din)
@@ -493,7 +515,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     if X.ndim != 3 or Y.ndim != 3:
         raise ValueError(f"Expect X/Y to be 3D arrays, got X={X.shape}, Y={Y.shape}")
 
-    n, L, Din = X.shape
+    n, _L, Din = X.shape
     n2, H, Dout = Y.shape
     if n2 != n:
         raise ValueError(f"X and Y window counts mismatch: {n} vs {n2}")
@@ -501,6 +523,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         raise ValueError(f"Din mismatch: data Din={Din}, cfg_model.din={cfg_model.din}")
     if Dout != cfg_model.dout or H != cfg_model.pred_len:
         raise ValueError(f"Y shape mismatch: data (H,D)={(H,Dout)} vs cfg {(cfg_model.pred_len,cfg_model.dout)}")
+
     semantic_layout = _resolve_semantic_layout(lab, Dout)
     target_mask_all_np, raw_mask_source = _build_eval_target_mask(
         lab,
@@ -509,95 +532,100 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     )
 
     split_indices = load_split_indices(cfg_eval.split_indices_path)
-    if cfg_eval.split_name not in split_indices:
-        raise KeyError(f"split '{cfg_eval.split_name}' not found in {cfg_eval.split_indices_path}")
-    idx = np.asarray(split_indices[cfg_eval.split_name], dtype=np.int64)
-    if idx.size == 0:
-        raise RuntimeError(f"Split {cfg_eval.split_name} is empty. Check ratios.")
-    if np.any(idx < 0) or np.any(idx >= n):
-        raise ValueError(f"Split indices out of range for n={n}: {cfg_eval.split_indices_path}")
-
     x_scaler = load_scaler(cfg_eval.x_scaler_path)
     y_scaler = load_scaler(cfg_eval.y_scaler_path)
+    return LoadedEvalArtifacts(
+        X=X,
+        Y=Y,
+        target_mask=np.asarray(target_mask_all_np, dtype=bool),
+        split_indices=split_indices,
+        x_scaler=x_scaler,
+        y_scaler=y_scaler,
+        semantic_layout=semantic_layout,
+        raw_mask_source=raw_mask_source,
+        n_total=int(n),
+    )
 
-    # 评估与训练一样在 z-space 中执行模型前向；`copy()` 仅用于避开只读 numpy view 的 warning。
-    Xs = transform(np.array(X[idx], copy=True), x_scaler).astype(np.float32, copy=False)
-    Xs = _sanitize_scaled_inputs_for_eval(Xs)
-    Ys = transform(np.array(Y[idx], copy=True), y_scaler).astype(np.float32, copy=False)
-    target_mask_np = np.asarray(target_mask_all_np[idx], dtype=bool)
 
-    model = S1Predictor(cfg_model).to(device)
-    ckpt = _load_checkpoint(cfg_eval.ckpt, device)
-    model.load_state_dict(ckpt["model"], strict=True)
-    model.eval()
+def slice_eval_artifacts(loaded: LoadedEvalArtifacts, *, split_name: str) -> SplitEvalArtifacts:
+    """把共享 artifact 切成某个 split 的实际评估输入。"""
+    if split_name not in loaded.split_indices:
+        raise KeyError(f"split '{split_name}' not found in split artifact")
+    idx = np.asarray(loaded.split_indices[split_name], dtype=np.int64)
+    if idx.size == 0:
+        raise RuntimeError(f"Split {split_name} is empty. Check ratios.")
+    if np.any(idx < 0) or np.any(idx >= loaded.n_total):
+        raise ValueError(f"Split indices out of range for n={loaded.n_total}")
 
-    bs = int(cfg_eval.batch_size)
-    n_eval = Xs.shape[0]
+    X_scaled = transform(np.array(loaded.X[idx], copy=True), loaded.x_scaler).astype(np.float32, copy=False)
+    X_scaled = _sanitize_scaled_inputs_for_eval(X_scaled)
+    Y_scaled = transform(np.array(loaded.Y[idx], copy=True), loaded.y_scaler).astype(np.float32, copy=False)
+    target_mask = np.asarray(loaded.target_mask[idx], dtype=bool)
+    return SplitEvalArtifacts(
+        X_scaled=X_scaled,
+        Y_scaled=Y_scaled,
+        target_mask=target_mask,
+        sample_index=idx,
+        x_scaler=loaded.x_scaler,
+        y_scaler=loaded.y_scaler,
+        semantic_layout=loaded.semantic_layout,
+        raw_mask_source=loaded.raw_mask_source,
+        split_name=str(split_name),
+        n_total=int(loaded.n_total),
+    )
 
-    yhat_list: List[torch.Tensor] = []
-    ytrue_list: List[torch.Tensor] = []
-    logvar_list: List[torch.Tensor] = []
-    target_mask_list: List[torch.Tensor] = []
 
-    # 批量 rollout 只负责“前向 + y0 恢复 + delta 累积”，
-    # 所有指标都放到循环外统一计算，避免 batch 粒度聚合误差。
-    for s in range(0, n_eval, bs):
-        e = min(n_eval, s + bs)
-        xb = torch.from_numpy(Xs[s:e]).to(device=device, dtype=torch.float32)
-        yb = torch.from_numpy(Ys[s:e]).to(device=device, dtype=torch.float32)
-        mb = torch.from_numpy(target_mask_np[s:e]).to(device=device, dtype=torch.bool)
+def summarize_eval_predictions(
+    *,
+    split_artifacts: SplitEvalArtifacts,
+    y_hat_z_np: np.ndarray,
+    y_true_z_np: np.ndarray,
+    logvar_z_np: np.ndarray,
+    save_samples: int,
+) -> Dict[str, Any]:
+    """把 z-space 预测结果统一汇总成指标、CSV/NPZ 所需 artifact 内容。"""
+    if y_hat_z_np.shape != y_true_z_np.shape or y_hat_z_np.shape != logvar_z_np.shape:
+        raise ValueError(
+            "prediction arrays must share the same shape, got "
+            f"y_hat={y_hat_z_np.shape}, y_true={y_true_z_np.shape}, logvar={logvar_z_np.shape}"
+        )
+    if split_artifacts.target_mask.shape != y_hat_z_np.shape:
+        raise ValueError(
+            f"target_mask shape mismatch: {split_artifacts.target_mask.shape} vs {y_hat_z_np.shape}"
+        )
 
-        dY, logvar = model(xb)
-
-        if cfg_eval.mode != "delta_cumsum":
-            raise NotImplementedError(f"Only mode='delta_cumsum' supported, got {cfg_eval.mode!r}")
-        if cfg_eval.y0_source != "x_last_state":
-            raise NotImplementedError(f"Only y0_source='x_last_state' supported, got {cfg_eval.y0_source!r}")
-        y0 = extract_y0_from_x_last(xb, cfg_model.y_in_idx)
-        y_hat = rollout_from_delta(y0, dY)
-
-        yhat_list.append(y_hat.cpu())
-        ytrue_list.append(yb.cpu())
-        logvar_list.append(logvar.cpu())
-        target_mask_list.append(mb.cpu())
-
-    y_hat_all = torch.cat(yhat_list, dim=0)
-    y_true_all = torch.cat(ytrue_list, dim=0)
-    logvar_all = torch.cat(logvar_list, dim=0)
-    target_mask_all = torch.cat(target_mask_list, dim=0)
-
-    y_hat_z_np = y_hat_all.numpy()
-    y_true_z_np = y_true_all.numpy()
-    logvar_z_np = logvar_all.numpy()
-    target_mask_np_eval = target_mask_all.numpy()
+    target_mask_np_eval = np.asarray(split_artifacts.target_mask, dtype=bool)
 
     # 物理量纲指标是主输出；z-space 指标只作为训练/调参的并行辅助信息保留。
-    y_hat_phys_np = inverse_transform(y_hat_z_np, y_scaler).astype(np.float32, copy=False)
-    y_true_phys_np = inverse_transform(y_true_z_np, y_scaler).astype(np.float32, copy=False)
-    logvar_phys_np = _convert_logvar_to_physical(logvar_z_np, y_scaler).astype(np.float32, copy=False)
+    y_hat_phys_np = inverse_transform(y_hat_z_np, split_artifacts.y_scaler).astype(np.float32, copy=False)
+    y_true_phys_np = inverse_transform(y_true_z_np, split_artifacts.y_scaler).astype(np.float32, copy=False)
+    logvar_phys_np = _convert_logvar_to_physical(logvar_z_np, split_artifacts.y_scaler).astype(np.float32, copy=False)
 
     y_hat_phys = torch.from_numpy(y_hat_phys_np)
     y_true_phys = torch.from_numpy(y_true_phys_np)
+    y_hat_z = torch.from_numpy(y_hat_z_np)
+    y_true_z = torch.from_numpy(y_true_z_np)
+    target_mask_t = torch.from_numpy(target_mask_np_eval)
 
     rmse_hd, mae_hd = _rmse_mae_by_horizon(y_hat_phys, y_true_phys)
-    rmse_hd_masked, mae_hd_masked = _rmse_mae_by_horizon_masked(y_hat_phys, y_true_phys, target_mask_all)
-    rmse_groups = _aggregate_group_curve(rmse_hd, semantic_layout.group_indices)
-    mae_groups = _aggregate_group_curve(mae_hd, semantic_layout.group_indices)
-    rmse_groups_masked = _aggregate_group_curve(rmse_hd_masked, semantic_layout.group_indices)
-    mae_groups_masked = _aggregate_group_curve(mae_hd_masked, semantic_layout.group_indices)
+    rmse_hd_masked, mae_hd_masked = _rmse_mae_by_horizon_masked(y_hat_phys, y_true_phys, target_mask_t)
+    rmse_groups = _aggregate_group_curve(rmse_hd, split_artifacts.semantic_layout.group_indices)
+    mae_groups = _aggregate_group_curve(mae_hd, split_artifacts.semantic_layout.group_indices)
+    rmse_groups_masked = _aggregate_group_curve(rmse_hd_masked, split_artifacts.semantic_layout.group_indices)
+    mae_groups_masked = _aggregate_group_curve(mae_hd_masked, split_artifacts.semantic_layout.group_indices)
     rmse_global, mae_global = _global_rmse_mae(y_hat_phys, y_true_phys)
-    rmse_global_masked, mae_global_masked = _global_rmse_mae(y_hat_phys, y_true_phys, target_mask_all)
+    rmse_global_masked, mae_global_masked = _global_rmse_mae(y_hat_phys, y_true_phys, target_mask_t)
 
-    rmse_hd_z, mae_hd_z = _rmse_mae_by_horizon(y_hat_all, y_true_all)
-    rmse_hd_masked_z, mae_hd_masked_z = _rmse_mae_by_horizon_masked(y_hat_all, y_true_all, target_mask_all)
-    rmse_groups_z = _aggregate_group_curve(rmse_hd_z, semantic_layout.group_indices)
-    mae_groups_z = _aggregate_group_curve(mae_hd_z, semantic_layout.group_indices)
-    rmse_groups_masked_z = _aggregate_group_curve(rmse_hd_masked_z, semantic_layout.group_indices)
-    mae_groups_masked_z = _aggregate_group_curve(mae_hd_masked_z, semantic_layout.group_indices)
-    rmse_global_z, mae_global_z = _global_rmse_mae(y_hat_all, y_true_all)
-    rmse_global_masked_z, mae_global_masked_z = _global_rmse_mae(y_hat_all, y_true_all, target_mask_all)
+    rmse_hd_z, mae_hd_z = _rmse_mae_by_horizon(y_hat_z, y_true_z)
+    rmse_hd_masked_z, mae_hd_masked_z = _rmse_mae_by_horizon_masked(y_hat_z, y_true_z, target_mask_t)
+    rmse_groups_z = _aggregate_group_curve(rmse_hd_z, split_artifacts.semantic_layout.group_indices)
+    mae_groups_z = _aggregate_group_curve(mae_hd_z, split_artifacts.semantic_layout.group_indices)
+    rmse_groups_masked_z = _aggregate_group_curve(rmse_hd_masked_z, split_artifacts.semantic_layout.group_indices)
+    mae_groups_masked_z = _aggregate_group_curve(mae_hd_masked_z, split_artifacts.semantic_layout.group_indices)
+    rmse_global_z, mae_global_z = _global_rmse_mae(y_hat_z, y_true_z)
+    rmse_global_masked_z, mae_global_masked_z = _global_rmse_mae(y_hat_z, y_true_z, target_mask_t)
 
-    component_labels, component_display_labels, component_units = _component_metadata(semantic_layout)
+    component_labels, component_display_labels, component_units = _component_metadata(split_artifacts.semantic_layout)
     component_metrics = _component_metric_rows(
         y_hat_phys_np,
         y_true_phys_np,
@@ -643,8 +671,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         target_mask=target_mask_np_eval,
     )
 
-    # 样本类 artifact 只保留前 `save_samples` 个窗口，避免评估目录无限膨胀。
-    n_samp = int(min(cfg_eval.save_samples, y_hat_all.shape[0]))
+    n_samp = int(min(save_samples, y_hat_z_np.shape[0]))
     samp = {
         "y_hat": y_hat_phys_np[:n_samp],
         "y_true": y_true_phys_np[:n_samp],
@@ -657,16 +684,16 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     }
     pred_context = {
         "target_mask": target_mask_np_eval[:n_samp].astype(bool, copy=False),
-        "sample_index": np.asarray(idx[:n_samp], dtype=np.int64),
+        "sample_index": np.asarray(split_artifacts.sample_index[:n_samp], dtype=np.int64),
         "component_labels": np.asarray(component_labels, dtype=str),
         "component_display_labels": np.asarray(component_display_labels, dtype=str),
         "component_units": np.asarray(component_units, dtype=str),
     }
 
     return {
-        "n_total": int(n),
-        "n_eval": int(n_eval),
-        "split": cfg_eval.split_name,
+        "n_total": int(split_artifacts.n_total),
+        "n_eval": int(y_hat_z_np.shape[0]),
+        "split": split_artifacts.split_name,
         "rmse_global": rmse_global,
         "mae_global": mae_global,
         "rmse_global_masked": rmse_global_masked,
@@ -697,58 +724,24 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         "component_metrics_masked_zspace": component_metrics_masked_z,
         "control_readiness_dense": control_readiness_dense,
         "control_readiness_masked": control_readiness_masked,
-        "semantic_layout": semantic_layout,
-        "raw_mask_source": raw_mask_source,
+        "semantic_layout": split_artifacts.semantic_layout,
+        "raw_mask_source": split_artifacts.raw_mask_source,
         "samples": samp,
         "samples_zspace": samp_z,
         "pred_context": pred_context,
     }
 
 
-def main() -> int:
-    """纯数值评估入口，不直接承担绘图调度。"""
-    ap = argparse.ArgumentParser("uwnav_dynamics.eval.evaluate")
-    ap.add_argument("-y", "--yaml", type=str, required=True, help="train yaml (contains data/model/rollout config)")
-    ap.add_argument("--ckpt", type=str, required=True, help="checkpoint path (.pth/.pt)")
-    ap.add_argument("--split", type=str, default="test", choices=["train", "val", "test"], help="which split to evaluate")
-
-    ap.add_argument("--device", type=str, default=None, help="override device (cpu/cuda)")
-    ap.add_argument("--batch_size", type=int, default=None, help="override batch size")
-    ap.add_argument("--out_dir", type=str, default=None, help="override output directory")
-    ap.add_argument("--save_samples", type=int, default=256, help="save first N samples to npz for viz")
-
-    # 仅保留解析以给出明确迁移提示；evaluate.py 不再承载绘图执行。
-    ap.add_argument("--plots", action="store_true", help="deprecated: use cli/eval.py or cli/pipeline.py for plotting")
-    ap.add_argument("--plot_fmt", type=str, default="png", choices=["png", "pdf", "both"])
-    ap.add_argument("--dt", type=float, default=0.01)
-    ap.add_argument("--x_axis", type=str, default="sec", choices=["sec", "step"])
-    ap.add_argument("--n_plot_samples", type=int, default=8)
-
-    args = ap.parse_args()
-
-    if args.plots:
-        print(
-            "[EVAL] `--plots` 已弃用：`evaluate.py` 现在只负责数值评估与 artifact 落盘。"
-            " 请改用 `python -m uwnav_dynamics.cli.eval ... --plots`"
-            " 或 `python -m uwnav_dynamics.cli.pipeline ... --plots`。",
-            file=sys.stderr,
-        )
-        return 2
-
-    cfg_eval, cfg_model = build_eval_config(
-        train_yaml=Path(args.yaml),
-        ckpt=Path(args.ckpt),
-        split=args.split,
-        device=args.device,
-        batch_size=args.batch_size,
-        out_dir=Path(args.out_dir) if args.out_dir is not None else None,
-        save_samples=int(args.save_samples),
-    )
-
-    _ensure_dir(cfg_eval.out_dir)
-    res = evaluate_once(cfg_eval=cfg_eval, cfg_model=cfg_model)
-
-    # `metrics.yaml` 是评估目录的总索引；CSV/NPZ 则承载大体量数组 artifact。
+def write_eval_outputs(
+    *,
+    out_dir: Path,
+    res: Mapping[str, Any],
+    cfg_model: S1PredictorConfig,
+    cfg_snapshot: Mapping[str, Any],
+    path_root: Path,
+) -> None:
+    """把汇总后的评估结果统一写成 metrics/csv/npz artifact。"""
+    _ensure_dir(out_dir)
     metrics = {
         "split": res["split"],
         "n_total": res["n_total"],
@@ -826,52 +819,49 @@ def main() -> int:
             "mae_horizon_zspace_csv": "mae_by_horizon_zspace.csv",
             "rmse_horizon_masked_zspace_csv": "rmse_by_horizon_masked_zspace.csv",
             "mae_horizon_masked_zspace_csv": "mae_by_horizon_masked_zspace.csv",
+            "resolved_eval_yaml": "resolved_eval.yaml",
         },
-        "cfg": {
-            "data_dir": str(cfg_eval.data_dir),
-            "ckpt": str(cfg_eval.ckpt),
-            "device": cfg_eval.device,
-            "batch_size": cfg_eval.batch_size,
-            "split_indices": str(cfg_eval.split_indices_path),
-            "x_scaler": str(cfg_eval.x_scaler_path),
-            "y_scaler": str(cfg_eval.y_scaler_path),
-            "y0_source": cfg_eval.y0_source,
-            "mode": cfg_eval.mode,
-        },
+        "cfg": to_snapshot_value(dict(cfg_snapshot), base_dir=path_root),
     }
-    with open(cfg_eval.out_dir / "metrics.yaml", "w", encoding="utf-8") as f:
+    with open(out_dir / "metrics.yaml", "w", encoding="utf-8") as f:
         yaml.safe_dump(metrics, f, sort_keys=False, allow_unicode=True)
 
-    # horizon / component CSV 保持“物理量纲主、z-space 并行保留”的双轨产物结构。
-    _write_csv_hd(cfg_eval.out_dir / "rmse_by_horizon.csv", res["rmse_hd"], col_prefix="d")
-    _write_csv_hd(cfg_eval.out_dir / "mae_by_horizon.csv", res["mae_hd"], col_prefix="d")
-    _write_csv_hd(cfg_eval.out_dir / "rmse_by_horizon_masked.csv", res["rmse_hd_masked"], col_prefix="d")
-    _write_csv_hd(cfg_eval.out_dir / "mae_by_horizon_masked.csv", res["mae_hd_masked"], col_prefix="d")
-    _write_csv_hd(cfg_eval.out_dir / "rmse_by_horizon_zspace.csv", res["rmse_hd_zspace"], col_prefix="d")
-    _write_csv_hd(cfg_eval.out_dir / "mae_by_horizon_zspace.csv", res["mae_hd_zspace"], col_prefix="d")
-    _write_csv_hd(cfg_eval.out_dir / "rmse_by_horizon_masked_zspace.csv", res["rmse_hd_masked_zspace"], col_prefix="d")
-    _write_csv_hd(cfg_eval.out_dir / "mae_by_horizon_masked_zspace.csv", res["mae_hd_masked_zspace"], col_prefix="d")
-    _write_component_metric_csv(cfg_eval.out_dir / "component_metrics.csv", res["component_metrics"])
-    _write_component_metric_csv(cfg_eval.out_dir / "component_metrics_masked.csv", res["component_metrics_masked"])
-    _write_component_metric_csv(cfg_eval.out_dir / "component_metrics_zspace.csv", res["component_metrics_zspace"])
-    _write_component_metric_csv(cfg_eval.out_dir / "component_metrics_masked_zspace.csv", res["component_metrics_masked_zspace"])
+    resolved_eval = {
+        "schema_version": "eval_resolved_v1",
+        "out_dir": relative_path_str(out_dir, base_dir=path_root),
+        "cfg": to_snapshot_value(dict(cfg_snapshot), base_dir=path_root),
+    }
+    with open(out_dir / "resolved_eval.yaml", "w", encoding="utf-8") as f:
+        yaml.safe_dump(resolved_eval, f, sort_keys=False, allow_unicode=True)
 
-    # 样本级 NPZ 分成 physical / zspace / context 三类，供后续不同绘图脚本按需读盘。
-    pred_npz = cfg_eval.out_dir / "pred_samples.npz"
+    _write_csv_hd(out_dir / "rmse_by_horizon.csv", res["rmse_hd"], col_prefix="d")
+    _write_csv_hd(out_dir / "mae_by_horizon.csv", res["mae_hd"], col_prefix="d")
+    _write_csv_hd(out_dir / "rmse_by_horizon_masked.csv", res["rmse_hd_masked"], col_prefix="d")
+    _write_csv_hd(out_dir / "mae_by_horizon_masked.csv", res["mae_hd_masked"], col_prefix="d")
+    _write_csv_hd(out_dir / "rmse_by_horizon_zspace.csv", res["rmse_hd_zspace"], col_prefix="d")
+    _write_csv_hd(out_dir / "mae_by_horizon_zspace.csv", res["mae_hd_zspace"], col_prefix="d")
+    _write_csv_hd(out_dir / "rmse_by_horizon_masked_zspace.csv", res["rmse_hd_masked_zspace"], col_prefix="d")
+    _write_csv_hd(out_dir / "mae_by_horizon_masked_zspace.csv", res["mae_hd_masked_zspace"], col_prefix="d")
+    _write_component_metric_csv(out_dir / "component_metrics.csv", res["component_metrics"])
+    _write_component_metric_csv(out_dir / "component_metrics_masked.csv", res["component_metrics_masked"])
+    _write_component_metric_csv(out_dir / "component_metrics_zspace.csv", res["component_metrics_zspace"])
+    _write_component_metric_csv(out_dir / "component_metrics_masked_zspace.csv", res["component_metrics_masked_zspace"])
+
+    pred_npz = out_dir / "pred_samples.npz"
     np.savez_compressed(
         pred_npz,
         y_hat=res["samples"]["y_hat"],
         y_true=res["samples"]["y_true"],
         logvar=res["samples"]["logvar"],
     )
-    pred_npz_z = cfg_eval.out_dir / "pred_samples_zspace.npz"
+    pred_npz_z = out_dir / "pred_samples_zspace.npz"
     np.savez_compressed(
         pred_npz_z,
         y_hat=res["samples_zspace"]["y_hat"],
         y_true=res["samples_zspace"]["y_true"],
         logvar=res["samples_zspace"]["logvar"],
     )
-    pred_context_npz = cfg_eval.out_dir / "pred_context.npz"
+    pred_context_npz = out_dir / "pred_context.npz"
     np.savez_compressed(
         pred_context_npz,
         target_mask=res["pred_context"]["target_mask"],
@@ -879,6 +869,132 @@ def main() -> int:
         component_labels=res["pred_context"]["component_labels"],
         component_display_labels=res["pred_context"]["component_display_labels"],
         component_units=res["pred_context"]["component_units"],
+    )
+
+
+# =============================================================================
+# Main evaluation
+# =============================================================================
+
+@torch.no_grad()
+def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict[str, Any]:
+    """执行一次完整数值评估并返回待落盘的指标与样本 artifact。"""
+    device = torch.device(cfg_eval.device)
+    loaded = load_eval_artifacts(cfg_eval=cfg_eval, cfg_model=cfg_model)
+    split_artifacts = slice_eval_artifacts(loaded, split_name=cfg_eval.split_name)
+
+    model = S1Predictor(cfg_model).to(device)
+    ckpt = _load_checkpoint(cfg_eval.ckpt, device)
+    model.load_state_dict(ckpt["model"], strict=True)
+    model.eval()
+
+    bs = int(cfg_eval.batch_size)
+    n_eval = split_artifacts.X_scaled.shape[0]
+
+    yhat_list: List[torch.Tensor] = []
+    ytrue_list: List[torch.Tensor] = []
+    logvar_list: List[torch.Tensor] = []
+
+    # 批量 rollout 只负责“前向 + y0 恢复 + delta 累积”，
+    # 所有指标都放到循环外统一计算，避免 batch 粒度聚合误差。
+    for s in range(0, n_eval, bs):
+        e = min(n_eval, s + bs)
+        xb = torch.from_numpy(split_artifacts.X_scaled[s:e]).to(device=device, dtype=torch.float32)
+        yb = torch.from_numpy(split_artifacts.Y_scaled[s:e]).to(device=device, dtype=torch.float32)
+        mb = torch.from_numpy(split_artifacts.target_mask[s:e]).to(device=device, dtype=torch.bool)
+
+        dY, logvar = model(xb)
+
+        if cfg_eval.mode != "delta_cumsum":
+            raise NotImplementedError(f"Only mode='delta_cumsum' supported, got {cfg_eval.mode!r}")
+        if cfg_eval.y0_source != "x_last_state":
+            raise NotImplementedError(f"Only y0_source='x_last_state' supported, got {cfg_eval.y0_source!r}")
+        y0 = extract_y0_from_x_last(xb, cfg_model.y_in_idx)
+        y_hat = rollout_from_delta(y0, dY)
+
+        yhat_list.append(y_hat.cpu())
+        ytrue_list.append(yb.cpu())
+        logvar_list.append(logvar.cpu())
+
+    y_hat_all = torch.cat(yhat_list, dim=0)
+    y_true_all = torch.cat(ytrue_list, dim=0)
+    logvar_all = torch.cat(logvar_list, dim=0)
+
+    y_hat_z_np = y_hat_all.numpy()
+    y_true_z_np = y_true_all.numpy()
+    logvar_z_np = logvar_all.numpy()
+    return summarize_eval_predictions(
+        split_artifacts=split_artifacts,
+        y_hat_z_np=y_hat_z_np,
+        y_true_z_np=y_true_z_np,
+        logvar_z_np=logvar_z_np,
+        save_samples=int(cfg_eval.save_samples),
+    )
+
+
+def main() -> int:
+    """纯数值评估入口，不直接承担绘图调度。"""
+    ap = argparse.ArgumentParser("uwnav_dynamics.eval.evaluate")
+    ap.add_argument("-y", "--yaml", type=str, required=True, help="train yaml (contains data/model/rollout config)")
+    ap.add_argument("--ckpt", type=str, required=True, help="checkpoint path (.pth/.pt)")
+    ap.add_argument("--split", type=str, default="test", choices=["train", "val", "test"], help="which split to evaluate")
+
+    ap.add_argument("--device", type=str, default=None, help="override device (cpu/cuda)")
+    ap.add_argument("--batch_size", type=int, default=None, help="override batch size")
+    ap.add_argument("--out_dir", type=str, default=None, help="override output directory")
+    ap.add_argument("--save_samples", type=int, default=256, help="save first N samples to npz for viz")
+
+    # 仅保留解析以给出明确迁移提示；evaluate.py 不再承载绘图执行。
+    ap.add_argument("--plots", action="store_true", help="deprecated: use cli/eval.py or cli/pipeline.py for plotting")
+    ap.add_argument("--plot_fmt", type=str, default="png", choices=["png", "pdf", "both"])
+    ap.add_argument("--dt", type=float, default=0.01)
+    ap.add_argument("--x_axis", type=str, default="sec", choices=["sec", "step"])
+    ap.add_argument("--n_plot_samples", type=int, default=8)
+
+    args = ap.parse_args()
+
+    if args.plots:
+        print(
+            "[EVAL] `--plots` 已弃用：`evaluate.py` 现在只负责数值评估与 artifact 落盘。"
+            " 请改用 `python -m uwnav_dynamics.cli.eval ... --plots`"
+            " 或 `python -m uwnav_dynamics.cli.pipeline ... --plots`。",
+            file=sys.stderr,
+        )
+        return 2
+
+    cfg_eval, cfg_model = build_eval_config(
+        train_yaml=Path(args.yaml),
+        ckpt=Path(args.ckpt),
+        split=args.split,
+        device=args.device,
+        batch_size=args.batch_size,
+        out_dir=Path(args.out_dir) if args.out_dir is not None else None,
+        save_samples=int(args.save_samples),
+    )
+
+    _ensure_dir(cfg_eval.out_dir)
+    res = evaluate_once(cfg_eval=cfg_eval, cfg_model=cfg_model)
+    write_eval_outputs(
+        out_dir=cfg_eval.out_dir,
+        res=res,
+        cfg_model=cfg_model,
+        cfg_snapshot={
+            "data_dir": cfg_eval.data_dir,
+            "ckpt": cfg_eval.ckpt,
+            "device": cfg_eval.device,
+            "batch_size": cfg_eval.batch_size,
+            "split_indices": cfg_eval.split_indices_path,
+            "x_scaler": cfg_eval.x_scaler_path,
+            "y_scaler": cfg_eval.y_scaler_path,
+            "y0_source": cfg_eval.y0_source,
+            "mode": cfg_eval.mode,
+            "predictor": {
+                "type": "neural",
+                "kind": "s1_predictor",
+                "ckpt": cfg_eval.ckpt,
+            },
+        },
+        path_root=Path.cwd(),
     )
 
     print(f"[EVAL] split={res['split']}  n_eval={res['n_eval']}")

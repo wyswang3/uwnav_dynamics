@@ -3,12 +3,14 @@
 
 模块职责：
 负责执行 epoch 级训练与验证循环，
-并将 DataLoader batch、loss_fn、optimizer、AMP 与 checkpoint 保存串起来。
+并将 DataLoader batch、loss_fn、optimizer、AMP、scheduler、
+early stopping 与 checkpoint 保存串起来。
 
 主要功能：
 1. 支持 `(X, Y)` 与 `(X, Y, target_mask)` 两类 batch。
 2. 在训练与验证阶段统一调用外部注入的 `loss_fn`。
-3. 管理设备迁移、AMP、梯度裁剪与 best/last checkpoint 落盘。
+3. 管理设备迁移、AMP、梯度裁剪、scheduler 与 best/last checkpoint 落盘。
+4. 记录 epoch 级 train/val/lr 历史，供上层落盘 summary 与可视化。
 
 数据流：
 prepare_train_data() 产出的 DataLoader
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Optional, Tuple, Dict, Any
 
 import torch
@@ -49,6 +52,7 @@ class TrainConfig:
       - 这些字段仍属于“纯配置值”，因此适合冻结；runtime override 一律走 replace()。
     """
     epochs: int = 30
+    eval_every: int = 1
     lr: float = 1e-3
     weight_decay: float = 1e-4
     grad_clip: float = 1.0
@@ -60,6 +64,12 @@ class TrainConfig:
     save_best: bool = True
     save_last: bool = True
     metric: str = "val_loss"
+    scheduler_name: str = "none"
+    scheduler_factor: float = 0.5
+    scheduler_patience: int = 5
+    scheduler_min_lr: float = 1e-6
+    early_stopping_patience: int = 0
+    early_stopping_min_delta: float = 0.0
 
 
 def _to_device(
@@ -156,6 +166,32 @@ def _resolve_out_dir(run_dir: Optional[Path], cfg_out_dir: Path) -> Path:
     return Path(run_dir) if run_dir is not None else Path(cfg_out_dir)
 
 
+def _current_lr(optimizer: torch.optim.Optimizer) -> float:
+    """读取当前 optimizer 主学习率。"""
+    if not optimizer.param_groups:
+        return float("nan")
+    return float(optimizer.param_groups[0].get("lr", float("nan")))
+
+
+def _build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    cfg: TrainConfig,
+) -> torch.optim.lr_scheduler.ReduceLROnPlateau | None:
+    """按配置构造训练期学习率调度器。"""
+    scheduler_name = str(getattr(cfg, "scheduler_name", "none")).lower()
+    if scheduler_name in {"", "none"}:
+        return None
+    if scheduler_name == "reduce_on_plateau":
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=float(getattr(cfg, "scheduler_factor", 0.5)),
+            patience=int(getattr(cfg, "scheduler_patience", 5)),
+            min_lr=float(getattr(cfg, "scheduler_min_lr", 1e-6)),
+        )
+    raise ValueError(f"Unsupported scheduler_name={scheduler_name!r}")
+
+
 def fit(
     model,
     train_loader: DataLoader,
@@ -187,14 +223,23 @@ def fit(
 
     if optimizer is None:
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    scheduler = _build_scheduler(optimizer, cfg)
 
     scaler: Optional[torch.cuda.amp.GradScaler] = None
     if amp_enabled and device.type == "cuda":
         scaler = torch.cuda.amp.GradScaler()
 
     best_val = float("inf")
+    best_epoch = 0
+    stopped_early = False
+    epochs_without_improve = 0
+    eval_every = max(int(getattr(cfg, "eval_every", 1)), 1)
+    early_patience = max(int(getattr(cfg, "early_stopping_patience", 0)), 0)
+    early_min_delta = max(float(getattr(cfg, "early_stopping_min_delta", 0.0)), 0.0)
     best_path = out_dir / "best.pth"
     last_path = out_dir / "last.pth"
+    history: list[dict[str, Any]] = []
+    start_ts = time.perf_counter()
 
     for ep in range(1, cfg.epochs + 1):
         # train / val 分开调用，保证日志与 best-checkpoint 选择都基于独立验证集。
@@ -204,9 +249,25 @@ def fit(
             grad_clip=cfg.grad_clip,
             amp_enabled=amp_enabled,
         )
-        va = eval_one_epoch(model, val_loader, loss_fn, device)
+        should_eval = (ep % eval_every == 0) or (ep == cfg.epochs)
+        va = float("nan")
+        improved = False
+        if should_eval:
+            va = eval_one_epoch(model, val_loader, loss_fn, device)
+            if scheduler is not None:
+                scheduler.step(va)
 
-        print(f"[EPOCH {ep:03d}] train_loss={tr:.6f}  val_loss={va:.6f}")
+            if va < (best_val - early_min_delta):
+                improved = True
+                best_val = va
+                best_epoch = ep
+                epochs_without_improve = 0
+            else:
+                epochs_without_improve += 1
+
+        lr_now = _current_lr(optimizer)
+        val_disp = f"{va:.6f}" if should_eval else "SKIP"
+        print(f"[EPOCH {ep:03d}] train_loss={tr:.6f}  val_loss={val_disp}  lr={lr_now:.6e}")
 
         if getattr(cfg, "save_last", True):
             # last checkpoint 记录“最近训练状态”，用于排查中断或继续人工分析。
@@ -215,38 +276,74 @@ def fit(
                     "epoch": ep,
                     "model": model.state_dict(),
                     "optim": optimizer.state_dict(),
+                    "scheduler": None if scheduler is None else scheduler.state_dict(),
                     "val_loss": va,
                     "train_loss": tr,
+                    "best_val": best_val,
+                    "best_epoch": best_epoch,
                     "device": str(device),
                     "amp": amp_enabled,
+                    "lr": lr_now,
                 },
                 last_path,
             )
 
-        if getattr(cfg, "save_best", True) and va < best_val:
+        if getattr(cfg, "save_best", True) and improved:
             # best checkpoint 只按验证损失更新，不受 train loss 或其他指标影响。
-            best_val = va
             torch.save(
                 {
                     "epoch": ep,
                     "model": model.state_dict(),
                     "optim": optimizer.state_dict(),
+                    "scheduler": None if scheduler is None else scheduler.state_dict(),
                     "val_loss": va,
                     "train_loss": tr,
+                    "best_val": best_val,
+                    "best_epoch": best_epoch,
                     "device": str(device),
                     "amp": amp_enabled,
+                    "lr": lr_now,
                 },
                 best_path,
             )
             print(f"[CKPT] best -> {best_path} (val={best_val:.6f})")
 
-    print(f"[DONE] best_val={best_val:.6f}  ckpt={best_path}")
+        history.append(
+            {
+                "epoch": int(ep),
+                "train_loss": float(tr),
+                "val_loss": float(va),
+                "lr": float(lr_now),
+                "evaluated": bool(should_eval),
+                "is_best": bool(improved),
+            }
+        )
+
+        if should_eval and early_patience > 0 and epochs_without_improve >= early_patience:
+            stopped_early = True
+            print(
+                "[EARLY_STOP] "
+                f"epoch={ep} best_epoch={best_epoch} patience={early_patience} "
+                f"min_delta={early_min_delta:.3e}"
+            )
+            break
+
+    train_wall_time_sec = float(time.perf_counter() - start_ts)
+    print(f"[DONE] best_val={best_val:.6f}  best_epoch={best_epoch}  ckpt={best_path}")
 
     return {
         "best_val": float(best_val),
+        "best_epoch": int(best_epoch),
         "best_path": str(best_path),
         "last_path": str(last_path),
         "device": str(device),
         "amp": bool(amp_enabled),
         "out_dir": str(out_dir),
+        "epochs_ran": int(len(history)),
+        "stopped_early": bool(stopped_early),
+        "final_lr": float(_current_lr(optimizer)),
+        "scheduler_name": str(getattr(cfg, "scheduler_name", "none")),
+        "eval_every": int(eval_every),
+        "train_wall_time_sec": train_wall_time_sec,
+        "history": history,
     }

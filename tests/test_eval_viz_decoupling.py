@@ -163,6 +163,7 @@ def test_cli_eval_runs_numeric_then_viz_with_plots(tmp_path, monkeypatch, capsys
         "uwnav_dynamics.viz.eval.plot_rollout_samples",
         "uwnav_dynamics.viz.eval.plot_pred_vs_observed",
         "uwnav_dynamics.viz.eval.plot_component_residuals",
+        "uwnav_dynamics.viz.eval.plot_metrics_dashboard",
     ]
     assert commands[1][commands[1].index("--metric") + 1] == "rmse"
     assert commands[2][commands[2].index("--metric") + 1] == "mae"
@@ -173,6 +174,7 @@ def test_cli_eval_runs_numeric_then_viz_with_plots(tmp_path, monkeypatch, capsys
     assert commands[4][commands[4].index("--n") + 1] == "5"
     assert commands[5][commands[5].index("--mode") + 1] == "component"
     assert commands[6][commands[6].index("--out_dir") + 1] == str(plots_dir)
+    assert commands[7][commands[7].index("--out_dir") + 1] == str(plots_dir)
 
     out = capsys.readouterr().out
     assert "start visualization stage under" in out

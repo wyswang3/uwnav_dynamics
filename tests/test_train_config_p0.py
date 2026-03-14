@@ -135,6 +135,9 @@ def test_train_config_p0_defaults_keep_old_yaml_compatible():
     assert cfg.model_aux_heads.dvl_obs.hidden == 128
     assert cfg.loss.dvl_obs_weight == 0.0
     assert cfg.loss.dvl_obs_delta == 1.0
+    assert cfg.train.scheduler_name == "none"
+    assert cfg.train.early_stopping_patience == 0
+    assert cfg.train.early_stopping_min_delta == 0.0
 
 
 def test_train_config_p0_parses_dvl_aux_fields():
@@ -154,6 +157,29 @@ def test_train_config_p0_parses_dvl_aux_fields():
     assert cfg.model_aux_heads.dvl_obs.hidden == 96
     assert cfg.loss.dvl_obs_weight == pytest.approx(0.2)
     assert cfg.loss.dvl_obs_delta == pytest.approx(0.75)
+
+
+def test_train_config_p0_parses_scheduler_and_early_stopping():
+    raw = _base_train_yaml_dict()
+    raw["optim"]["scheduler"] = {
+        "name": "reduce_on_plateau",
+        "factor": 0.4,
+        "patience": 3,
+        "min_lr": 1.0e-5,
+    }
+    raw["train"]["early_stopping"] = {
+        "patience": 7,
+        "min_delta": 1.0e-4,
+    }
+
+    cfg = build_from_dict(raw)
+
+    assert cfg.train.scheduler_name == "reduce_on_plateau"
+    assert cfg.train.scheduler_factor == pytest.approx(0.4)
+    assert cfg.train.scheduler_patience == 3
+    assert cfg.train.scheduler_min_lr == pytest.approx(1.0e-5)
+    assert cfg.train.early_stopping_patience == 7
+    assert cfg.train.early_stopping_min_delta == pytest.approx(1.0e-4)
 
 
 def test_train_config_p0_rejects_weight_without_enabled_head():
@@ -183,4 +209,15 @@ def test_train_config_p0_rejects_unknown_loss_keys():
     raw["loss"]["dvl_obs_gamma"] = 0.3
 
     with pytest.raises(KeyError, match="Unknown keys in loss"):
+        build_from_dict(raw)
+
+
+def test_train_config_p0_rejects_unknown_scheduler_keys():
+    raw = _base_train_yaml_dict()
+    raw["optim"]["scheduler"] = {
+        "name": "reduce_on_plateau",
+        "cooldown": 2,
+    }
+
+    with pytest.raises(KeyError, match="Unknown keys in optim\\.scheduler"):
         build_from_dict(raw)

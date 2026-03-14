@@ -8,8 +8,9 @@
 主要功能：
 1. 解析 `run / data / model / rollout / loss / train` 配置段。
 2. 解析并校验 P0 研发阶段的最小辅助头配置，确保旧 YAML 继续兼容。
-3. 对模型 blocks、索引布局与 runtime schema 执行严格校验。
-4. 保证 train / eval 使用同一份模型结构解释结果，避免配置漂移。
+3. 解析 early stopping 与 learning-rate scheduler 配置，统一进入训练强类型对象。
+4. 对模型 blocks、索引布局与 runtime schema 执行严格校验。
+5. 保证 train / eval 使用同一份模型结构解释结果，避免配置漂移。
 
 数据流：
 train yaml
@@ -546,26 +547,79 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     if not isinstance(train_d, dict):
         raise TypeError("train must be a dict")
 
-    _check_no_unknown_keys(optim_d, allowed=["name", "lr", "weight_decay", "grad_clip"], where="optim")
+    scheduler_d = optim_d.get("scheduler", {}) or {}
+    if not isinstance(scheduler_d, dict):
+        raise TypeError("optim.scheduler must be a dict")
+
+    early_stopping_d = train_d.get("early_stopping", {}) or {}
+    if not isinstance(early_stopping_d, dict):
+        raise TypeError("train.early_stopping must be a dict")
+
+    _check_no_unknown_keys(optim_d, allowed=["name", "lr", "weight_decay", "grad_clip", "scheduler"], where="optim")
+    _check_no_unknown_keys(
+        scheduler_d,
+        allowed=["name", "factor", "patience", "min_lr"],
+        where="optim.scheduler",
+    )
     _check_no_unknown_keys(
         train_d,
-        allowed=["epochs", "eval_every", "save_best", "save_last", "metric"],
+        allowed=["epochs", "eval_every", "save_best", "save_last", "metric", "early_stopping"],
         where="train",
+    )
+    _check_no_unknown_keys(
+        early_stopping_d,
+        allowed=["patience", "min_delta"],
+        where="train.early_stopping",
     )
 
     optim_name = str(optim_d.get("name", "adamw")).lower()
     if optim_name != "adamw":
         raise ValueError(f"Unsupported optim.name={optim_name!r} (v0 only supports 'adamw')")
+    scheduler_name = str(scheduler_d.get("name", "none")).lower()
+    if scheduler_name not in {"none", "reduce_on_plateau"}:
+        raise ValueError(
+            f"Unsupported optim.scheduler.name={scheduler_name!r} "
+            "(v0 only supports 'none' or 'reduce_on_plateau')"
+        )
 
     train_cfg = TrainConfig(
         epochs=int(train_d.get("epochs", 30)),
+        eval_every=int(train_d.get("eval_every", 1)),
         lr=float(optim_d.get("lr", 1e-3)),
         weight_decay=float(optim_d.get("weight_decay", 1e-4)),
         grad_clip=float(optim_d.get("grad_clip", 1.0)),
         device=run.device,
         amp=run.amp,
         out_dir=run.out_dir,
+        save_best=bool(train_d.get("save_best", True)),
+        save_last=bool(train_d.get("save_last", True)),
+        metric=str(train_d.get("metric", "val_loss")),
+        scheduler_name=scheduler_name,
+        scheduler_factor=float(scheduler_d.get("factor", 0.5)),
+        scheduler_patience=int(scheduler_d.get("patience", 5)),
+        scheduler_min_lr=float(scheduler_d.get("min_lr", 1e-6)),
+        early_stopping_patience=int(early_stopping_d.get("patience", 0)),
+        early_stopping_min_delta=float(early_stopping_d.get("min_delta", 0.0)),
     )
+
+    if train_cfg.eval_every <= 0:
+        raise ValueError(f"train.eval_every must be > 0, got {train_cfg.eval_every}")
+    if train_cfg.scheduler_factor <= 0.0 or train_cfg.scheduler_factor >= 1.0:
+        raise ValueError(
+            f"optim.scheduler.factor must be in (0,1), got {train_cfg.scheduler_factor}"
+        )
+    if train_cfg.scheduler_patience < 0:
+        raise ValueError(f"optim.scheduler.patience must be >= 0, got {train_cfg.scheduler_patience}")
+    if train_cfg.scheduler_min_lr < 0.0:
+        raise ValueError(f"optim.scheduler.min_lr must be >= 0, got {train_cfg.scheduler_min_lr}")
+    if train_cfg.early_stopping_patience < 0:
+        raise ValueError(
+            f"train.early_stopping.patience must be >= 0, got {train_cfg.early_stopping_patience}"
+        )
+    if train_cfg.early_stopping_min_delta < 0.0:
+        raise ValueError(
+            f"train.early_stopping.min_delta must be >= 0, got {train_cfg.early_stopping_min_delta}"
+        )
 
     return TrainYamlConfig(
         run=run,

@@ -42,6 +42,7 @@ from uwnav_dynamics.dataset.split import (
     DEFAULT_SPLIT_STRATEGY,
     load_split_indices,
     make_split_indices,
+    make_purged_split_indices,
     save_split_indices,
 )
 from uwnav_dynamics.eval.config import build_eval_config
@@ -132,6 +133,29 @@ def test_scaler_fit_only_train_subset_and_shared_indices(tmp_path):
     _ = transform(X[eval_loaded["test"]], scaler)
     assert np.array_equal(mean_before, scaler["mean"])
     assert np.array_equal(std_before, scaler["std"])
+
+
+def test_purged_split_drops_boundary_windows_and_removes_raw_overlap():
+    idx0 = np.arange(0, 19, dtype=np.int64)
+    indices, summary = make_purged_split_indices(
+        window_start_indices=idx0,
+        total_rows=24,
+        window_span=6,
+        seed=0,
+        ratios={"train": 0.5, "val": 0.25, "test": 0.25},
+    )
+
+    assert summary.strategy == "contiguous_purged_v2"
+    assert summary.dropped_window_count > 0
+    assert np.array_equal(indices["train"], np.asarray([0, 1, 2, 3, 4, 5, 6], dtype=np.int64))
+    assert np.array_equal(indices["val"], np.asarray([12], dtype=np.int64))
+    assert np.array_equal(indices["test"], np.asarray([18], dtype=np.int64))
+
+    train_ranges = {(int(idx0[i]), int(idx0[i]) + 6) for i in indices["train"]}
+    val_ranges = {(int(idx0[i]), int(idx0[i]) + 6) for i in indices["val"]}
+    test_ranges = {(int(idx0[i]), int(idx0[i]) + 6) for i in indices["test"]}
+    assert max(end for _start, end in train_ranges) <= min(start for start, _end in val_ranges)
+    assert max(end for _start, end in val_ranges) <= min(start for start, _end in test_ranges)
 
 
 def test_eval_reuses_train_split_and_scaler_artifacts(tmp_path):
