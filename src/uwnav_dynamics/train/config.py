@@ -8,7 +8,7 @@
 主要功能：
 1. 解析 `run / data / model / rollout / loss / train` 配置段。
 2. 解析并校验 P0 研发阶段的最小辅助头配置，确保旧 YAML 继续兼容。
-3. 解析 early stopping 与 learning-rate scheduler 配置，统一进入训练强类型对象。
+3. 解析 early stopping、learning-rate scheduler 与训练期 monitor 配置，统一进入训练强类型对象。
 4. 对模型 blocks、索引布局与 runtime schema 执行严格校验。
 5. 保证 train / eval 使用同一份模型结构解释结果，避免配置漂移。
 
@@ -60,10 +60,19 @@ from uwnav_dynamics.models.utils.execution_layout import validate_execution_layo
 
 @dataclass(frozen=True)
 class LossConfig:
-    """训练损失配置，包含主损失类型与辅助监督权重。"""
+    """训练损失配置，包含主损失类型、状态转移复合项与辅助监督权重。"""
     type: str = "nll_diag"
     logvar_clip_min: float = -10.0
     logvar_clip_max: float = 6.0
+    state_huber_weight: float = 0.0
+    state_huber_delta: float = 1.0
+    delta_huber_weight: float = 0.0
+    delta_huber_delta: float = 1.0
+    logvar_reg_weight: float = 0.0
+    tail_weight_power: float = 0.0
+    acc_weight: float = 1.0
+    gyro_weight: float = 1.0
+    vel_weight: float = 1.0
     # P0.1 保守起点建议 0.1 或 0.2；默认 0.0 表示完全关闭 auxiliary DVL loss。
     dvl_obs_weight: float = 0.0
     dvl_obs_delta: float = 1.0
@@ -453,6 +462,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             "y_in_idx",
             "use_thruster_as_replacement",
             "use_hydro_feat",
+            "head_mode",
+            "group_head_hidden",
             "aux_heads",
             "blocks",
         ],
@@ -476,10 +487,16 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             model_d.get("use_thruster_as_replacement", True), where="model.use_thruster_as_replacement"
         ),
         use_hydro_feat=_as_bool(model_d.get("use_hydro_feat", True), where="model.use_hydro_feat"),
+        head_mode=_as_str(model_d.get("head_mode", "joint"), where="model.head_mode"),
+        group_head_hidden=_as_int(model_d.get("group_head_hidden", 128), where="model.group_head_hidden"),
         blocks=blocks,
     )
     validate_feature_indices(model.u_in_idx, upper_bound=model.din, name="model.u_in_idx")
     validate_execution_layout(model.y_in_idx, din=model.din, dout=model.dout)
+    if model.head_mode not in {"joint", "grouped"}:
+        raise ValueError(f"Unsupported model.head_mode={model.head_mode!r} (expect 'joint' or 'grouped')")
+    if model.group_head_hidden <= 0:
+        raise ValueError(f"model.group_head_hidden must be > 0, got {model.group_head_hidden}")
 
     # rollout 契约目前只支持一条执行路径；
     # parser 在这里提前收口，后面的 train / eval 就不再分叉解释。
@@ -505,20 +522,63 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
 
     _check_no_unknown_keys(
         loss_d,
-        allowed=["type", "logvar_clip", "dvl_obs_weight", "dvl_obs_delta"],
+        allowed=[
+            "type",
+            "logvar_clip",
+            "state_huber_weight",
+            "state_huber_delta",
+            "delta_huber_weight",
+            "delta_huber_delta",
+            "logvar_reg_weight",
+            "tail_weight_power",
+            "acc_weight",
+            "gyro_weight",
+            "vel_weight",
+            "dvl_obs_weight",
+            "dvl_obs_delta",
+        ],
         where="loss",
     )
 
     loss_type = str(loss_d.get("type", "nll_diag"))
-    if loss_type != "nll_diag":
-        raise ValueError(f"Unsupported loss.type={loss_type!r} (v0 only supports 'nll_diag')")
+    if loss_type not in {"nll_diag", "transition_balance"}:
+        raise ValueError(
+            f"Unsupported loss.type={loss_type!r} "
+            "(current parser supports 'nll_diag' or 'transition_balance')"
+        )
 
     clip = loss_d.get("logvar_clip", [-10.0, 6.0])
     if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
         raise TypeError("loss.logvar_clip must be a list/tuple of [min,max]")
 
+    state_huber_weight = _as_float(loss_d.get("state_huber_weight", 0.0), where="loss.state_huber_weight")
+    state_huber_delta = _as_float(loss_d.get("state_huber_delta", 1.0), where="loss.state_huber_delta")
+    delta_huber_weight = _as_float(loss_d.get("delta_huber_weight", 0.0), where="loss.delta_huber_weight")
+    delta_huber_delta = _as_float(loss_d.get("delta_huber_delta", 1.0), where="loss.delta_huber_delta")
+    logvar_reg_weight = _as_float(loss_d.get("logvar_reg_weight", 0.0), where="loss.logvar_reg_weight")
+    tail_weight_power = _as_float(loss_d.get("tail_weight_power", 0.0), where="loss.tail_weight_power")
+    acc_weight = _as_float(loss_d.get("acc_weight", 1.0), where="loss.acc_weight")
+    gyro_weight = _as_float(loss_d.get("gyro_weight", 1.0), where="loss.gyro_weight")
+    vel_weight = _as_float(loss_d.get("vel_weight", 1.0), where="loss.vel_weight")
     dvl_obs_weight = _as_float(loss_d.get("dvl_obs_weight", 0.0), where="loss.dvl_obs_weight")
     dvl_obs_delta = _as_float(loss_d.get("dvl_obs_delta", 1.0), where="loss.dvl_obs_delta")
+    if state_huber_weight < 0.0:
+        raise ValueError(f"loss.state_huber_weight must be >= 0, got {state_huber_weight}")
+    if state_huber_delta <= 0.0:
+        raise ValueError(f"loss.state_huber_delta must be > 0, got {state_huber_delta}")
+    if delta_huber_weight < 0.0:
+        raise ValueError(f"loss.delta_huber_weight must be >= 0, got {delta_huber_weight}")
+    if delta_huber_delta <= 0.0:
+        raise ValueError(f"loss.delta_huber_delta must be > 0, got {delta_huber_delta}")
+    if logvar_reg_weight < 0.0:
+        raise ValueError(f"loss.logvar_reg_weight must be >= 0, got {logvar_reg_weight}")
+    if tail_weight_power < 0.0:
+        raise ValueError(f"loss.tail_weight_power must be >= 0, got {tail_weight_power}")
+    if acc_weight <= 0.0 or gyro_weight <= 0.0 or vel_weight <= 0.0:
+        raise ValueError(
+            "loss.acc_weight / loss.gyro_weight / loss.vel_weight must all be > 0 "
+            f"(got {acc_weight}, {gyro_weight}, {vel_weight})"
+        )
     if dvl_obs_weight < 0.0:
         raise ValueError(f"loss.dvl_obs_weight must be >= 0, got {dvl_obs_weight}")
     if dvl_obs_delta <= 0.0:
@@ -528,11 +588,47 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             "loss.dvl_obs_weight > 0 requires model.aux_heads.dvl_obs.enabled=true "
             "to avoid silently enabling an unused auxiliary objective"
         )
+    if loss_type == "nll_diag":
+        if (
+            state_huber_weight != 0.0
+            or delta_huber_weight != 0.0
+            or logvar_reg_weight != 0.0
+            or tail_weight_power != 0.0
+            or acc_weight != 1.0
+            or gyro_weight != 1.0
+            or vel_weight != 1.0
+        ):
+            raise ValueError(
+                "loss.type='nll_diag' must keep transition_balance fields at defaults; "
+                "set loss.type='transition_balance' for grouped/tail/delta reweighting"
+            )
+    else:
+        if (
+            state_huber_weight == 0.0
+            and delta_huber_weight == 0.0
+            and logvar_reg_weight == 0.0
+            and tail_weight_power == 0.0
+            and acc_weight == 1.0
+            and gyro_weight == 1.0
+            and vel_weight == 1.0
+        ):
+            raise ValueError(
+                "loss.type='transition_balance' requires at least one non-default transition-balancing setting"
+            )
 
     loss = LossConfig(
         type=loss_type,
         logvar_clip_min=float(clip[0]),
         logvar_clip_max=float(clip[1]),
+        state_huber_weight=state_huber_weight,
+        state_huber_delta=state_huber_delta,
+        delta_huber_weight=delta_huber_weight,
+        delta_huber_delta=delta_huber_delta,
+        logvar_reg_weight=logvar_reg_weight,
+        tail_weight_power=tail_weight_power,
+        acc_weight=acc_weight,
+        gyro_weight=gyro_weight,
+        vel_weight=vel_weight,
         dvl_obs_weight=dvl_obs_weight,
         dvl_obs_delta=dvl_obs_delta,
     )
@@ -604,6 +700,11 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
 
     if train_cfg.eval_every <= 0:
         raise ValueError(f"train.eval_every must be > 0, got {train_cfg.eval_every}")
+    if train_cfg.metric not in {"val_loss", "val_transition_score"}:
+        raise ValueError(
+            "train.metric must be one of {'val_loss', 'val_transition_score'}, "
+            f"got {train_cfg.metric!r}"
+        )
     if train_cfg.scheduler_factor <= 0.0 or train_cfg.scheduler_factor >= 1.0:
         raise ValueError(
             f"optim.scheduler.factor must be in (0,1), got {train_cfg.scheduler_factor}"

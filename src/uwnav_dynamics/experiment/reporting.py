@@ -9,7 +9,7 @@
 主要功能：
 1. 提供稳定的 summary 列名集合。
 2. 从 `metrics.yaml` 提取 global / final-step / tail / growth / bias 指标。
-3. 从 `train_summary.yaml` 提取训练停止点、学习率与耗时摘要。
+3. 从 `train_summary.yaml` 提取训练停止点、monitor、学习率与耗时摘要。
 
 数据流：
 train_summary.yaml / metrics.yaml
@@ -36,6 +36,12 @@ from typing import Any, Mapping
 TRAIN_SUMMARY_FIELDS = [
     "best_val",
     "best_epoch",
+    "monitor_name",
+    "best_monitor",
+    "best_monitor_epoch",
+    "selected_val_loss",
+    "best_val_loss",
+    "best_val_loss_epoch",
     "epochs_ran",
     "stopped_early",
     "final_lr",
@@ -104,6 +110,12 @@ def flatten_train_summary(summary: Mapping[str, Any] | None) -> dict[str, Any]:
     return {
         "best_val": summary.get("best_val", ""),
         "best_epoch": summary.get("best_epoch", ""),
+        "monitor_name": summary.get("monitor_name", ""),
+        "best_monitor": summary.get("best_monitor", ""),
+        "best_monitor_epoch": summary.get("best_monitor_epoch", ""),
+        "selected_val_loss": summary.get("selected_val_loss", ""),
+        "best_val_loss": summary.get("best_val_loss", ""),
+        "best_val_loss_epoch": summary.get("best_val_loss_epoch", ""),
         "epochs_ran": summary.get("epochs_ran", ""),
         "stopped_early": summary.get("stopped_early", ""),
         "final_lr": summary.get("final_lr", ""),

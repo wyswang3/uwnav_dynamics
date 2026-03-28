@@ -1,160 +1,160 @@
 # uwnav_dynamics
 
-Control-Oriented Data-Driven Dynamics Modeling for Underwater Robots
+面向水下机器人的数据驱动状态转移求解器训练仓库。
 
-## 项目简介
+## 当前目标
 
-`uwnav_dynamics` 面向水下机器人动力学辨识与短时预测控制准备。
-项目当前聚焦一条可复现、可审查的工程链路：从 PWM、IMU、DVL、Power 日志出发，
-构建多频异步数据集，训练短时多步动力学预测模型，并输出可用于后续 MPC / 控制评估的离线结果。
+项目当前不再把重点放在 controller 壳层或历史验证图上，而是聚焦一条更直接的主线：
 
-当前数据频率：
+- 用 `KF / ESKF` 融合预处理统一多源异步观测
+- 生成低噪声、统一时间轴的 `acc / gyro / vel / attitude` 状态代理量
+- 训练 `S1Predictor` 学习“控制输入如何驱动系统状态演化”
+- 以长期 rollout 拟合精度为核心标准筛选模型
+- 最终得到一个可长期使用、误差处于允许范围内的状态转移求解器
+
+## 当前主流水线
+
+```text
+Raw Logs
+-> IMU preprocess
+-> Multi-rate alignment
+-> KF / ESKF fusion
+-> Sliding-window dataset
+-> S1Predictor training
+-> Offline evaluation
+-> Long-replay figures
+```
+
+当前默认数据频率：
 
 - PWM: 100 Hz
 - IMU: 100 Hz
 - DVL: 10 Hz
 - Power: 5 Hz
 
-## 研究目标
+## 当前训练契约
 
-本项目要解决的不是“完整水动力参数闭式辨识”，而是一个更面向控制的研究问题：
+当前训练主线已经切到 KF 融合状态代理量：
 
-- 在多频异步观测条件下构建稳定的数据驱动动力学模型
-- 以推进器输入和传感器历史窗口预测未来短时状态响应
-- 在训练与评估阶段保留稀疏监督、不确定度与 rollout 语义
-- 为未来 MPC / 仿真 / 闭环验证提供统一接口
+- 输入：`29` 维  
+  `PWM 8 + AccKf 3 + GyroKf 3 + VelKf 3 + AttCtx 4 + Power 8`
+- 输出：`9` 维  
+  `AccKf 3 + GyroKf 3 + VelKf 3`
+- 主模型：`S1Predictor`
+- rollout 契约：`y_hat = y0 + cumsum(dY)`
+- 主损失：`transition_balance`
+- 训练期监控指标：`val_transition_score`
 
-## 当前实现范围
+这里的 `val_transition_score` 不再直接读 `logvar`，而是偏向长期状态误差与尾部 horizon 误差，用来避免模型通过放大不确定度掩盖长期 rollout 漂移。
 
-当前仓库已落地的主流水线是：
+## 当前先不要直接开训
 
-```text
-Raw Logs
--> Sensor Preprocess
--> Multi-rate Alignment
--> Sliding Window Dataset
--> Model Training
--> Evaluation
--> Visualization
-```
+当前训练主线虽然已经切到 KF 融合状态代理量，但正式重训前还要先修三处问题：
 
-工程现状：
+1. `KF / ESKF` 初始化仍有未来 DVL 泄漏风险
+2. `x_scaler / y_scaler` 双 scaler 可能破坏 rollout 状态转移语义
+3. 当前模型仍偏“历史窗 -> 固定未来块输出”，还不是严格的一步状态转移算子
 
-- 主时间轴为 100 Hz
-- 当前主模型为 `S1Predictor`（LSTM backbone + optional blocks）
-- rollout 语义为 `y_hat = y0 + cumsum(dY)`
-- 已完成配置契约收口与 train/eval 配置一致性修复
-- 已恢复多频对齐边界的 pytest 冒烟能力
+因此，当前仓库最正确的状态是：
 
-不在当前实现范围内的内容：
+- 可以继续整理、修补和验证训练链
+- 暂不建议直接启动正式 8 卡矩阵
 
-- 闭环 MPC 控制器实现
-- 完整 6-DOF 水动力参数辨识
-- mask-aware 稀疏监督训练的正式落地版本
-- 评估可视化完全解耦后的最终工程形态
-
-## 当前升级状态
-
-已完成：
-
-- `PR6`：多频对齐边界修复与 pytest 冒烟恢复
-- `PR1`：配置契约收口、canonical parser、resolved config 快照
-- `PR2`：split / scaler 单一真源
-- `PR3`：eval-viz 解耦
-
-下一步按顺序推进：
-
-- `PR4`：rollout 索引契约
-- `PR5`：mask-aware 训练评估
-
-详细说明见：
-
-- [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)
-- [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
-- [engineering_roadmap.md](/home/wys/uwnav_dynamics/docs/engineering_roadmap.md)
-- [modeling_roadmap.md](/home/wys/uwnav_dynamics/docs/modeling_roadmap.md)
-
-## 快速上手
+## 快速开始
 
 在仓库根目录：
 
 ```bash
+cd /home/wys/uwnav_dynamics
 export PYTHONPATH=src
 ```
 
-最短文档路径：
+最短阅读顺序：
 
-1. 先读 [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)
-2. 再读 [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
-3. 然后按 [handover_guide.md](/home/wys/uwnav_dynamics/docs/handover_guide.md) 跑通命令链
+1. `docs/handover_guide.md`
+2. `docs/handover_kf_training_server_v2.md`
+3. `docs/快捷命令行.md`
+4. `ARCHITECTURE.md`
 
-最小训练命令示例：
+最短执行顺序：
+
+1. 生成融合基础表
+
+```bash
+python -m uwnav_dynamics.preprocess.fusion.cli_fuse_train_base \
+  -y configs/fusion/pooltest02_kf_eskf_v2.yaml
+```
+
+2. 构建 KF 数据集
+
+```bash
+python -m uwnav_dynamics.preprocess.build_dataset \
+  -y configs/dataset/pooltest02_s1_kf_ctx_v2.yaml
+```
+
+3. 单卡训练 smoke
 
 ```bash
 python -m uwnav_dynamics.cli.train \
-  -y configs/train/pooltest02_s1_lstm_v0.yaml \
-  --device cpu
+  -y configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml
 ```
 
-最小评估命令示例：
+4. 8 卡训练矩阵
 
 ```bash
-python -m uwnav_dynamics.cli.eval \
-  -y configs/train/pooltest02_s1_lstm_v0.yaml \
-  --split test
+python -m uwnav_dynamics.cli.train_matrix \
+  -c configs/launch/pooltest02_s1_kf_ctx_8gpu_v1.yaml
 ```
 
-## 文档导航
+## 结果图约束
 
-- 当前实现说明：[ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)
-- 项目状态：[project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
-- 工程路线：[engineering_roadmap.md](/home/wys/uwnav_dynamics/docs/engineering_roadmap.md)
-- 建模路线：[modeling_roadmap.md](/home/wys/uwnav_dynamics/docs/modeling_roadmap.md)
-- 评估规范：[evaluation_protocol.md](/home/wys/uwnav_dynamics/docs/evaluation_protocol.md)
-- 配置契约：[config_contract.md](/home/wys/uwnav_dynamics/docs/config_contract.md)
-- 数据契约：[dataset_spec.md](/home/wys/uwnav_dynamics/docs/design/dataset_spec.md)
-- 绘图规范：[plot_style_guide.md](/home/wys/uwnav_dynamics/docs/design/plot_style_guide.md)
-- 理论文档入口：[docs/math/README.md](/home/wys/uwnav_dynamics/docs/math/README.md)
-- 仓库索引：[repo_index.md](/home/wys/uwnav_dynamics/docs/repo_index.md)
-- 目录树：[repo_tree.txt](/home/wys/uwnav_dynamics/repo_tree.txt)
+最终图包面向论文和技术汇报复用，统一遵循：
 
-## 复现实验
+- 不要图表标题
+- 只保留坐标轴标题、图例和单位
+- 字体统一 `Times New Roman`
+- 固定导出比例，优先 `4:3`
+- 坐标轴自适应
+- 配套 `figure_notes.md` 说明图片证明对象、run 来源和解释边界
 
-建议把一次实验的最小复现单元理解为：
+## 文档入口
 
-- 原始 train yaml
-- `resolved_train.yaml`
-- `best.pth` / `last.pth`
-- `split_indices.npz`
-- `x_scaler.npz`
-- `y_scaler.npz`
-- `metrics.yaml`
+- 交接入口：`docs/handover_guide.md`
+- 服务器迁移：`docs/handover_kf_training_server_v2.md`
+- 操作说明书：`docs/快捷命令行.md`
+- 系统架构：`ARCHITECTURE.md`
+- 项目状态：`docs/project_status.md`
+- 设计说明：`docs/design/kf_fusion_preprocess_training_v2.md`
+- 评估规范：`docs/evaluation_protocol.md`
+- 文件索引：`docs/repo_index.md`
 
-正式说明见 [evaluation_protocol.md](/home/wys/uwnav_dynamics/docs/evaluation_protocol.md)。
+## 当前不再作为主线的内容
 
-## 参与开发
+当前不再以这些方向作为入口层叙事：
 
-推荐开发入口：
+- 历史 round4 / round5 controller 相关结论
+- 旧的 transition validation 壳层文档
+- 只追求 `val_loss` 的选模口径
+- 把前向填充速度代理量继续当成主监督真源
 
-1. 阅读 [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md) 了解当前阶段
-2. 阅读 [engineering_roadmap.md](/home/wys/uwnav_dynamics/docs/engineering_roadmap.md) 选择待推进 PR
-3. 修改前先核对 [config_contract.md](/home/wys/uwnav_dynamics/docs/config_contract.md) 与 [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)
-4. 提交前至少运行 smoke test，并同步更新相应文档
+这些材料如果仍然存在，只作为历史参考，不再代表当前训练主线。
+
+## 开发要求
+
+- 修改训练、预处理或评估逻辑后，必须同步更新文档
+- 新代码文件必须带中文模块说明
+- 提交前至少运行必要 pytest
+
+推荐最小自检：
+
+```bash
+PYTHONPATH=src PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q \
+  tests/test_kf_eskf_fusion.py \
+  tests/test_transition_balance_design.py \
+  tests/test_trainer_controls.py \
+  tests/test_kf_ctx_training_config_v2.py
+```
 
 ## License
 
-本仓库当前许可证为 `AGPL-3.0-or-later`，与 [LICENSE](/home/wys/uwnav_dynamics/LICENSE) 保持一致。
-
-## Citation
-
-仓库包含 [CITATION.cff](/home/wys/uwnav_dynamics/CITATION.cff)。若你在学术工作中使用本项目，可参考以下 BibTeX：
-
-```bibtex
-@software{uwnav_dynamics_2026,
-  title   = {uwnav_dynamics: Control-Oriented Data-Driven Dynamics Modeling for Underwater Robots},
-  author  = {Wang, YuShu},
-  year    = {2026},
-  url     = {https://github.com/wyswang3/uwnav_dynamics},
-  license = {AGPL-3.0-or-later}
-}
-```
+当前许可证为 `AGPL-3.0-or-later`，见 `LICENSE`。

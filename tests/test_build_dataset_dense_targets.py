@@ -189,3 +189,76 @@ def test_build_dataset_labels_dense_targets_are_finite_after_align(tmp_path):
     labels = np.load(out_dir / "labels.npz", allow_pickle=True)
     y = labels["Y"]
     assert np.isfinite(y).all()
+
+
+def test_build_dataset_can_force_dense_velocity_supervision_for_kf_targets(tmp_path):
+    base_csv = tmp_path / "train_base_kf.csv"
+    out_dir = tmp_path / "processed_kf"
+
+    t = np.arange(16, dtype=float) * 0.01
+    df = pd.DataFrame(
+        {
+            "t_s": t,
+            "dvl_mask": (np.arange(t.size) % 3 == 0).astype(int),
+            "power_mask": np.ones(t.size, dtype=int),
+        }
+    )
+    for i in range(1, 9):
+        df[f"ch{i}_cmd"] = 7.5
+    for i in range(8):
+        df[f"P{i}_W"] = 10.0 + i
+    for col in (
+        "AccKfX_body_mps2",
+        "AccKfY_body_mps2",
+        "AccKfZ_body_mps2",
+        "GyroKfX_body_rad_s",
+        "GyroKfY_body_rad_s",
+        "GyroKfZ_body_rad_s",
+        "VelKfX_body_mps",
+        "VelKfY_body_mps",
+        "VelKfZ_body_mps",
+    ):
+        df[col] = np.linspace(0.0, 1.0, t.size)
+    df.to_csv(base_csv, index=False)
+
+    cfg = DatasetConfig(
+        name="kf_dense_mask_smoke",
+        base_csv=base_csv,
+        time_col="t_s",
+        sliding_cfg=SlidingWindowConfig(
+            input_cols=[
+                *[f"ch{i}_cmd" for i in range(1, 9)],
+                "AccKfX_body_mps2",
+                "AccKfY_body_mps2",
+                "AccKfZ_body_mps2",
+                "GyroKfX_body_rad_s",
+                "GyroKfY_body_rad_s",
+                "GyroKfZ_body_rad_s",
+                "VelKfX_body_mps",
+                "VelKfY_body_mps",
+                "VelKfZ_body_mps",
+                *[f"P{i}_W" for i in range(8)],
+            ],
+            target_cols=[
+                "AccKfX_body_mps2",
+                "AccKfY_body_mps2",
+                "AccKfZ_body_mps2",
+                "GyroKfX_body_rad_s",
+                "GyroKfY_body_rad_s",
+                "GyroKfZ_body_rad_s",
+                "VelKfX_body_mps",
+                "VelKfY_body_mps",
+                "VelKfZ_body_mps",
+            ],
+            hist_len=4,
+            pred_len=2,
+            stride=1,
+            label_dvl_mask_mode="all_true",
+        ),
+        output=DatasetOutputConfig(dir=out_dir, normalize="none"),
+    )
+
+    build_dataset_from_config(cfg)
+
+    with np.load(out_dir / "labels.npz", allow_pickle=True) as z:
+        assert np.asarray(z["dvl_mask"], dtype=bool).all()

@@ -38,10 +38,6 @@
 - 将 `split_strategy` 写入 `resolved_train.yaml`
 - 增加 split contiguous / no-leak / eval artifact reuse 自动化测试
 
-### 说明文档
-
-- [pr2_split_scaler_single_source.md](/home/wys/uwnav_dynamics/docs/pr2_split_scaler_single_source.md)
-
 ## 3. PR4：rollout 索引契约
 
 ### 状态

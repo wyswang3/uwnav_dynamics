@@ -142,6 +142,7 @@ def run_train_base_qa(
     hist_len: Optional[int] = None,
     pred_len: Optional[int] = None,
     key_stat_cols: Optional[Sequence[str]] = None,
+    required_finite_cols: Optional[Sequence[str]] = None,
     dvl_mask_candidates: Sequence[str] = ("dvl_mask", "has_dvl"),
     power_mask_candidates: Sequence[str] = ("power_mask", "has_power"),
 ) -> TrainBaseQaReport:
@@ -237,6 +238,35 @@ def run_train_base_qa(
                 + ". Please re-run align / rebuild dataset."
             ),
         )
+
+    if required_finite_cols is not None:
+        missing_required = [c for c in required_finite_cols if c not in df.columns]
+        if missing_required:
+            _append_issue(
+                issues,
+                level="error",
+                code="missing_required_finite_cols",
+                message=f"{stage} missing required finite columns: {missing_required}",
+            )
+        bad_required_parts: list[str] = []
+        for c in required_finite_cols:
+            if c not in df.columns:
+                continue
+            arr = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
+            n_bad = int((~np.isfinite(arr)).sum())
+            if n_bad > 0:
+                bad_required_parts.append(f"{c}={n_bad}")
+        if bad_required_parts:
+            _append_issue(
+                issues,
+                level="error",
+                code="nonfinite_required_cols",
+                message=(
+                    f"non-finite required cols in {stage}: "
+                    + ", ".join(bad_required_parts)
+                    + ". Please re-run preprocess / fusion before training."
+                ),
+            )
 
     for coverage_name, candidates in (
         ("dvl_mask", dvl_mask_candidates),

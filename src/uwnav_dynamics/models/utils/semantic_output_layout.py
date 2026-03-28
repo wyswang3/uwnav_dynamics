@@ -189,25 +189,31 @@ def validate_target_cols_against_semantic_layout(
 
 def _normalize_target_col_name(col: str) -> str:
     lowered = str(col).strip().lower()
+    canonical = (
+        lowered
+        .replace("kf", "")
+        .replace("state", "")
+        .replace("__", "_")
+    )
     prefix: str
     axis: str
-    if "accx" in lowered:
+    if "accx" in canonical:
         prefix, axis = "acc", "x"
-    elif "accy" in lowered:
+    elif "accy" in canonical:
         prefix, axis = "acc", "y"
-    elif "accz" in lowered:
+    elif "accz" in canonical:
         prefix, axis = "acc", "z"
-    elif "gyrox" in lowered:
+    elif "gyrox" in canonical:
         prefix, axis = "gyro", "x"
-    elif "gyroy" in lowered:
+    elif "gyroy" in canonical:
         prefix, axis = "gyro", "y"
-    elif "gyroz" in lowered:
+    elif "gyroz" in canonical:
         prefix, axis = "gyro", "z"
-    elif "velx" in lowered:
+    elif "velx" in canonical:
         prefix, axis = "vel", "x"
-    elif "vely" in lowered:
+    elif "vely" in canonical:
         prefix, axis = "vel", "y"
-    elif "velz" in lowered:
+    elif "velz" in canonical:
         prefix, axis = "vel", "z"
     else:
         raise ValueError(f"Unsupported target_cols semantic label: {col!r}")

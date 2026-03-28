@@ -68,6 +68,12 @@ class SlidingWindowConfig:
     valid_mask_col: Optional[str] = None
     min_valid_ratio: float = 1.0  # 1.0 表示窗口内所有步都需有效，0.8 允许 20% 无效
 
+    # --- label 侧 DVL 掩码输出策略 ---
+    # 该字段不影响窗口筛选，只决定 labels.npz 中 `dvl_mask` 的落盘方式：
+    #   - "from_base": 沿用基础表中的稀疏 DVL 可用性
+    #   - "all_true" : 把 velocity supervision 当作 dense target（适用于 KF 速度代理量）
+    label_dvl_mask_mode: str = "from_base"
+
     # --- 边界处理 ---
     drop_incomplete: bool = True  # True：丢弃尾部不满 L+H 的窗口
 
@@ -90,6 +96,11 @@ class SlidingWindowConfig:
         if self.min_valid_ratio <= 0.0 or self.min_valid_ratio > 1.0:
             raise ValueError(
                 f"min_valid_ratio must be in (0,1], got {self.min_valid_ratio}"
+            )
+        if self.label_dvl_mask_mode not in {"from_base", "all_true"}:
+            raise ValueError(
+                "label_dvl_mask_mode must be 'from_base' or 'all_true', "
+                f"got {self.label_dvl_mask_mode!r}"
             )
 
 
@@ -306,6 +317,7 @@ def sliding_config_from_dict(d: Dict[str, Any]) -> SlidingWindowConfig:
         valid_mask_col: dvl_valid_mask   # 可选
         min_valid_ratio: 0.8
         drop_incomplete: true
+        label_dvl_mask_mode: from_base
     """
     return SlidingWindowConfig(
         input_cols=d["input_cols"],
@@ -316,4 +328,5 @@ def sliding_config_from_dict(d: Dict[str, Any]) -> SlidingWindowConfig:
         valid_mask_col=d.get("valid_mask_col"),
         min_valid_ratio=float(d.get("min_valid_ratio", 1.0)),
         drop_incomplete=bool(d.get("drop_incomplete", True)),
+        label_dvl_mask_mode=str(d.get("label_dvl_mask_mode", "from_base")),
     )

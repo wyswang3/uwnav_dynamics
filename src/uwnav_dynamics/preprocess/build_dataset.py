@@ -284,6 +284,8 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
         hist_len=int(cfg.sliding_cfg.hist_len),
         pred_len=int(cfg.sliding_cfg.pred_len),
     )
+    if str(cfg.sliding_cfg.label_dvl_mask_mode) == "all_true":
+        dvl_mask_pred = np.ones_like(dvl_mask_pred, dtype=np.float32)
     power_mask_hist, power_mask_pred = _build_mask_windows_from_idx0(
         power_mask_1d,
         sw_res.idx0,
@@ -332,6 +334,7 @@ def build_dataset_from_config(cfg: DatasetConfig) -> None:
         "power_mask_available_ratio": float(power_mask_1d.mean()) if power_mask_1d.size > 0 else 0.0,
         "valid_mask_col": cfg.sliding_cfg.valid_mask_col,
         "min_valid_ratio": float(cfg.sliding_cfg.min_valid_ratio),
+        "label_dvl_mask_mode": str(cfg.sliding_cfg.label_dvl_mask_mode),
         "drop_incomplete": bool(cfg.sliding_cfg.drop_incomplete),
         "normalize": "none (deferred to train split scaler)",
         "normalize_requested": cfg.output.normalize,

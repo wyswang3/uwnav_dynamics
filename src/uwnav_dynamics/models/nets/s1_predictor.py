@@ -10,7 +10,8 @@
 1. 根据 canonical `S1PredictorConfig` 构建 encoder、head 与可选 blocks。
 2. 使用 `u_in_idx / y_in_idx` 从输入特征中切出控制量与状态量。
 3. 在模型构造阶段校验 execution layout contract，并检查 damping 配置与输出语义的一致性。
-4. 在不破坏主 `forward()` 契约的前提下，为训练阶段提供 `forward_with_aux()`。
+4. 支持 joint / grouped 两种 state head，以最小改动增强 `acc / gyro / vel` 三组解码能力。
+5. 在不破坏主 `forward()` 契约的前提下，为训练阶段提供 `forward_with_aux()`。
 
 数据流：
 TrainYamlConfig.model
@@ -19,7 +20,7 @@ S1PredictorConfig
     ↓
 slice u / y from X
     ↓
-encoder + optional blocks
+encoder + optional blocks + shared head trunk
     ↓
 dY / logvar / optional aux heads
 
@@ -134,6 +135,10 @@ class S1PredictorConfig:
     use_thruster_as_replacement: bool = True
     use_hydro_feat: bool = True
 
+    # ---- 输出头策略 ----
+    head_mode: str = "joint"          # "joint" | "grouped"
+    group_head_hidden: int = 128
+
     # ---- P0 辅助观测头 ----
     aux_heads: AuxHeadsConfig = field(default_factory=AuxHeadsConfig)
 
@@ -175,6 +180,10 @@ class S1Predictor(nn.Module):
         validate_feature_indices(cfg.u_in_idx, upper_bound=cfg.din, name="model.u_in_idx")
         validate_execution_layout(cfg.y_in_idx, din=cfg.din, dout=cfg.dout)
         semantic_layout = canonical_semantic_output_layout(cfg.dout)
+        if str(cfg.head_mode) not in {"joint", "grouped"}:
+            raise ValueError(f"Unsupported model.head_mode={cfg.head_mode!r}; expect 'joint' or 'grouped'")
+        if int(cfg.group_head_hidden) <= 0:
+            raise ValueError(f"model.group_head_hidden must be > 0, got {cfg.group_head_hidden}")
 
         # 这些索引在每个 forward 都会用到，注册成 buffer 可以避免反复创建 tensor。
         u_idx = torch.as_tensor(list(cfg.u_in_idx), dtype=torch.long)
@@ -186,6 +195,8 @@ class S1Predictor(nn.Module):
             torch.as_tensor(list(semantic_layout.group_indices["vel"]), dtype=torch.long),
             persistent=False,
         )
+        self._group_order = ("acc", "gyro", "vel")
+        self._group_dims = {group: len(semantic_layout.group_indices[group]) for group in self._group_order}
 
         self.u_in_dim = int(self._u_idx.numel())
         self.y_in_dim = int(self._y_idx.numel())
@@ -231,17 +242,33 @@ class S1Predictor(nn.Module):
         # 主 head 永远存在；额外 blocks 只是在它的输入或输出上叠加结构先验。
         hydro_hidden = int(hydro_cfg.hidden_dim)  # HydroSSMConfig 必须提供 hidden_dim
         head_in = cfg.rnn_hidden + (hydro_hidden if cfg.use_hydro_feat else 0)
-
-        out_dim = cfg.pred_len * cfg.dout * 2  # dY + logvar
-        self.head = nn.Sequential(
+        self.head_trunk = nn.Sequential(
             nn.Linear(head_in, cfg.rnn_hidden),
             nn.ReLU(inplace=True),
-            nn.Linear(cfg.rnn_hidden, out_dim),
         )
+        out_dim = cfg.pred_len * cfg.dout * 2  # dY + logvar
+        if str(cfg.head_mode) == "joint":
+            self.head_joint_out: nn.Module | None = nn.Linear(cfg.rnn_hidden, out_dim)
+            self.group_heads: nn.ModuleDict | None = None
+        else:
+            self.head_joint_out = None
+            self.group_heads = nn.ModuleDict(
+                {
+                    group: nn.Sequential(
+                        nn.Linear(cfg.rnn_hidden, int(cfg.group_head_hidden)),
+                        nn.ReLU(inplace=True),
+                        nn.Linear(
+                            int(cfg.group_head_hidden),
+                            cfg.pred_len * len(semantic_layout.group_indices[group]) * 2,
+                        ),
+                    )
+                    for group in self._group_order
+                }
+            )
 
         if cfg.aux_heads.dvl_obs.enabled:
             self.dvl_obs_head = nn.Sequential(
-                nn.Linear(head_in, int(cfg.aux_heads.dvl_obs.hidden)),
+                nn.Linear(cfg.rnn_hidden, int(cfg.aux_heads.dvl_obs.hidden)),
                 nn.ReLU(inplace=True),
                 nn.Linear(int(cfg.aux_heads.dvl_obs.hidden), cfg.pred_len * self.dvl_obs_dim),
             )
@@ -364,11 +391,25 @@ class S1Predictor(nn.Module):
             h_feat = h_rnn
 
         # baseline head 先给出最基础的 `dY + logvar`，再由后续 blocks 做可解释修正。
-        out = self.head(h_feat)  # (B, H*Dout*2)
-        B = out.shape[0]
+        head_feat = self.head_trunk(h_feat)
+        B = head_feat.shape[0]
         H = self.cfg.pred_len
         D = self.cfg.dout
-        out = out.view(B, H, D * 2)
+        if self.head_joint_out is not None:
+            out = self.head_joint_out(head_feat)  # (B, H*Dout*2)
+        else:
+            if self.group_heads is None:
+                raise RuntimeError("grouped head mode requires self.group_heads")
+            dy_parts = []
+            logvar_parts = []
+            for group in self._group_order:
+                group_dim = int(self._group_dims[group])
+                part = self.group_heads[group](head_feat).view(B, H, group_dim * 2)
+                dy_parts.append(part[:, :, :group_dim])
+                logvar_parts.append(part[:, :, group_dim:])
+            out = torch.cat([torch.cat(dy_parts, dim=-1), torch.cat(logvar_parts, dim=-1)], dim=-1)
+        if out.ndim == 2:
+            out = out.view(B, H, D * 2)
         dY = out[:, :, :D]
         logvar_base = out[:, :, D:]
 
@@ -389,7 +430,7 @@ class S1Predictor(nn.Module):
         aux: dict[str, torch.Tensor | None] = {"dvl_obs": None}
         if self.dvl_obs_head is not None:
             # 辅助头与主 head 共用同一份高层特征，避免再维护第二条编码器路径。
-            dvl_out = self.dvl_obs_head(h_feat).view(B, H, self.dvl_obs_dim)
+            dvl_out = self.dvl_obs_head(head_feat).view(B, H, self.dvl_obs_dim)
             aux["dvl_obs"] = dvl_out
 
         return dY, logvar, aux

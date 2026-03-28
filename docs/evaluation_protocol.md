@@ -9,6 +9,19 @@
 - smoke test 与正式实验如何区分
 - 结果如何记录，便于复现与论文写作
 
+补充说明：
+
+- 当前训练链已经支持 `train.metric=val_transition_score`
+- 因此 `train_summary.yaml` 与 `train_history.csv` 不应只记录 `val_loss`
+- 对新的长期拟合主线，应同时记录：
+  - `monitor_name`
+  - `monitor_value`
+  - `best_monitor`
+  - `best_val_loss`
+- 兼容历史字段时要注意：
+  - `best_val` 仍保留为 legacy 字段
+  - 当 `train.metric != val_loss` 时，`best_val` 表示“最佳 monitor 值”，不是“最小 val_loss”
+
 ## 2. 数据 split 规则
 
 评估必须与训练共享同一套数据划分边界。
@@ -166,6 +179,13 @@ supervision:
 - masked metrics
   - 由运行时 `target_mask` 单独裁决
   - 当前第一阶段主要用于 velocity 稀疏监督
+
+补充边界：
+
+- 对历史 `Vel_state + dvl_mask` 数据集，上述语义保持不变
+- 对当前 `KF ctx v2` 这类 dense velocity supervision 数据集，`labels.npz["dvl_mask"]` 可能被有意写成全真
+- 这时 masked metrics 在数值上仍然合法，但不再等价于“仅 DVL 命中时刻的速度监督指标”
+- 因此如果切到 KF dense target 主线，不能再沿用旧阶段“masked metrics = 稀疏 DVL 监督表现”的解释
 
 注意：
 

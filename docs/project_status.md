@@ -1,215 +1,115 @@
 # 项目当前状态
 
-更新时间：2026-03-06
+更新时间：2026-03-28
 
-## 1. 当前阶段摘要
+## 1. 当前阶段
 
-项目当前处于“工程主链路收口与科研化整理”阶段。
+项目当前处于：
 
-当前目标不是继续扩展功能面，而是先把以下基础打牢：
+**`KF / ESKF 融合预处理已落地，新的 KF 状态代理量训练链已接通，但正式重训前还需先修三处关键阻塞`**
 
-- 多频异步数据链路可以稳定跑通
-- train / eval / artifact 契约保持一致
-- 关键冒烟测试可在仓库根目录直接执行
-- 文档能够准确说明当前实现与未来路线
+当前主目标是得到一个能够长期递推、误差处于允许范围内的状态转移求解器。
 
-## 2. 当前 baseline
+## 2. 当前已经完成的内容
 
-当前 baseline 形态：
+### 数据预处理
 
-- 主时间轴：100 Hz
-- 输入：`PWM 8 + IMU 6 + Vel_state 3 + Power 8`
-- 输出：`Acc 3 + Gyro 3 + Vel_state 3`
-- 模型：`S1Predictor`
-- rollout：`y_hat = y0 + cumsum(dY)`
-- loss：对角高斯 NLL baseline
+- IMU 坐标变换、去重力、bias/filter 链已经稳定。
+- 多频对齐主链已经稳定。
+- `KF / ESKF` 融合模块已落地：
+  - `src/uwnav_dynamics/preprocess/fusion/kf_eskf.py`
+  - `src/uwnav_dynamics/preprocess/fusion/cli_fuse_train_base.py`
+- 当前融合基础表路径：
+  - `out/train/2026-01-10_pooltest02_train_base_kf_v2.csv`
 
-## 3. 当前验证结果
+### 数据集契约
 
-截至当前文档版本，最重要的回归结果是：
+- 当前主数据集契约：
+  - `configs/dataset/pooltest02_s1_kf_ctx_v2.yaml`
+- 输入为 `29` 维：
+  - `PWM 8 + AccKf 3 + GyroKf 3 + VelKf 3 + AttCtx 4 + Power 8`
+- 目标为 `9` 维：
+  - `AccKf 3 + GyroKf 3 + VelKf 3`
+- `VelKf` 已按 dense supervision 进入训练
 
-- `PR6` 后，`pytest -q` 的最小收集与对齐边界测试恢复
-- `PR1` 后，train / eval 配置 parity 已由自动化测试覆盖
-- `PR2` 后，train / eval 对 split / scaler artifact 的共享与复用已由自动化测试覆盖
-- `PR3` 后，数值评估与绘图编排职责已拆开，CLI 级编排与失败保留语义已有测试覆盖
-- `PR4` 后，train / eval / viz 的状态布局解释已统一收口为 execution / semantic 两层 contract
-- `PR5` 第一阶段后，mask-aware supervision 已进入训练 loss 与 eval masked metrics 主路径
-- `resolved_train.yaml` 已能记录训练最终执行配置、关键 artifact 路径与 `split_strategy`
+### 训练链
 
-建议把以下类型的测试视为当前最小健康信号：
+- `transition_balance` 损失已接入训练主路径
+- grouped head 已接入 `S1Predictor`
+- 训练期监控指标已支持：
+  - `val_loss`
+  - `val_transition_score`
+- 当前推荐训练配置：
+  - `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml`
+- 当前推荐 8 卡矩阵：
+  - `configs/launch/pooltest02_s1_kf_ctx_8gpu_v1.yaml`
 
-- import smoke
-- CLI `--help`
-- layout / runtime config tests
-- eval config parity tests
-- split / scaler no-leak tests
+## 3. 当前最重要的工程事实
 
-## 4. 已完成升级
+当前要特别明确三件事：
 
-### 4.1 PR6：对齐边界与 pytest 冒烟修复
+1. 新的状态代理量链已经落地，但还没有完成新一轮正式重训。
+2. 当前训练代码已经能用 `val_transition_score` 选 best ckpt，不再只能按 `val_loss`。
+3. 当前入口层不再推荐继续沿用旧的 controller / transition validation 叙事。
 
-已完成内容：
+## 3.1 当前暂停重训的原因
 
-- 修复多频对齐中的浮点时间边界问题
-- 恢复 `pytest` 对正式测试目录的稳定收集
-- 增加最小对齐回归测试
+最近一次训练链审查确认，当前还有三处关键问题需要先修：
 
-### 4.2 PR1：配置契约收口
+1. 融合初始化泄漏  
+   `src/uwnav_dynamics/preprocess/fusion/kf_eskf.py` 当前会用整段序列里第一条有效 DVL 初始化速度，
+   这不满足严格因果约束。
 
-已完成内容：
+2. 共享状态维 scaler 语义错位  
+   `src/uwnav_dynamics/train/data_pipeline.py` 当前仍分别拟合 `x_scaler / y_scaler`，
+   但 rollout 训练会把从 `X` 取出的 `y0` 与 `Y` 放到同一状态转移损失中比较。
 
-- 明确 `train/config.py` 为 canonical parser
-- eval 侧复用训练侧完整配置解析结果
-- 冻结纯配置 dataclass
-- 扩展 `resolved_train.yaml`
-- 增加 train / eval parity test
+3. 模型形式仍偏“轨迹预测器”  
+   当前 `hist_len=100, pred_len=10`，模型还是“历史窗 -> 固定未来块输出”，
+   还不是更接近系统状态方程形式的 `x_{t+1}=f(x_t,u_t)` 一步状态转移模型。
 
-### 4.3 PR2：split / scaler 单一真源
+## 4. 当前可直接复用的产物
 
-已完成内容：
+- 融合基础表：
+  - `out/train/2026-01-10_pooltest02_train_base_kf_v2.csv`
+- KF 数据集：
+  - `data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2/`
+- 训练配置：
+  - `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml`
+- 8 卡矩阵：
+  - `configs/launch/pooltest02_s1_kf_ctx_8gpu_v1.yaml`
+- 服务器迁移文档：
+  - `docs/handover_kf_training_server_v2.md`
 
-- 明确 `contiguous_v1` 为当前 canonical split 语义
-- `split_indices.npz` 写入 `split_strategy` 元数据
-- 训练运行目录内的 split / scaler artifact 由 train 创建后供 eval 复用
-- legacy `train.data.build_loaders()` 复用 canonical split builder，避免语义漂移
-- `resolved_train.yaml` 记录 `split_strategy`
-- 增加 split contiguous / no-leak / eval artifact reuse 测试
+## 5. 当前风险与边界
 
-详细说明见：
+### 已知边界
 
-- [pr2_split_scaler_single_source.md](/home/wys/uwnav_dynamics/docs/pr2_split_scaler_single_source.md)
+- KF 输出应表述为“低噪声状态代理量”，不是绝对真值。
+- 当前主输出仍是 `9` 维，不包含姿态角主监督。
+- 当前数据集 `pred_len` 仍是 `10`，长期能力仍主要依赖递推稳定性和后验筛选，而不是一次性拉长主监督 horizon。
 
-### 4.4 PR3：eval-viz 解耦
+### 当前风险
 
-已完成内容：
+- 8 卡矩阵尚未正式重跑，当前还没有新的 top2。
+- 新图包还没按新模型重生成。
+- 若服务器环境缺少字体，论文图风格会回退。
 
-- `evaluate.py` 收敛为纯数值评估与 artifact 落盘，不再直接执行绘图
-- `EvalConfig` 收缩为数值评估运行时配置，不再承载 plot runtime fields
-- `cli/eval.py` 成为正式用户入口，负责串联“数值评估 -> viz 出图”
-- `cli/pipeline.py` 通过 `cli/eval.py` 实现 `train -> eval -> viz` 组合调用
-- `evaluate.py --plots` 改为显式弃用，提示用户迁移到 CLI 入口
-- 增加 CLI 编排、显式弃用与“绘图失败但数值 artifact 保留”测试
+## 6. 当前推荐动作
 
-### 4.5 PR5：mask-aware 训练评估第一阶段
+当前建议严格按这个顺序推进：
 
-已完成内容：
-
-- 新增 `target_mask` 运行时链路，训练 batch 现在可携带 `(X, Y, target_mask)`
-- DVL velocity 稀疏监督已通过 masked NLL 进入训练主路径
-- 评估目录同时保留 dense 与 masked horizon artifact
-- horizon / model-compare 图在 masked CSV 存在时可并行输出 masked 图
-- `pred_samples.npz` 仍保持 `y_hat / y_true / logvar` 三键 schema
-
-### 4.6 PR5 兼容性热修复：`dvl_mask` shape 对齐
-
-线上训练暴露的问题：
-
-- 真实 `labels.npz["dvl_mask"]` 可能保存为 `(N, H, 1)`
-- 但 PR5 初版 supervision mask helper 只接受 `(N, H)`
-- 这会在 `prepare_train_data()` 构造 `target_mask` 时触发 shape mismatch
-
-本次修复方法：
-
-- 不修改训练/评估主流程
-- 不修改 `labels.npz` 主 artifact 命名与语义
-- 在 `src/uwnav_dynamics/supervision_mask.py` 中集中兼容：
-  - `(N, H)`
-  - `(N, H, 1)`
-- 对除上述两类之外的非法 shape 继续显式报错
-
-这样做的原因是：
-
-- 历史数据集无需重建
-- train / eval 共用同一 helper，避免兼容逻辑分散
-- 回滚面最小，只涉及 mask helper 与相关测试
-
-### 4.7 训练稳定性热修复：输入侧 `NaN` 清洗
-
-线上训练暴露的问题：
-
-- 当前 baseline 输入包含 `Power 8` 辅助通道
-- 对齐与数据集构建阶段允许这些稀疏辅助通道在缺测段保留 `NaN`
-- `fit_scaler()` 会忽略 `NaN` 拟合统计量，但 `transform()` 不会自动消除 `NaN`
-- 结果是：训练数据若直接把缩放后的 `X` 喂给 LSTM，首个 batch 就可能产出 `train_loss=nan`
-
-本次修复方法：
-
-- 不修改原始 `features.npz / labels.npz` artifact
-- 不修改 `Y` 与 `target_mask` 的监督语义
-- 在 `src/uwnav_dynamics/train/data_pipeline.py` 的训练消费端集中处理：
-  - `X` 经 scaler 后若仍含 `NaN/Inf`，统一置为 `0.0`
-  - 这里的 `0.0` 对应 z-score 后的 train 均值
-  - `Y` 继续保持严格有限值校验；若目标里仍有 `NaN/Inf`，直接显式报错
-
-这样做的原因是：
-
-- 不需要重建历史数据集
-- 不改变 PR2 的 split/scaler artifact 契约
-- 不改变 PR5 的 `target_mask` runtime 真源
-- 回滚面最小，只涉及 `train.data_pipeline` 与回归测试
-
-### 4.8 训练兼容性热修复：masked-out 目标中的 `NaN`
-
-线上继续暴露的问题：
-
-- 部分历史/迁移后的 processed dataset 中，`Y` 的 velocity 位置仍可能保留 `NaN`
-- 这些 `NaN` 与 `dvl_mask` 对应，语义上属于“无监督”的 masked-out 稀疏目标
-- 若训练侧一律要求 `Y` 全 finite，就会在进入第一个 epoch 前直接报错
-
-本次修复方法：
-
-- 继续坚持 PR5 的原则：runtime 监督有效性真源是 batch `target_mask`
-- 在 `src/uwnav_dynamics/train/data_pipeline.py` 中增加兼容逻辑：
-  - 若 `Y` 的非有限值只出现在 `target_mask=False` 的位置，则统一置为 `0.0`
-  - 若非有限值出现在活跃监督位置（`target_mask=True`），继续显式报错
-
-这样做的原因是：
-
-- 被 mask 掉的位置本就不会进入主 state masked NLL 或 DVL auxiliary loss
-- 兼容旧 dataset artifact 无需重建
-- 仍然保留对真正监督错误的 fail-fast 语义
-
-补充说明：
-
-- 在线上进一步发现的旧 artifact 中，还可能存在：
-  - `dvl_mask=true`
-  - 但 `Y[..., vel]` 实际仍为 `NaN`
-- 这类位置本质上不应继续参与 velocity 稀疏监督
-- 当前训练侧已在 `train.data_pipeline` 中增加保守降级：
-  - 先把 velocity supervision mask 与 `Y[..., vel]` 的有限性做交集
-  - 再仅对降级后的 masked-out 位置执行 `NaN -> 0.0` 的兼容清洗
-
-这样可以兼容历史 processed dataset，
-同时不放松 acc/gyro 或其他活跃监督位置的 fail-fast 约束。
-
-## 5. 下一步升级顺序
-
-建议按以下顺序推进：
-
-1. `PR5` 后续阶段：更细粒度的 masked visualization 与稀疏监督表达
-
-排序原则：
-
-- 先解决训练/评估结果是否一致
-- 再解决 rollout 语义是否稳定
-- 再拆职责边界
-- 最后再推进指标与 loss 的科研化升级
-
-## 6. 当前技术债
-
-当前仍需重点跟踪的技术债：
-
-- rollout 样例图已支持读取 `pred_context.npz["target_mask"]`，
-  但更细粒度的 masked visualization 仍可继续完善
-- 评估和绘图的更细粒度 masked 表达仍可继续完善
-- 历史 `split_indices.npz` 可能缺少 `split_strategy` 元数据，当前仅通过 warning 做兼容提示
-- 理论文档需持续跟进工程真实状态
-
-## 7. 新人建议入口
-
-建议阅读顺序：
-
-1. [README.md](/home/wys/uwnav_dynamics/README.md)
-2. [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)
-3. [engineering_roadmap.md](/home/wys/uwnav_dynamics/docs/engineering_roadmap.md)
-4. [handover_guide.md](/home/wys/uwnav_dynamics/docs/handover_guide.md)
+1. 修复融合初始化泄漏
+2. 修复共享状态维 scaler 契约
+3. 收口一步状态转移训练配置
+4. 再做融合基础表生成、数据集构建和单卡 smoke
+5. 最后才进入 8 卡矩阵与 top2 图包
+
+## 7. 当前不建议再作为入口层保留的叙事
+
+以下内容如果仍然存在，只作为历史参考：
+
+- round4 / round5 的 controller 相关叙述
+- 旧的 transition validation 图包结论
+- 只用 `val_loss` 判断模型优劣
+- 旧的前向填充速度代理量训练口径

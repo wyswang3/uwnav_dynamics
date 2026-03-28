@@ -9,6 +9,7 @@
 1. 构造恒定验证损失场景。
 2. 验证 `ReduceLROnPlateau` 会降低学习率。
 3. 验证 early stopping 会提前结束训练并记录 history。
+4. 验证自定义 monitor 可以驱动 best ckpt 选择与 early stopping。
 
 数据流：
 dummy model + synthetic dataloader
@@ -85,3 +86,56 @@ def test_fit_supports_scheduler_and_early_stopping(tmp_path: Path) -> None:
     assert len(res["history"]) == 3
     assert (tmp_path / "best.pth").exists()
     assert (tmp_path / "last.pth").exists()
+
+
+def test_fit_can_select_best_epoch_by_custom_monitor(tmp_path: Path) -> None:
+    x = torch.zeros((4, 4, 5), dtype=torch.float32)
+    y = torch.zeros((4, 2, 3), dtype=torch.float32)
+    loader = DataLoader(TensorDataset(x, y), batch_size=4, shuffle=False)
+
+    cfg = TrainConfig(
+        epochs=10,
+        eval_every=1,
+        lr=1.0e-3,
+        weight_decay=0.0,
+        grad_clip=0.0,
+        device="cpu",
+        amp=False,
+        out_dir=Path(tmp_path),
+        metric="val_transition_score",
+        scheduler_name="reduce_on_plateau",
+        scheduler_factor=0.5,
+        scheduler_patience=0,
+        scheduler_min_lr=1.0e-5,
+        early_stopping_patience=1,
+        early_stopping_min_delta=0.0,
+    )
+
+    monitor_values = iter([3.0, 2.0, 2.5])
+
+    def _monitor(model, x, y, target_mask=None):
+        del model, x, y, target_mask
+        return torch.tensor(next(monitor_values), dtype=torch.float32)
+
+    res = fit(
+        _DummyModel(),
+        loader,
+        loader,
+        cfg,
+        _constant_loss,
+        device=torch.device("cpu"),
+        run_dir=tmp_path,
+        amp=False,
+        monitor_fn=_monitor,
+        monitor_name="val_transition_score",
+    )
+
+    assert res["stopped_early"] is True
+    assert res["epochs_ran"] == 3
+    assert res["best_epoch"] == 2
+    assert res["monitor_name"] == "val_transition_score"
+    assert res["best_monitor"] == 2.0
+    assert res["selected_val_loss"] == 1.0
+    assert res["best_val_loss"] == 1.0
+    assert res["final_lr"] < 1.0e-3
+    assert res["history"][1]["is_best"] is True

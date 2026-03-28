@@ -1,6 +1,13 @@
 # 仓库关键文件索引
 
-生成时间：2026-03-06
+生成时间：2026-03-28
+
+注意：
+
+- 本文是代码与文件定位索引，不是当前交接入口。
+- 初次接手请先读 [handover_guide.md](/home/wys/uwnav_dynamics/docs/handover_guide.md)、
+  [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md) 和
+  [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)。
 
 说明：以下索引按“入口脚本 / 模型 / 配置 / 解析逻辑 / rollout-evaluate-plot-viz”分组；每条包含 `路径 + 一句话职责 + 可能输入输出`。
 
@@ -9,7 +16,7 @@
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
 | `src/uwnav_dynamics/cli/train.py` | 训练 CLI 包装器，解析命令行并转发到 `uwnav_dynamics.train.run_train`。 | 输入：`--yaml` 与可选覆盖参数（device/epochs/batch_size/data_dir）；输出：触发训练进程、终端打印预期 run 目录。 |
-| `src/uwnav_dynamics/train/run_train.py` | 训练主入口：加载 YAML 配置、构建数据加载器/模型/损失并调用 `fit`。 | 输入：train YAML、`features.npz/labels.npz`；输出：`best.pth`、`last.pth`（位于 `run.out_dir/variant`），训练日志。 |
+| `src/uwnav_dynamics/train/run_train.py` | 训练主入口：加载 YAML 配置、构建数据加载器/模型/损失并调用 `fit`。 | 输入：train YAML、`features.npz/labels.npz`；输出：`best.pth`、`last.pth`、`train_summary.yaml`、`train_history.csv`。 |
 | `src/uwnav_dynamics/cli/pipeline.py` | 一键流水线入口，串联“训练 -> 选 ckpt -> 评估（可选画图）”。 | 输入：train YAML 与训练/评估参数；输出：训练 ckpt + 评估产物目录（含 metrics/plots）。 |
 
 ## 2) 评估入口脚本
@@ -26,6 +33,8 @@
 | `src/uwnav_dynamics/preprocess/build_dataset.py` | 从对齐训练表构建滑窗监督数据集，并可做标准化。 | 输入：`configs/dataset/*_s1.yaml` + `out/train/*_train_base.csv`；输出：`features.npz`、`labels.npz`、`meta.yaml`。 |
 | `src/uwnav_dynamics/preprocess/align/cli_align.py` | 对齐 CLI 入口，从对齐 YAML 构造 `AlignConfig` 并执行表构建。 | 输入：`configs/align/*.yaml`；输出：`out/train/*_train_base.csv`。 |
 | `src/uwnav_dynamics/preprocess/align/aligner.py` | 多传感器时间轴对齐核心实现（IMU/PWM/DVL/Power -> 主时间轴训练表）。 | 输入：IMU 处理后 CSV、PWM CSV、可选 DVL/Power CSV；输出：对齐后的 `DataFrame` 或训练表 CSV。 |
+| `src/uwnav_dynamics/preprocess/fusion/cli_fuse_train_base.py` | KF/ESKF 融合 CLI 入口，把 `train_base.csv + imu_proc.csv` 变成 `train_base_kf_v2.csv`。 | 输入：`configs/fusion/*.yaml`；输出：`out/train/*_train_base_kf_v2.csv`。 |
+| `src/uwnav_dynamics/preprocess/fusion/kf_eskf.py` | 训练导向的因果 KF/ESKF 风格融合实现，输出 `AccKf/GyroKf/VelKf/AttCtx`。 | 输入：对齐基础表与 IMU 预处理表；输出：融合后的训练基础表。 |
 | `src/uwnav_dynamics/preprocess/imu/pipeline.py` | IMU 总管线（transform->gravity->bias->filter）并支持 CSV 入口。 | 输入：原始 IMU CSV 或数组 + `ImuPreprocessConfig`；输出：`*_proc.csv`、`ImuPreprocessDiag`。 |
 | `src/uwnav_dynamics/preprocess/dvl/pipeline.py` | DVL 总管线（时间列/速度列选择、单位统一、有效性与附加列导出）。 | 输入：原始 DVL CSV + `DvlPreprocessConfig`；输出：`*_proc.csv`、`DvlPreprocessDiag`。 |
 | `src/uwnav_dynamics/preprocess/power/pipeline.py` | 根据 `DatasetSpec` 读取 Volt 日志并生成 8 路功率辅助数据。 | 输入：dataset spec（含 volt 路径）；输出：`out/.../aux_power/*_power8.csv`。 |
@@ -42,7 +51,7 @@
 | `src/uwnav_dynamics/models/blocks/uncertainty_head.py` | 异方差不确定度头，输出对角 log-variance。 | 输入：`feat:(B,feat_dim)`；输出：`logvar:(B,H,9)`。 |
 | `src/uwnav_dynamics/models/utils/execution_layout.py` | rollout 执行布局 helper，校验 `y_in_idx` 并从 `X` 提取 `y0`。 | 输入：`cfg_model.y_in_idx`、`X:(B,L,Din)`；输出：执行层索引 metadata 与 `y0:(B,Dout)`。 |
 | `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | 输出语义布局 helper，统一组件标签、`acc/gyro/vel` 分组与 legacy fallback。 | 输入：`metrics.yaml` 或 `target_cols`；输出：semantic layout metadata。 |
-| `src/uwnav_dynamics/supervision_mask.py` | 监督有效性 helper，将 `dvl_mask + semantic layout` 构造成 `target_mask`。 | 输入：`labels.npz["dvl_mask"]` 与 semantic layout；输出：`target_mask:(N,H,D)`。 |
+| `src/uwnav_dynamics/supervision_mask.py` | 监督有效性 helper，将 `dvl_mask + semantic layout` 构造成 `target_mask`。 | 输入：`labels.npz["dvl_mask"]` 与 semantic layout；输出：`target_mask:(N,H,D)`；对 KF dense target 数据集，`dvl_mask` 也可以是全真。 |
 | `src/uwnav_dynamics/models/utils/rollout.py` | rollout 工具函数（从 `dY` 累加得到未来状态序列）。 | 输入：`y0` 与 `dY`；输出：`y_hat`。 |
 | `src/uwnav_dynamics/models/losses/nll.py` | 对角高斯 NLL 损失定义，支持 dense 与 masked 两条监督路径。 | 输入：`y_hat/y_true/logvar` 与可选 `target_mask`；输出：标量 loss。 |
 | `src/uwnav_dynamics/models/blocks/__init__.py` | blocks 统一导出入口。 | 输入：无；输出：模块类与配置类命名空间。 |
@@ -51,10 +60,13 @@
 
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
-| `configs/train/pooltest02_s1_lstm_v0.yaml` | 训练总配置（run/data/model/rollout/loss/optim/train）。 | 输入：被 `train/config.py` 读取；输出：驱动训练、评估路径与超参数。 |
+| `configs/train/pooltest02_s1_lstm_v0.yaml` | 历史训练总配置（run/data/model/rollout/loss/optim/train）。 | 输入：被 `train/config.py` 读取；输出：驱动历史 baseline 路线。 |
+| `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml` | 当前 KF 主线训练配置，启用 grouped head、transition_balance 与 `val_transition_score`。 | 输入：被 `train/config.py` 读取；输出：驱动当前长期拟合训练主线。 |
 | `configs/dataset/pooltest02.yaml` | 原始数据集规格（传感器文件选择、pwm_timebase、valid_window）。 | 输入：被 `DatasetSpec.load` 读取；输出：解析后的传感器路径与 reader kwargs。 |
 | `configs/dataset/pooltest02_s1.yaml` | 数据集构建配置（base_table + sliding_window + output）。 | 输入：被 `build_dataset.py` 读取；输出：决定 `features/labels/meta` 生成方式。 |
+| `configs/dataset/pooltest02_s1_kf_ctx_v2.yaml` | KF 融合状态代理量数据集配置（29 维输入、9 维 KF target）。 | 输入：被 `build_dataset.py` 读取；输出：`data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2`。 |
 | `configs/align/pooltest02.yaml` | 多传感器对齐参数与输入输出路径配置。 | 输入：被 `cli_align.py` 读取；输出：决定训练基础表对齐策略。 |
+| `configs/fusion/pooltest02_kf_eskf_v2.yaml` | KF/ESKF 融合参数与输入输出路径配置。 | 输入：被 `cli_fuse_train_base.py` 读取；输出：决定 `train_base_kf_v2.csv` 生成策略。 |
 | `configs/preprocess/imu.yaml` | IMU 预处理策略文档化配置（时间列优先级、列映射、单位与 QA）。 | 输入：当前主要作规范参考；输出：为 IMU 预处理参数提供模板。 |
 | `configs/model/s1_u1_hyrossm.yaml` | 模型配置占位文件。 | 输入：当前为空文件；输出：暂无（待补充）。 |
 | `configs/dataset/pooltest01.yaml` | 数据集配置占位文件。 | 输入：当前为空文件；输出：暂无（待补充）。 |
@@ -76,7 +88,7 @@
 
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
-| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：dense/masked metrics、CSV、`pred_samples.npz` 与 layout/supervision/control_readiness metadata。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：dense/masked metrics、CSV、`pred_samples.npz` 与 layout/supervision/control_readiness metadata；对 KF dense target 数据集，masked 结果可能与 dense 高度接近。 |
 | `src/uwnav_dynamics/models/utils/execution_layout.py` | rollout 执行索引 helper。 | 输入：`cfg_model.y_in_idx` 与 `X`；输出：`y0`。 |
 | `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | rollout 输出语义 helper。 | 输入：`metrics.yaml` 或 `target_cols`；输出：分组解释与 fallback 结果。 |
 | `src/uwnav_dynamics/supervision_mask.py` | supervision mask helper。 | 输入：`dvl_mask` 与 semantic layout；输出：`target_mask`。 |

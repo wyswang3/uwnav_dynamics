@@ -146,3 +146,23 @@ def test_run_train_base_qa_warns_on_zero_dvl_coverage():
     assert report.warning_count >= 1
     assert "zero_dvl_mask_coverage" in text
     assert "ratio=0.000000" in text
+
+
+def test_run_train_base_qa_rejects_nonfinite_required_columns():
+    df = _make_base_df()
+    df.loc[3, "P0_W"] = np.nan
+
+    report = run_train_base_qa(
+        df,
+        stage="base_csv",
+        time_col="t_s",
+        dense_target_cols=IMU_COLS,
+        hist_len=4,
+        pred_len=2,
+        key_stat_cols=IMU_COLS,
+        required_finite_cols=("P0_W",),
+    )
+
+    assert not report.passed
+    with pytest.raises(ValueError, match="non-finite required cols"):
+        assert_train_base_qa_pass(report)

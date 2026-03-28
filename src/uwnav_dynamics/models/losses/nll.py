@@ -8,7 +8,8 @@
 主要功能：
 1. 计算标准 dense diagonal Gaussian NLL。
 2. 计算 `target_mask` 驱动的 masked diagonal Gaussian NLL。
-3. 在有效监督元素数为 0 时采用 fail-fast 策略，避免静默返回无意义损失。
+3. 暴露 elementwise NLL，供复合状态转移损失做二次加权。
+4. 在有效监督元素数为 0 时采用 fail-fast 策略，避免静默返回无意义损失。
 
 数据流：
 y_hat / y_true / logvar / optional target_mask
@@ -40,6 +41,11 @@ def _elementwise_gaussian_nll(y_hat: torch.Tensor, y_true: torch.Tensor, logvar:
     e2 = (y_hat - y_true) ** 2
     inv_var = torch.exp(-logvar)
     return 0.5 * (inv_var * e2 + logvar)
+
+
+def gaussian_nll_diag_elements(y_hat: torch.Tensor, y_true: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    """返回逐元素 diagonal Gaussian NLL，供上层复合损失自行加权聚合。"""
+    return _elementwise_gaussian_nll(y_hat, y_true, logvar)
 
 
 def gaussian_nll_diag(y_hat: torch.Tensor, y_true: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:

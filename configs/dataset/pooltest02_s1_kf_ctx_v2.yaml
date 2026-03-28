@@ -1,0 +1,68 @@
+dataset:
+  name: "2026-01-10_pooltest02_s1_kf_ctx_v2"
+
+  # 基础表由后续因果 KF / ESKF 融合预处理生成。
+  # 这一版不再使用前向填充速度状态，而是改用统一 100 Hz 的 KF 状态代理量。
+  base_table:
+    csv: "out/train/2026-01-10_pooltest02_train_base_kf_v2.csv"
+    time_col: "t_s"
+
+  sliding_window:
+    hist_len: 100
+    pred_len: 10
+    stride: 1
+
+    input_cols:
+      - ch1_cmd
+      - ch2_cmd
+      - ch3_cmd
+      - ch4_cmd
+      - ch5_cmd
+      - ch6_cmd
+      - ch7_cmd
+      - ch8_cmd
+
+      - AccKfX_body_mps2
+      - AccKfY_body_mps2
+      - AccKfZ_body_mps2
+      - GyroKfX_body_rad_s
+      - GyroKfY_body_rad_s
+      - GyroKfZ_body_rad_s
+      - VelKfX_body_mps
+      - VelKfY_body_mps
+      - VelKfZ_body_mps
+
+      # 姿态角先作为上下文输入，不直接进入当前 9 维主监督输出。
+      - RollKf_rad
+      - PitchKf_rad
+      - SinYawKf
+      - CosYawKf
+
+      - P0_W
+      - P1_W
+      - P2_W
+      - P3_W
+      - P4_W
+      - P5_W
+      - P6_W
+      - P7_W
+
+    target_cols:
+      - AccKfX_body_mps2
+      - AccKfY_body_mps2
+      - AccKfZ_body_mps2
+      - GyroKfX_body_rad_s
+      - GyroKfY_body_rad_s
+      - GyroKfZ_body_rad_s
+      - VelKfX_body_mps
+      - VelKfY_body_mps
+      - VelKfZ_body_mps
+
+    valid_mask_col: null
+    min_valid_ratio: 1.0
+    drop_incomplete: true
+    label_dvl_mask_mode: "all_true"
+
+  output:
+    dir: "data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2"
+    normalize: "standard"

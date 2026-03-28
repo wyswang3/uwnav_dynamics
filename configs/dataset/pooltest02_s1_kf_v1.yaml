@@ -1,0 +1,69 @@
+dataset:
+  name: "2026-01-10_pooltest02_s1_kf_v1"
+
+  # 基础表由后续 KF / ESKF 融合预处理生成。
+  # 当前约定仍保持 100 Hz 主时间轴，训练输入维度继续保持 25 维，
+  # 以便最大限度复用现有 train/eval 主链路。
+  base_table:
+    csv: "out/train/2026-01-10_pooltest02_train_base_kf_v1.csv"
+    time_col: "t_s"
+
+  sliding_window:
+    hist_len: 100
+    pred_len: 10
+    stride: 1
+
+    input_cols:
+      - ch1_cmd
+      - ch2_cmd
+      - ch3_cmd
+      - ch4_cmd
+      - ch5_cmd
+      - ch6_cmd
+      - ch7_cmd
+      - ch8_cmd
+
+      - AccX_body_mps2
+      - AccY_body_mps2
+      - AccZ_body_mps2
+      - GyroX_body_rad_s
+      - GyroY_body_rad_s
+      - GyroZ_body_rad_s
+
+      # 这里不再使用前向填充的 DVL 速度状态代理量，
+      # 而是使用因果 KF 融合后的统一速度代理量。
+      - VelKfX_body_mps
+      - VelKfY_body_mps
+      - VelKfZ_body_mps
+
+      - P0_W
+      - P1_W
+      - P2_W
+      - P3_W
+      - P4_W
+      - P5_W
+      - P6_W
+      - P7_W
+
+    target_cols:
+      - AccX_body_mps2
+      - AccY_body_mps2
+      - AccZ_body_mps2
+      - GyroX_body_rad_s
+      - GyroY_body_rad_s
+      - GyroZ_body_rad_s
+      - VelKfX_body_mps
+      - VelKfY_body_mps
+      - VelKfZ_body_mps
+
+    # KF 代理量在 V1 中按 dense target 使用。
+    # 若后续发现长时间无 DVL update 时误差积累明显，
+    # 再升级成质量感知或协方差加权监督。
+    valid_mask_col: null
+    min_valid_ratio: 1.0
+    drop_incomplete: true
+    label_dvl_mask_mode: "all_true"
+
+  output:
+    dir: "data/processed/2026-01-10_pooltest02_s1_kf_v1"
+    normalize: "standard"
