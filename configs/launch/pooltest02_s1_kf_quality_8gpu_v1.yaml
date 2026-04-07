@@ -1,0 +1,136 @@
+base_train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_s1_kf_quality_8gpu_v1
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 1024
+  plots: false
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_s1_kf_quality_8gpu_v1
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_v3
+    batch_size: 512
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: qv3_b0_grouped_tb_seed8
+    label: QV3 grouped TB seed8
+    role: baseline
+    overrides:
+      run:
+        seed: 8
+        variant: QV3_B0_grouped_tb_seed8
+
+  - name: qv3_b0_grouped_tb_seed9
+    label: QV3 grouped TB seed9
+    role: baseline
+    overrides:
+      run:
+        seed: 9
+        variant: QV3_B0_grouped_tb_seed9
+
+  - name: qv3_b2_grouped_tb_longtail_seed8
+    label: QV3 grouped TB longtail seed8
+    role: ablation
+    overrides:
+      run:
+        seed: 8
+        variant: QV3_B2_grouped_tb_longtail_seed8
+      loss:
+        tail_weight_power: 2.0
+        acc_weight: 3.2
+        gyro_weight: 2.0
+        vel_weight: 2.2
+
+  - name: qv3_b2_grouped_tb_longtail_seed9
+    label: QV3 grouped TB longtail seed9
+    role: ablation
+    overrides:
+      run:
+        seed: 9
+        variant: QV3_B2_grouped_tb_longtail_seed9
+      loss:
+        tail_weight_power: 2.0
+        acc_weight: 3.2
+        gyro_weight: 2.0
+        vel_weight: 2.2
+
+  - name: qv3_b4_grouped_tb_blocks_seed8
+    label: QV3 grouped TB blocks seed8
+    role: primary
+    overrides:
+      run:
+        seed: 8
+        variant: QV3_B4_grouped_tb_blocks_seed8
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: qv3_b4_grouped_tb_blocks_seed9
+    label: QV3 grouped TB blocks seed9
+    role: primary
+    overrides:
+      run:
+        seed: 9
+        variant: QV3_B4_grouped_tb_blocks_seed9
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: v2_b4_grouped_tb_blocks_seed8
+    label: V2 grouped TB blocks seed8
+    role: primary
+    overrides:
+      run:
+        seed: 8
+        variant: V2_B4_grouped_tb_blocks_seed8
+      data:
+        data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2
+      model:
+        din: 29
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: v2_b4_grouped_tb_blocks_seed9
+    label: V2 grouped TB blocks seed9
+    role: primary
+    overrides:
+      run:
+        seed: 9
+        variant: V2_B4_grouped_tb_blocks_seed9
+      data:
+        data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2
+      model:
+        din: 29
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true

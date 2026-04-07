@@ -115,7 +115,10 @@ class MplGlobalStyle:
     sensor_4x2_size: Tuple[float, float]
     compare_3row_size: Tuple[float, float]
     rollout_3row_size: Tuple[float, float]
+    rollout_3row_compact_size: Tuple[float, float]
     component_3x3_size: Tuple[float, float]
+    component_3x3_compact_size: Tuple[float, float]
+    dashboard_2x2_compact_size: Tuple[float, float]
     prop_cycle: Tuple[str, ...]
     legend_frameon: bool
     legend_borderaxespad: float
@@ -147,7 +150,10 @@ _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
         sensor_4x2_size=(6.2, 5.2),
         compare_3row_size=(5.8, 4.8),
         rollout_3row_size=(5.0, 4.0),
+        rollout_3row_compact_size=(5.6, 3.55),
         component_3x3_size=(6.5, 5.4),
+        component_3x3_compact_size=(6.5, 5.0),
+        dashboard_2x2_compact_size=(6.8, 4.4),
         prop_cycle=(
             _PRED_COLOR,
             "#F28E2B",
@@ -184,7 +190,10 @@ _STYLE_PRESETS: Dict[str, MplGlobalStyle] = {
         sensor_4x2_size=(7.6, 6.4),
         compare_3row_size=(7.0, 5.9),
         rollout_3row_size=(6.5, 5.0),
+        rollout_3row_compact_size=(7.0, 4.35),
         component_3x3_size=(8.0, 6.6),
+        component_3x3_compact_size=(8.0, 6.0),
+        dashboard_2x2_compact_size=(8.3, 5.4),
         prop_cycle=(
             _PRED_COLOR,
             "#F28E2B",
@@ -276,7 +285,10 @@ def get_figure_size(kind: str, preset: str = "paper") -> Tuple[float, float]:
         "sensor_4x2": style.sensor_4x2_size,
         "compare_3row": style.compare_3row_size,
         "rollout_3row": style.rollout_3row_size,
+        "rollout_3row_compact": style.rollout_3row_compact_size,
         "component_3x3": style.component_3x3_size,
+        "component_3x3_compact": style.component_3x3_compact_size,
+        "dashboard_2x2_compact": style.dashboard_2x2_compact_size,
     }
     if kind not in mapping:
         raise KeyError(f"Unknown figure kind: {kind!r}")
@@ -481,6 +493,33 @@ def add_figure_legend(
         handlelength=style.legend_handlelength,
         columnspacing=style.legend_columnspacing,
         borderaxespad=0.0,
+    )
+    apply_minimal_legend(legend)
+    return legend
+
+
+def add_axes_legend(
+    ax: plt.Axes,
+    *,
+    loc: str = "upper right",
+    ncol: int = 1,
+    bbox_to_anchor: Optional[Tuple[float, float]] = None,
+) -> Optional[plt.Legend]:
+    """在单个坐标轴内放置极简 legend，用于紧凑版式减少顶部留白。"""
+    handles, labels = ax.get_legend_handles_labels()
+    if len(handles) == 0 or len(labels) == 0:
+        return None
+    style = get_style("paper")
+    legend = ax.legend(
+        handles,
+        labels,
+        loc=loc,
+        ncol=max(1, int(ncol)),
+        bbox_to_anchor=bbox_to_anchor,
+        frameon=True,
+        handlelength=style.legend_handlelength,
+        columnspacing=style.legend_columnspacing,
+        borderaxespad=style.legend_borderaxespad,
     )
     apply_minimal_legend(legend)
     return legend

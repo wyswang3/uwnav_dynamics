@@ -1,0 +1,209 @@
+\section{Feasibility of a Learned Transition Solver}
+
+\subsection{Problem Statement}
+
+The current project goal is not to replace a full high-fidelity hydrodynamic model.
+Instead, the learned model is expected to serve as a short-horizon state transition solver
+inside a controller, a lightweight simulator, or a reinforcement-learning environment.
+
+Let the latent engineering state be
+\[
+\mathbf{x}_k =
+\begin{bmatrix}
+\mathbf{a}_k \\
+\boldsymbol{\omega}_k \\
+\mathbf{v}_k
+\end{bmatrix}
+\in \mathbb{R}^{9},
+\]
+where $\mathbf{a}_k$ is body-frame linear acceleration,
+$\boldsymbol{\omega}_k$ is body-frame angular rate,
+and $\mathbf{v}_k$ is body-frame velocity.
+
+The control-related input is
+\[
+\mathbf{u}_k \in \mathbb{R}^{8},
+\]
+and the auxiliary context is
+\[
+\mathbf{c}_k =
+\begin{bmatrix}
+\phi_k & \theta_k & \sin\psi_k & \cos\psi_k & \mathbf{p}_k
+\end{bmatrix}^{\top},
+\]
+where $\phi_k,\theta_k,\psi_k$ are attitude terms and $\mathbf{p}_k$ denotes motor power observations.
+
+The desired one-step transition operator is
+\[
+\mathbf{x}_{k+1} = f_{\vartheta}(\mathbf{x}_k, \mathbf{u}_k, \mathbf{c}_k),
+\]
+or equivalently in increment form
+\[
+\Delta \mathbf{x}_k = g_{\vartheta}(\mathbf{x}_k, \mathbf{u}_k, \mathbf{c}_k),
+\qquad
+\mathbf{x}_{k+1} = \mathbf{x}_k + \Delta \mathbf{x}_k.
+\]
+
+\subsection{Why Sensor Preprocessing is Necessary}
+
+Raw asynchronous sensor streams do not directly satisfy the assumptions required by a transition model:
+
+\begin{enumerate}
+\item The observations arrive at different rates.
+\item DVL velocity is sparse and intermittent.
+\item IMU signals are dense but noisy and bias-sensitive.
+\item Power observations are low-rate auxiliary measurements rather than primary state labels.
+\end{enumerate}
+
+If these signals are fed directly into a neural predictor, the network must simultaneously solve:
+
+\begin{enumerate}
+\item time alignment,
+\item denoising and bias suppression,
+\item state estimation,
+\item and true controlled dynamics learning.
+\end{enumerate}
+
+This overloads the model and usually leads to unstable rollout.
+
+\subsection{Causal Filtering Makes the Learning Problem Better Posed}
+
+Suppose a causal estimator produces a proxy state
+\[
+\hat{\mathbf{x}}_k = \mathcal{F}( \mathcal{Y}_{0:k}, \mathbf{u}_{0:k}),
+\]
+where $\mathcal{Y}_{0:k}$ contains all sensor observations available up to time $k$.
+
+The key requirement is causality:
+\[
+\hat{\mathbf{x}}_k = \mathcal{F}(\mathcal{Y}_{0:k}, \mathbf{u}_{0:k}),
+\]
+that is, the estimate at time $k$ must not depend on future observations $\mathcal{Y}_{k+1:T}$.
+This requirement is essential because the downstream transition model is intended for online rollout.
+
+Under this setup, the learning target becomes
+\[
+\hat{\mathbf{x}}_{k+1} \approx f_{\vartheta}(\hat{\mathbf{x}}_k, \mathbf{u}_k, \mathbf{c}_k),
+\]
+which is a standard output-error system identification problem with filtered state proxies.
+
+This is mathematically feasible as long as the filtered proxy states satisfy two properties:
+
+\begin{enumerate}
+\item They are sufficiently low-noise to reduce label variance.
+\item They preserve the dominant short-horizon transition structure relevant to control.
+\end{enumerate}
+
+The existing KF / ESKF preprocessing chain is therefore not a cosmetic improvement.
+It reduces the estimation burden seen by the neural transition model.
+
+\subsection{Why Proxy-State Training Is More Representative}
+
+For a transition solver, the decisive property is not whether the training labels preserve every sensor-side detail,
+but whether they preserve the controlled short-horizon evolution relevant to recursive prediction.
+
+The proxy-state formulation is more representative than raw-sensor fitting because:
+\begin{enumerate}
+\item it places both input and output on the same aligned time base;
+\item it expresses the learned quantity in a body-frame state space compatible with recursive rollout;
+\item it separates ``state construction'' from ``transition learning'';
+\item it allows reliability and freshness information to enter the model explicitly through context variables.
+\end{enumerate}
+
+Hence, the learned predictor is no longer asked to imitate a heterogeneous observation stream.
+It is asked to approximate a state transition law on a causally estimated state manifold.
+
+\subsection{Role of DVL, IMU, and Power}
+
+The sensors have different mathematical roles:
+
+\begin{itemize}
+\item IMU provides dense propagation information.
+\item DVL provides sparse but strong velocity correction.
+\item Power provides auxiliary evidence about actuator loading and effective thrust.
+\end{itemize}
+
+Hence, the engineering state should not be equated with any single sensor.
+Instead, it should be regarded as a causally estimated proxy state.
+
+This also explains why power is better treated as context or auxiliary observation rather than as a direct state target:
+power helps constrain the map from command to effective actuation, but it is not itself the rigid-body motion state.
+
+\subsection{Why Shared Scaling is a Hard Requirement}
+
+Assume the rollout is trained in normalized space:
+\[
+\tilde{\mathbf{x}} = \frac{\mathbf{x} - \boldsymbol{\mu}}{\boldsymbol{\sigma}}.
+\]
+
+If the initial state $\mathbf{x}_k$ is normalized by one scaler
+and the target $\mathbf{x}_{k+1}$ is normalized by another scaler,
+then the recurrence
+\[
+\tilde{\mathbf{x}}_{k+1} = \tilde{\mathbf{x}}_k + \Delta \tilde{\mathbf{x}}_k
+\]
+no longer corresponds to a consistent physical-space update.
+
+Therefore, for every shared state component used both in the history input and in the prediction target,
+the same normalization statistics must be used.
+
+This is not a minor implementation detail.
+It is a necessary condition for the increment-based rollout semantics to remain valid.
+
+\subsection{Phase 1 Feasibility Claim}
+
+After enforcing:
+
+\begin{enumerate}
+\item causal filtered state proxies, and
+\item shared normalization semantics for overlapping state dimensions,
+\end{enumerate}
+
+the project has a defensible foundation for learning a short-horizon transition solver.
+
+What Phase 1 proves is:
+
+\begin{itemize}
+\item the training target can be interpreted as a causal state-proxy transition problem;
+\item the rollout objective is numerically coherent;
+\item the model can be upgraded toward a one-step solver without rebuilding the whole data chain.
+\end{itemize}
+
+What Phase 1 does \emph{not} prove is:
+
+\begin{itemize}
+\item global closed-loop stability,
+\item optimal controller compatibility,
+\item or equivalence to a high-fidelity physical simulator.
+\end{itemize}
+
+\subsection{Next Mathematical Step}
+
+The next step is to shift from block prediction toward explicit one-step transition learning:
+\[
+\hat{\mathbf{x}}_{k+1} = f_{\vartheta}(\hat{\mathbf{x}}_k, \mathbf{u}_k, \mathbf{c}_k),
+\]
+with short recursive unrolling during training.
+
+The corresponding loss should combine:
+\[
+\mathcal{L}
+=
+\lambda_1 \mathcal{L}_{\text{step}}
++
+\lambda_2 \mathcal{L}_{\text{rollout}}
++
+\lambda_3 \mathcal{L}_{\text{obs}}
++
+\lambda_4 \mathcal{L}_{\text{stability}},
+\]
+where:
+\begin{itemize}
+\item $\mathcal{L}_{\text{step}}$ enforces one-step transition accuracy,
+\item $\mathcal{L}_{\text{rollout}}$ enforces short recursive consistency,
+\item $\mathcal{L}_{\text{obs}}$ enforces agreement with sensor-space observations,
+\item $\mathcal{L}_{\text{stability}}$ penalizes divergence, non-finite behavior, or excessive tail growth.
+\end{itemize}
+
+This is the mathematically natural bridge from offline fitted sequence prediction
+to a transition model usable by control and reinforcement learning.

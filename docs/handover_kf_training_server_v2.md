@@ -1,6 +1,6 @@
 # KF 融合训练服务器迁移交接文档
 
-更新时间：2026-03-28  
+更新时间：2026-04-07  
 当前工作分支：`feature/kf-preprocess-training-v1`
 
 ## 1. 迁移目标
@@ -15,8 +15,8 @@
 
 注意：
 
-- 当前文档里原本的“直接上服务器训练”顺序已经需要暂缓。
-- 在最近一次训练链审查后，当前还应先修三处关键问题，再开始正式重训。
+- 当前文档里的“直接上服务器训练”顺序只在完成 Phase 1 修复后才成立。
+- 当前前两个基础阻塞已经收口，剩余主阻塞是一歩状态转移建模尚未完成。
 
 ## 2. 当前主线摘要
 
@@ -28,10 +28,24 @@
 - 训练期按 `val_transition_score` 选 best ckpt
 - run 级按长期 rollout 相关指标筛选
 
-但当前仍未闭合的阻塞是：
+当前服务器侧推荐拆成两个 8 卡批次：
 
-1. `KF / ESKF` 初始化速度存在未来 DVL 泄漏风险。
-2. `x_scaler / y_scaler` 双 scaler 可能破坏 rollout 状态转移语义。
+1. `H=10` 的 quality-context 主线重训批次
+2. `H=1` 的 single-step transition 实验批次
+
+这样做的原因是：
+
+- 两批次都能吃满 8 卡并发
+- 避免 `pred_len=10` 与 `pred_len=1` 混入同一 compare 链
+- 让多步主线与一步分支分别做清晰筛选
+
+当前已经完成的基础修复是：
+
+1. `KF / ESKF` 初始化速度已改为严格因果 warm-start。
+2. 共享状态维的 `x_scaler / y_scaler` 已收口为单一统计量。
+
+当前仍未闭合的主阻塞是：
+
 3. 当前模型还是 `hist -> future block` 预测器，不是严格的一步状态转移算子。
 
 ## 3. 需要同步到服务器的核心路径
@@ -42,7 +56,12 @@
 - `configs/fusion/pooltest02_kf_eskf_v2.yaml`
 - `configs/dataset/pooltest02_s1_kf_ctx_v2.yaml`
 - `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml`
-- `configs/launch/pooltest02_s1_kf_ctx_8gpu_v1.yaml`
+- `configs/dataset/pooltest02_s1_kf_ctx_quality_v3.yaml`
+- `configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml`
+- `configs/dataset/pooltest02_s1_kf_ctx_quality_step_v1.yaml`
+- `configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml`
+- `configs/launch/pooltest02_s1_kf_quality_8gpu_v1.yaml`
+- `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml`
 
 文档：
 
@@ -86,13 +105,14 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q \
 
 ### 4.2 当前更推荐的顺序
 
-先修以下三件事：
+当前更推荐的顺序是：
 
-1. `kf_eskf.py` 的初始化泄漏
-2. 共享状态维的 scaler 契约
-3. 一步状态转移训练配置
+1. 先确认 Phase 1 自检通过
+2. 重建融合基础表与数据集
+3. 做单卡 smoke
+4. 再进入 8 卡服务器批次
 
-只有这三项收口后，再继续下面的正式训练命令。
+一步状态转移训练配置仍是后续主线，不属于本页的已完成部分。
 
 ### 4.3 生成融合基础表
 
@@ -105,21 +125,38 @@ python -m uwnav_dynamics.preprocess.fusion.cli_fuse_train_base \
 
 ```bash
 python -m uwnav_dynamics.preprocess.build_dataset \
-  -y configs/dataset/pooltest02_s1_kf_ctx_v2.yaml
+  -y configs/dataset/pooltest02_s1_kf_ctx_quality_v3.yaml
+```
+
+```bash
+python -m uwnav_dynamics.preprocess.build_dataset \
+  -y configs/dataset/pooltest02_s1_kf_ctx_quality_step_v1.yaml
 ```
 
 ### 4.5 单卡 smoke
 
 ```bash
 python -m uwnav_dynamics.cli.train \
-  -y configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml
+  -y configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml
 ```
 
-### 4.6 8 卡矩阵
+```bash
+python -m uwnav_dynamics.cli.train \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+```
+
+### 4.6 8 卡矩阵批次 A：quality-context 主线
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_ctx_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_8gpu_v1.yaml
+```
+
+### 4.7 8 卡矩阵批次 B：single-step 分支
+
+```bash
+python -m uwnav_dynamics.cli.train_matrix \
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml
 ```
 
 ## 5. 迁移后先检查什么
@@ -149,6 +186,7 @@ python -m uwnav_dynamics.cli.train_matrix \
 
 - `summary.csv` 正常产出
 - 每个 run 都有 `train_summary.yaml` 和 `eval_test/metrics.yaml`
+- `quality` 与 `quality_step` 两个矩阵各自产出独立 compare 目录
 
 ## 6. 当前筛选标准
 
@@ -164,6 +202,11 @@ run 级：
 - `tail_error`
 - `worst_abs_bias`
 - `acc / gyro / vel` 分组误差
+
+补充说明：
+
+- `H=10` 主线批次优先看长期 rollout 指标
+- `H=1` 单步批次优先看 `final_step`、`delta` 收敛与 bias 稳定性
 
 ## 7. 图包约束
 
@@ -181,3 +224,4 @@ run 级：
 - 不要先改 12 维主输出协议
 - 不要只靠 `val_loss` 决定模型
 - 不要把 KF 输出写成高保真物理真值
+- 不要把 `pred_len=1` 与 `pred_len=10` 的 run 混到同一个 compare 批次

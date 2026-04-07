@@ -1,8 +1,0 @@
-{
-    "ROS2.distro": "noetic",
-    "json.validate.enable": true,
-    "json.trace.server": "messages",
-    "json.schemas": [],
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
-}

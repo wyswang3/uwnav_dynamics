@@ -16,7 +16,7 @@ pred_samples.npz + metrics.yaml(layout.semantic)
     ↓
 mode dispatch (`group_norm` / `component`)
     ↓
-3×1 或 3×3 共享 x 轴 figure
+紧凑 3×1 或紧凑 3×3 共享 x 轴 figure
     ↓
 plots/pred_vs_observed_group_norm_000.png
 或
@@ -32,6 +32,7 @@ plots/pred_vs_observed_component_000.png
 - 它不等同于未经处理的原始 IMU / DVL / Power 传感器输出。
 - 若旧 artifact 缺少 layout metadata，则统一 warning 并回退到 canonical `acc/gyro/vel` 分组。
 - sample-level masked visualization 由独立的 `plot_component_residuals.py` 读取 `pred_context.npz` 处理。
+- 为减少顶部空白，legend 默认收敛到单个坐标轴内，而不是整图顶部横幅。
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
     load_semantic_layout_from_metrics_path,
 )
 from uwnav_dynamics.viz.style.sci_style import (
-    add_figure_legend,
+    add_axes_legend,
     align_ylabels,
     apply_axes_style,
     apply_shared_xlabels,
@@ -143,22 +144,24 @@ def _build_group_norm_figure(
 
     H = y_hat.shape[0]
     t = np.arange(1, H + 1, dtype=float) * float(dt_s)
-    fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("rollout_3row"))
+    fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("rollout_3row_compact"))
 
     observed_style = get_observed_pred_styles()["observed"]
     pred_style = get_observed_pred_styles()["pred"]
     group_styles = get_group_styles()
     group_specs = _group_specs(semantic_layout)
 
-    for ax, (group_key, indices, ylabel) in zip(axes, group_specs):
+    for row_idx, (ax, (group_key, indices, ylabel)) in enumerate(zip(axes, group_specs)):
         obs = _norm3(y_true[:, list(indices)])
         pred = _norm3(y_hat[:, list(indices)])
         group_color = group_styles[_GROUP_DISPLAY_NAMES[group_key]].color
+        obs_label = "Target" if row_idx == 0 else None
+        pred_label = "Pred" if row_idx == 0 else None
 
         ax.plot(
             t,
             obs,
-            label="Observed target",
+            label=obs_label,
             color=observed_style.color,
             linestyle=observed_style.linestyle,
             linewidth=observed_style.linewidth,
@@ -168,7 +171,7 @@ def _build_group_norm_figure(
         ax.plot(
             t,
             pred,
-            label="Prediction",
+            label=pred_label,
             color=group_color,
             linestyle=pred_style.linestyle,
             linewidth=pred_style.linewidth,
@@ -183,9 +186,8 @@ def _build_group_norm_figure(
 
     apply_shared_xlabels(list(axes), "Prediction horizon (s)")
     align_ylabels(axes)
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.subplots_adjust(top=0.86)
-    add_figure_legend(fig, handles, labels, ncol=2, y=0.985)
+    add_axes_legend(axes[0], loc="upper right", ncol=2)
+    fig.subplots_adjust(left=0.14, right=0.98, top=0.97, bottom=0.12, hspace=0.08)
     return fig, (axes[0], axes[1], axes[2])
 
 
@@ -210,7 +212,7 @@ def _build_component_figure(
 
     H = y_hat.shape[0]
     t = np.arange(1, H + 1, dtype=float) * float(dt_s)
-    fig, axes = plt.subplots(3, 3, sharex=True, figsize=get_figure_size("component_3x3"))
+    fig, axes = plt.subplots(3, 3, sharex=True, figsize=get_figure_size("component_3x3_compact"))
     observed_style = get_observed_pred_styles()["observed"]
     pred_style = get_observed_pred_styles()["pred"]
     xyz_styles = get_xyz_styles()
@@ -220,8 +222,8 @@ def _build_component_figure(
         component_key = str(component_label)
         ylabel, axis_key = _COMPONENT_AXIS_META.get(component_key, (component_key, "x"))
         component_color = xyz_styles.get(axis_key, observed_style).color
-        obs_label = "Observed target" if idx == 0 else None
-        pred_label = "Prediction" if idx == 0 else None
+        obs_label = "Target" if idx == 0 else None
+        pred_label = "Pred" if idx == 0 else None
         ax.plot(
             t,
             y_true[:, idx],
@@ -251,9 +253,8 @@ def _build_component_figure(
             ax.tick_params(axis="x", which="both", labelbottom=False)
     for ax in axes[-1]:
         ax.set_xlabel("Prediction horizon (s)")
-    handles, labels = flat_axes[0].get_legend_handles_labels()
-    fig.subplots_adjust(top=0.89)
-    add_figure_legend(fig, handles, labels, ncol=2, y=0.99)
+    add_axes_legend(flat_axes[0], loc="upper right", ncol=2)
+    fig.subplots_adjust(left=0.08, right=0.985, top=0.97, bottom=0.09, wspace=0.28, hspace=0.12)
     return fig, flat_axes
 
 

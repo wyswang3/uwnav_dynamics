@@ -10,7 +10,7 @@
 1. 读取 `metrics.yaml` 中的 dense/masked 全局误差。
 2. 绘制 final-step 组级 RMSE 柱状图。
 3. 绘制 tail error 与 rollout growth 指标对比图。
-4. 绘制 dense/masked 最坏 bias 摘要图。
+4. 绘制 dense/masked 最坏 bias 摘要图，并使用更紧凑的 2×2 总览版式。
 
 数据流：
 eval_dir/metrics.yaml
@@ -62,7 +62,7 @@ def _nested_get(mapping: dict[str, Any], *keys: str, default: Any = np.nan) -> A
 def build_metrics_dashboard_figure(metrics: dict[str, Any]) -> tuple[plt.Figure, np.ndarray]:
     """构建 2x2 评估指标总览图。"""
     setup_mpl()
-    fig, axes = plt.subplots(2, 2, figsize=get_figure_size("wide"))
+    fig, axes = plt.subplots(2, 2, figsize=get_figure_size("dashboard_2x2_compact"))
     ax_global, ax_groups, ax_tail, ax_bias = axes.ravel()
 
     dense_color = "#2A9D8F"
@@ -125,7 +125,6 @@ def build_metrics_dashboard_figure(metrics: dict[str, Any]) -> tuple[plt.Figure,
     ax_tail.set_ylabel("Value")
     ax_tail.set_title("Tail And Growth")
     apply_axes_style(ax_tail, grid=False)
-    ax_tail.legend(frameon=False, loc="upper left")
 
     bias_labels = [
         str(_nested_get(metrics, "control_readiness", "physical", "dense", "bias", "worst_component", default="dense")),
@@ -142,7 +141,7 @@ def build_metrics_dashboard_figure(metrics: dict[str, Any]) -> tuple[plt.Figure,
     ax_bias.set_title("Worst Bias Component")
     apply_axes_style(ax_bias, grid=False)
 
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.09, right=0.985, top=0.95, bottom=0.14, wspace=0.28, hspace=0.34)
     return fig, axes
 
 

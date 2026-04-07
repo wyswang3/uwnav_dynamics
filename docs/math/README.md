@@ -7,6 +7,7 @@
 这里的目标不是复述代码实现细节，而是：
 
 - 给出项目采用的核心符号系统
+- 把原始数据、预处理、因果融合到训练建模的链路写成可论文复用的方法章节
 - 说明水下机器人动力学建模问题的理论背景
 - 描述当前神经网络动力学模型的抽象形式
 - 记录训练目标与未来控制接口的数学表达
@@ -16,6 +17,8 @@
 当前工程实现已经落地的部分：
 
 - 多频异步日志到 100 Hz 主时间轴的对齐链路
+- IMU 预处理与论文风格原始/处理图
+- KF / ESKF 状态代理量构造链
 - 基于窗口输入的短时多步预测模型
 - `dY + rollout` 形式的未来状态生成
 - 可选的结构先验 blocks
@@ -33,16 +36,20 @@
 当前主文档 `main.tex` 由以下章节组成：
 
 - `notation.tex`
+- `preprocessing_pipeline.tex`
 - `dynamics_model.tex`
 - `network_structure.tex`
 - `training_objective.tex`
+- `transition_solver_feasibility.tex`
 - `control_integration.tex`
+- `control_interface.tex`
 
 ## 4. 已实现章节
 
 与当前代码最直接对应的是：
 
 - `notation.tex`
+- `preprocessing_pipeline.tex`
 - `network_structure.tex`
 
 部分对应、仍在推进的是：
@@ -56,6 +63,12 @@
 
 ```bash
 latexmk -xelatex main.tex
+```
+
+若只做最小验证，也可使用：
+
+```bash
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory /tmp main.tex
 ```
 
 ## 6. 维护原则

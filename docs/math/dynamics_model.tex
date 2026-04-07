@@ -2,37 +2,106 @@
 
 \subsection{Classical Dynamics Background}
 
-A standard underwater vehicle dynamics model may be written as
+A standard body-frame underwater-vehicle dynamics model may be written as
 \begin{equation}
-\bm{M}(\bnu)\dot{\bnu} + \bm{C}(\bnu)\bnu + \bm{D}(\bnu)\bnu + \bg(\boldsymbol{\eta}) = \btau,
+\mathbf{M}(\boldsymbol{\nu})\dot{\boldsymbol{\nu}}
++
+\mathbf{C}(\boldsymbol{\nu})\boldsymbol{\nu}
++
+\mathbf{D}(\boldsymbol{\nu})\boldsymbol{\nu}
++
+\mathbf{g}(\boldsymbol{\eta})
+=
+\boldsymbol{\tau},
 \end{equation}
-where $\bnu$ denotes body-frame velocity variables, $\boldsymbol{\eta}$ denotes pose variables, and $\btau$ denotes generalized actuation.
+where $\boldsymbol{\nu}$ denotes generalized body-frame velocity, $\boldsymbol{\eta}$ denotes pose, and $\boldsymbol{\tau}$ denotes generalized actuation.
 
-This form is physically meaningful but difficult to identify precisely in practice because:
+This form is physically meaningful, but it is difficult to identify accurately in the present engineering setting because:
 \begin{itemize}
-  \item thruster dynamics are nonlinear and history-dependent,
-  \item hydrodynamic effects vary with operating condition,
-  \item sensor observations are multi-rate and partially missing,
-  \item the final use case is short-horizon prediction for control rather than full parameter recovery.
+  \item the thruster response is nonlinear and affected by loading history,
+  \item hydrodynamic effects vary with operating condition and maneuver regime,
+  \item the available observations are asynchronous and partially missing,
+  \item the immediate engineering target is short-horizon prediction for control rather than full physical coefficient recovery.
 \end{itemize}
 
-\subsection{Why a Data-Driven Surrogate}
+\subsection{Control-Oriented Identification Objective}
 
-Instead of identifying all coefficients explicitly, the current project adopts a control-oriented surrogate:
+The present project therefore adopts a control-oriented data-driven surrogate.
+Instead of recovering all physical coefficients, we seek a transition map of the form
 \begin{equation}
-\by_{t+1:t+H} \approx f_{\theta}(\bX_t).
+\hat{\mathbf{x}}_{k+1}
+=
+f_{\vartheta}\!\left(\hat{\mathbf{x}}_{k}, \mathbf{u}_{k}, \mathbf{c}_{k}\right),
+\end{equation}
+or, equivalently, an increment form
+\begin{equation}
+\Delta \hat{\mathbf{x}}_{k}
+=
+g_{\vartheta}\!\left(\hat{\mathbf{x}}_{k}, \mathbf{u}_{k}, \mathbf{c}_{k}\right),
+\qquad
+\hat{\mathbf{x}}_{k+1} = \hat{\mathbf{x}}_{k} + \Delta \hat{\mathbf{x}}_{k}.
 \end{equation}
 
-The model is therefore asked to approximate the locally relevant short-horizon response map from aligned history windows to future observable state proxies.
+When trained in block-prediction mode, the same idea is expressed as
+\begin{equation}
+\hat{\mathbf{X}}_{k+1:k+H}
+\approx
+f_{\vartheta}\!\left(\mathbf{X}^{(L)}_{k}\right),
+\end{equation}
+but the intended physical interpretation remains that of a short-horizon controlled transition model.
 
-\subsection{Structured Priors}
+\subsection{Why Proxy-State Learning Is More Representative Than Raw-Sensor Fitting}
 
-The current architecture keeps room for weak physical priors:
+Let the raw observation stream be denoted by $\mathcal{Y}_{0:k}$.
+If a neural network is trained directly from raw sensor histories, it must simultaneously learn:
 \begin{itemize}
-  \item actuator-side lag and saturation modeling,
+  \item temporal alignment across different rates,
+  \item denoising and bias suppression,
+  \item interpolation across sparse DVL updates,
+  \item and the actual controlled dynamics.
+\end{itemize}
+
+This makes the optimization target poorly conditioned.
+The network is no longer solving only a dynamics-identification problem; it is also solving a hidden state-estimation problem.
+
+By contrast, the current project introduces a causal estimator
+\begin{equation}
+\hat{\mathbf{x}}_k = \mathcal{F}(\mathcal{Y}_{0:k}, \mathbf{u}_{0:k}),
+\end{equation}
+and then learns the transition law on this proxy-state manifold.
+This changes the learning problem from ``raw observation fitting'' to ``state-proxy transition fitting,''
+which is more representative for control and simulation because:
+\begin{itemize}
+  \item the state proxy is already aligned to the control clock,
+  \item the target lives in a body-frame state space that can be recursively rolled out,
+  \item low-rate DVL information is absorbed as correction rather than treated as irregular labels,
+  \item the resulting model is closer to the interface required by controller and RL algorithms.
+\end{itemize}
+
+\subsection{Role of Causal Filtering}
+
+The KF / ESKF stage is therefore not merely a denoising preprocessor.
+It is a causal state-construction layer that makes the downstream identification problem better posed.
+
+The roles of the sensors are distinct:
+\begin{itemize}
+  \item IMU provides dense propagation information,
+  \item DVL provides sparse but strong velocity correction,
+  \item Power provides auxiliary evidence about effective actuation.
+\end{itemize}
+
+Consequently, the learned state should not be equated with any single sensor.
+It should be interpreted as a causally estimated state proxy that preserves the dominant short-horizon transition structure relevant to control.
+
+\subsection{Weak Structural Priors}
+
+The current architecture also allows weak structured priors between pure black-box fitting and full white-box identification:
+\begin{itemize}
+  \item actuator-side lag and saturation effects,
   \item latent hydrodynamic memory,
   \item damping-related output bias,
   \item heteroscedastic predictive uncertainty.
 \end{itemize}
 
-These priors do not replace the classical dynamics equation; they provide an intermediate layer between pure black-box prediction and full white-box identification.
+These priors are not meant to recover a complete physical model.
+Their role is to regularize the learned transition operator so that it better reflects controllable short-horizon dynamics.

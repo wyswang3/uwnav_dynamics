@@ -1,10 +1,51 @@
 \section{Interface to Control Algorithms}
 
-At each control step, the model provides
-\begin{equation}
-(\hat{\bx}_{k+1:k+H}, \hat{\Sigma}_{k+1:k+H}),
-\end{equation}
-where $\hat{\Sigma}$ denotes predictive uncertainty.
+\subsection{Minimal Solver API}
 
-This interface is compatible with MPC and model-based RL algorithms,
-which may incorporate uncertainty for risk-sensitive decision making.
+For controller, simulator, and model-based RL integration, the learned model should eventually expose a minimal solver-style interface:
+\begin{align}
+\mathrm{reset}(\hat{\mathbf{x}}_0, \mathbf{c}_0) &\rightarrow \text{internal state}, \\
+\mathrm{step}(\mathbf{u}_k, \Delta t, \mathbf{c}_k) &\rightarrow (\hat{\mathbf{x}}_{k+1}, \mathbf{i}_{k+1}), \\
+\mathrm{rollout}(\mathbf{u}_{k:k+H-1}, \mathbf{c}_{k:k+H-1}) &\rightarrow \hat{\mathbf{x}}_{k+1:k+H}.
+\end{align}
+
+Here, $\mathbf{i}_{k+1}$ denotes diagnostic information returned together with the predicted next state.
+
+\subsection{Diagnostic Information}
+
+The diagnostic payload should include at least:
+\begin{itemize}
+  \item sensor freshness indicators,
+  \item quality-context values such as elapsed time since the last DVL correction,
+  \item predictive uncertainty or confidence surrogates when available,
+  \item non-finite-event flags and fallback triggers,
+  \item timing information for control-loop accounting.
+\end{itemize}
+
+This is important because a solver that predicts a state value without exposing reliability information is difficult to use safely inside controller or RL loops.
+
+\subsection{Compatibility With Controller and RL Loops}
+
+In a controller loop, the model is recursively queried as
+\begin{equation}
+\hat{\mathbf{x}}_{k+1}
+=
+f_{\theta}\!\left(\hat{\mathbf{x}}_{k}, \mathbf{u}_{k}, \mathbf{c}_{k}\right),
+\end{equation}
+and the resulting state is used for cost evaluation, policy updates, or search over future actions.
+
+In model-based RL, the same interface supports:
+\begin{itemize}
+  \item imagined rollouts,
+  \item short-horizon planning,
+  \item synthetic trajectory generation for policy improvement.
+\end{itemize}
+
+Therefore, the main engineering requirement is not a visually impressive trajectory plot, but a numerically stable and well-instrumented transition step.
+
+\subsection{Current Repository Status}
+
+The repository does not yet expose a fully unified production-ready \texttt{step(u\_t, dt)} interface.
+However, the present data contract and the single-step transition branch already define the mathematical form such an interface should follow.
+
+This makes the current phase a preparation stage for solver-style deployment rather than a terminal modeling stage.

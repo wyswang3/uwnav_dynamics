@@ -10,7 +10,7 @@
 1. 读取 `pred_samples.npz` 中的 `y_hat / y_true / logvar`。
 2. 优先根据 `metrics.yaml.layout.semantic` 分组，并在每个组内取范数。
 3. 若存在 `pred_context.npz["target_mask"]`，用轻量标记显示 masked-out 目标位置。
-4. 以 3×1 共享 x 轴布局输出 `rollout_sample_*.png|pdf`。
+4. 以紧凑 3×1 共享 x 轴布局输出 `rollout_sample_*.png|pdf`，并把 legend 收敛到单个子图内。
 
 数据流：
 pred_samples.npz + optional pred_context.npz
@@ -49,7 +49,7 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
     load_semantic_layout_from_metrics_path,
 )
 from uwnav_dynamics.viz.style.sci_style import (
-    add_figure_legend,
+    add_axes_legend,
     align_ylabels,
     apply_axes_style,
     apply_shared_xlabels,
@@ -116,21 +116,6 @@ def _group_specs(semantic_layout: SemanticOutputLayout) -> tuple[tuple[str, tupl
     )
 
 
-def _collect_unique_legend_entries(axes: tuple[plt.Axes, ...]) -> tuple[list[object], list[str]]:
-    handles: list[object] = []
-    labels: list[str] = []
-    seen: set[str] = set()
-    for ax in axes:
-        ax_handles, ax_labels = ax.get_legend_handles_labels()
-        for handle, label in zip(ax_handles, ax_labels):
-            if not label or label in seen:
-                continue
-            handles.append(handle)
-            labels.append(label)
-            seen.add(label)
-    return handles, labels
-
-
 def build_rollout_sample_figure(
     *,
     y_hat: np.ndarray,
@@ -160,18 +145,20 @@ def build_rollout_sample_figure(
     pred_style = get_observed_pred_styles()["pred"]
     group_styles = get_group_styles()
 
-    fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("rollout_3row"))
+    fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("rollout_3row_compact"))
     group_specs = _group_specs(semantic_layout)
 
-    for ax, (group_key, indices, ylabel) in zip(axes, group_specs):
+    for row_idx, (ax, (group_key, indices, ylabel)) in enumerate(zip(axes, group_specs)):
         obs = _norm3(y_true[:, list(indices)])
         pred = _norm3(y_hat[:, list(indices)])
         group_color = group_styles[_GROUP_DISPLAY_NAMES[group_key]].color
+        obs_label = "Target" if row_idx == 0 else None
+        pred_label = "Pred" if row_idx == 0 else None
 
         ax.plot(
             t,
             obs,
-            label="Observed target",
+            label=obs_label,
             color=observed_style.color,
             linestyle=observed_style.linestyle,
             linewidth=observed_style.linewidth,
@@ -181,7 +168,7 @@ def build_rollout_sample_figure(
         ax.plot(
             t,
             pred,
-            label="Prediction",
+            label=pred_label,
             color=group_color,
             linestyle=pred_style.linestyle,
             linewidth=pred_style.linewidth,
@@ -192,10 +179,11 @@ def build_rollout_sample_figure(
             group_valid = np.all(target_mask[:, list(indices)], axis=1)
             invalid = ~group_valid
             if np.any(invalid):
+                mask_label = "Masked" if row_idx == 0 else None
                 ax.scatter(
                     t[invalid],
                     obs[invalid],
-                    label="Masked-out target",
+                    label=mask_label,
                     s=16.0,
                     facecolors="white",
                     edgecolors="#8C9199",
@@ -207,9 +195,8 @@ def build_rollout_sample_figure(
 
     apply_shared_xlabels(list(axes), "Prediction horizon (s)")
     align_ylabels(axes)
-    handles, labels = _collect_unique_legend_entries((axes[0], axes[1], axes[2]))
-    fig.subplots_adjust(top=0.86)
-    add_figure_legend(fig, handles, labels, ncol=min(3, max(1, len(labels))), y=0.985)
+    add_axes_legend(axes[0], loc="upper right", ncol=3 if target_mask is not None else 2)
+    fig.subplots_adjust(left=0.14, right=0.98, top=0.97, bottom=0.12, hspace=0.08)
     return fig, (axes[0], axes[1], axes[2])
 
 

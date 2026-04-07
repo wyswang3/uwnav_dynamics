@@ -1,39 +1,111 @@
 \section{Neural Dynamics Model}
 
-\subsection{Sequence-to-Horizon Prediction}
+\subsection{History Encoder}
 
-The current neural predictor maps a history window to future increments:
+Let the history window be
 \begin{equation}
-\left(\Delta \hat{\bY}_{t+1:t+H}, \log \hat{\bm{\sigma}}^2_{t+1:t+H}\right)
-= f_{\theta}(\bX_t).
+\mathbf{X}^{(L)}_k \in \mathbb{R}^{L \times D_{\mathrm{in}}}.
 \end{equation}
 
-The baseline implementation uses an LSTM encoder followed by prediction heads.
-
-\subsection{Rollout Semantics}
-
-Let $\by_t$ denote the last available target-aligned state proxy extracted from the input window.
-The predicted future sequence is reconstructed as
+The current baseline model family is \texttt{S1Predictor}, which uses a sequence encoder to summarize the control and proxy-state history:
 \begin{equation}
-\hat{\by}_{t+j} = \by_t + \sum_{k=1}^{j} \Delta \hat{\by}_{t+k},
-\qquad j = 1, \dots, H.
+\mathbf{h}_k = \Phi_{\theta}\!\left(\mathbf{X}^{(L)}_k\right).
 \end{equation}
 
-This is the ``delta-cumsum'' rollout used by the current training and evaluation pipelines.
+In the current mainline implementation, $\Phi_{\theta}$ is typically instantiated as an LSTM encoder.
+
+\subsection{Grouped Prediction Head}
+
+Conditioned on $\mathbf{h}_k$, the prediction head produces future state increments:
+\begin{equation}
+\Delta \hat{\mathbf{Y}}_{k+1:k+H}
+=
+\Psi_{\theta}\!\left(\mathbf{h}_k\right)
+\in \mathbb{R}^{H \times D_{\mathrm{out}}}.
+\end{equation}
+
+When enabled, the uncertainty head additionally predicts
+\begin{equation}
+\log \hat{\boldsymbol{\sigma}}^2_{k+1:k+H}
+=
+\Omega_{\theta}\!\left(\mathbf{h}_k\right)
+\in \mathbb{R}^{H \times D_{\mathrm{out}}}.
+\end{equation}
+
+The grouped-head design reflects the current engineering prior that acceleration, angular rate, and velocity should remain distinguishable state groups during optimization and evaluation.
+
+\subsection{Multi-Step Block Predictor}
+
+For the current multi-step mainline, the model predicts a block of future increments with horizon $H>1$:
+\begin{equation}
+\left(
+\Delta \hat{\mathbf{Y}}_{k+1:k+H},
+\log \hat{\boldsymbol{\sigma}}^2_{k+1:k+H}
+\right)
+=
+f_{\theta}\!\left(\mathbf{X}^{(L)}_k\right).
+\end{equation}
+
+Let the last proxy state inside the history window be denoted by $\hat{\mathbf{x}}_k$.
+The predicted future state sequence is reconstructed by delta-cumsum rollout:
+\begin{equation}
+\hat{\mathbf{x}}_{k+j}
+=
+\hat{\mathbf{x}}_{k}
++
+\sum_{i=1}^{j}\Delta \hat{\mathbf{x}}_{k+i},
+\qquad j = 1,\dots,H.
+\end{equation}
+
+This contract is used by the current training and evaluation pipelines because it preserves direct comparability with existing long-rollout metrics and artifacts.
+
+\subsection{Single-Step Transition Branch}
+
+To move closer to an explicit state-transition formulation, the project also maintains a single-step branch with $H=1$:
+\begin{equation}
+\Delta \hat{\mathbf{x}}_{k+1}
+=
+f_{\theta}^{\mathrm{step}}\!\left(\mathbf{X}^{(L)}_k\right),
+\qquad
+\hat{\mathbf{x}}_{k+1}
+=
+\hat{\mathbf{x}}_{k} + \Delta \hat{\mathbf{x}}_{k+1}.
+\end{equation}
+
+Although the implementation still consumes a history window, the predictive semantics are much closer to
+\begin{equation}
+\hat{\mathbf{x}}_{k+1} = f_{\vartheta}\!\left(\hat{\mathbf{x}}_{k}, \mathbf{u}_{k}, \mathbf{c}_{k}\right),
+\end{equation}
+because the output is restricted to a one-step update.
 
 \subsection{Optional Structured Modules}
 
-The architecture may include the following modules:
+The network may include additional structured modules:
 \begin{itemize}
-  \item \textbf{ThrusterLag}: transforms raw command history into an effective control sequence,
-  \item \textbf{HydroSSM}: provides a latent hydrodynamic memory state,
-  \item \textbf{DampingHead}: adds a damping-related prior to the predicted increments,
+  \item \textbf{ThrusterLag}: transforms raw command history into effective control features,
+  \item \textbf{HydroSSM}: provides latent hydrodynamic memory,
+  \item \textbf{DampingHead}: injects damping-related inductive bias into predicted increments,
   \item \textbf{UncertaintyHead}: predicts diagonal log-variance terms.
 \end{itemize}
 
-Accordingly, one may interpret the network abstractly as
+Accordingly, one may interpret the overall model abstractly as
 \begin{equation}
-\left(\Delta \hat{\bY}, \log \hat{\bm{\sigma}}^2\right)
-= f_{\theta}\!\left(\bX_t, \bh_t\right),
+\left(
+\Delta \hat{\mathbf{Y}},
+\log \hat{\boldsymbol{\sigma}}^2
+\right)
+=
+f_{\theta}\!\left(\mathbf{X}^{(L)}_k, \mathbf{r}_k\right),
 \end{equation}
-where $\bh_t$ denotes optional latent structured features induced by the additional modules.
+where $\mathbf{r}_k$ denotes optional structured latent features induced by these modules.
+
+\subsection{Architectural Interpretation}
+
+The current architecture should therefore be understood as a transition-model family with two active semantic modes:
+\begin{itemize}
+  \item a multi-step block predictor used to preserve evaluation continuity,
+  \item a single-step transition branch used to approach solver-style deployment.
+\end{itemize}
+
+This distinction is important for both engineering and scientific writing:
+the former is the current operational baseline, while the latter is the mathematically cleaner path toward controller and RL integration.

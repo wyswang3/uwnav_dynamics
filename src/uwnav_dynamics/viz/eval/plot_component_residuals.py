@@ -8,7 +8,7 @@
 主要功能：
 1. 对 9 个输出分量分别绘制 `prediction - target` 残差时序。
 2. 在存在 `pred_context.npz["target_mask"]` 时，用轻量标记显示 masked-out 位置。
-3. 复用仓库统一科研绘图 token，保持与 horizon / rollout 图一致的视觉语言。
+3. 复用仓库统一科研绘图 token，保持与 horizon / rollout 图一致的视觉语言，并使用紧凑九宫格布局。
 
 数据流：
 pred_samples.npz + optional pred_context.npz
@@ -44,7 +44,7 @@ from uwnav_dynamics.models.utils.semantic_output_layout import (
     load_semantic_layout_from_metrics_path,
 )
 from uwnav_dynamics.viz.style.sci_style import (
-    add_figure_legend,
+    add_axes_legend,
     apply_axes_style,
     get_figure_size,
     get_xyz_styles,
@@ -115,7 +115,7 @@ def build_component_residual_figure(
     H = y_hat.shape[0]
     t = np.arange(1, H + 1, dtype=float) * float(dt_s)
     residual = y_hat - y_true
-    fig, axes = plt.subplots(3, 3, sharex=True, figsize=get_figure_size("component_3x3"))
+    fig, axes = plt.subplots(3, 3, sharex=True, figsize=get_figure_size("component_3x3_compact"))
     flat_axes = tuple(axes.reshape(-1))
     xyz_styles = get_xyz_styles()
 
@@ -158,9 +158,8 @@ def build_component_residual_figure(
             ax.tick_params(axis="x", which="both", labelbottom=False)
     for ax in axes[-1]:
         ax.set_xlabel("Prediction horizon (s)")
-    handles, labels = flat_axes[0].get_legend_handles_labels()
-    fig.subplots_adjust(top=0.89)
-    add_figure_legend(fig, handles, labels, ncol=2, y=0.99)
+    add_axes_legend(flat_axes[0], loc="upper right", ncol=2 if target_mask is not None else 1)
+    fig.subplots_adjust(left=0.08, right=0.985, top=0.97, bottom=0.09, wspace=0.28, hspace=0.12)
     return fig, flat_axes
 
 

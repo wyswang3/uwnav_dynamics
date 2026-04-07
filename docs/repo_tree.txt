@@ -83,10 +83,13 @@
 │   ├── design
 │   │   ├── dataset_spec.md
 │   │   ├── imu_plot_style.md
-│   │   └── plot_style_guide.md
+│   │   ├── kf_fusion_preprocess_training_v2.md
+│   │   ├── plot_style_guide.md
+│   │   └── transition_solver_phase1_upgrade.md
 │   ├── engineering_roadmap.md
 │   ├── evaluation_protocol.md
 │   ├── handover_guide.md
+│   ├── handover_kf_training_server_v2.md
 │   ├── math
 │   │   ├── README.md
 │   │   ├── appendix.tex
@@ -96,19 +99,34 @@
 │   │   ├── discussion.tex
 │   │   ├── dynamics.tex
 │   │   ├── dynamics_model.tex
+│   │   ├── figures
+│   │   │   ├── pooltest02_dvl_raw_bi_be.png
+│   │   │   ├── pooltest02_imu_proc_3rows.png
+│   │   │   ├── pooltest02_imu_raw_9axis.png
+│   │   │   ├── pooltest02_kf_proxy_fullrun.png
+│   │   │   └── pooltest02_kf_proxy_overview.png
 │   │   ├── learning.tex
 │   │   ├── macros.tex
 │   │   ├── main.tex
 │   │   ├── network_structure.tex
 │   │   ├── notation.tex
+│   │   ├── preprocessing_pipeline.tex
 │   │   ├── rollout.tex
 │   │   ├── sensors.tex
 │   │   ├── training_objective.tex
+│   │   ├── transition_solver_feasibility.tex
 │   │   └── uncertainty.tex
 │   ├── modeling_roadmap.md
+│   ├── paint
+│   │   └── figures_mermaid.md
 │   ├── project_status.md
 │   ├── repo_index.md
 │   ├── repo_tree.txt
+│   ├── thesis
+│   │   ├── b4u1_results_decision_summary.md
+│   │   ├── ch4_sec43_data_and_training_audit.md
+│   │   ├── ch4_sec43_network_audit.md
+│   │   └── train_model.md
 │   └── 快捷命令行.md
 ├── pytest.ini
 ├── repo_tree.txt

@@ -87,7 +87,7 @@ class KfEskfFusionConfig:
     min_dt_s: float = 1.0e-4
     max_dt_s: float = 0.05
 
-    init_vel_from_first_dvl: bool = True
+    init_vel_from_first_dvl: bool = True  # 仅允许使用 t0 时刻 DVL 观测做 warm-start
     fill_power_with_ffill_bfill: bool = True
 
     accel_lpf_alpha: float = 0.22
@@ -102,12 +102,18 @@ class KfEskfFusionConfig:
 
     bias_correction_gain_acc: float = 0.015
     bias_correction_gain_gyro: float = 0.020
-    innovation_clip_vel_mps: float = 0.40
+    innovation_clip_vel_mps: float = 3.00
     innovation_clip_att_rad: float = 0.25
 
+    vel_decay_rate: float = 1.20
+    max_abs_dvl_speed_mps: float = 0.75
+    max_dvl_speed_jump_mps: float = 0.45
     max_abs_speed_mps: float = 3.0
+    max_abs_acc_proxy_mps2: float = 4.0
+    max_abs_gyro_proxy_rad_s: float = 1.0
     max_abs_bias_acc_mps2: float = 2.5
     max_abs_bias_gyro_rad_s: float = 1.0
+    max_dt_since_dvl_s: float = 1.0
     min_var: float = 1.0e-6
 
 
@@ -148,11 +154,17 @@ def load_fusion_config(yaml_path: str | Path) -> tuple[KfEskfFusionConfig, Path,
         meas_noise_att=tuple(float(v) for v in sec.get("meas_noise_att", (0.02, 0.02, 0.04))),
         bias_correction_gain_acc=float(sec.get("bias_correction_gain_acc", 0.015)),
         bias_correction_gain_gyro=float(sec.get("bias_correction_gain_gyro", 0.020)),
-        innovation_clip_vel_mps=float(sec.get("innovation_clip_vel_mps", 0.40)),
+        innovation_clip_vel_mps=float(sec.get("innovation_clip_vel_mps", 3.00)),
         innovation_clip_att_rad=float(sec.get("innovation_clip_att_rad", 0.25)),
+        vel_decay_rate=float(sec.get("vel_decay_rate", 1.20)),
+        max_abs_dvl_speed_mps=float(sec.get("max_abs_dvl_speed_mps", 0.75)),
+        max_dvl_speed_jump_mps=float(sec.get("max_dvl_speed_jump_mps", 0.45)),
         max_abs_speed_mps=float(sec.get("max_abs_speed_mps", 3.0)),
+        max_abs_acc_proxy_mps2=float(sec.get("max_abs_acc_proxy_mps2", 4.0)),
+        max_abs_gyro_proxy_rad_s=float(sec.get("max_abs_gyro_proxy_rad_s", 1.0)),
         max_abs_bias_acc_mps2=float(sec.get("max_abs_bias_acc_mps2", 2.5)),
         max_abs_bias_gyro_rad_s=float(sec.get("max_abs_bias_gyro_rad_s", 1.0)),
+        max_dt_since_dvl_s=float(sec.get("max_dt_since_dvl_s", 1.0)),
         min_var=float(sec.get("min_var", 1.0e-6)),
     )
     if cfg.mode not in {"kf", "eskf"}:
@@ -228,6 +240,17 @@ def _clip_vec(x: np.ndarray, limit: float) -> np.ndarray:
     return np.clip(np.asarray(x, dtype=float), -float(limit), float(limit))
 
 
+def _clip_vec_norm(x: np.ndarray, max_norm: float) -> np.ndarray:
+    arr = np.asarray(x, dtype=float).reshape(-1)
+    limit = float(max_norm)
+    if limit <= 0.0 or not np.all(np.isfinite(arr)):
+        return arr
+    norm = float(np.linalg.norm(arr))
+    if norm <= limit or norm <= 1.0e-12:
+        return arr
+    return arr * (limit / norm)
+
+
 def _safe_vec(values: np.ndarray, fallback: np.ndarray) -> np.ndarray:
     arr = np.asarray(values, dtype=float).reshape(-1)
     fb = np.asarray(fallback, dtype=float).reshape(-1)
@@ -240,13 +263,38 @@ def _safe_vec(values: np.ndarray, fallback: np.ndarray) -> np.ndarray:
 
 
 def _select_initial_velocity(dvl_meas: np.ndarray, dvl_mask: np.ndarray) -> np.ndarray:
-    if not np.asarray(dvl_mask, dtype=bool).any():
+    """
+    选择因果初始化速度。
+
+    注意：
+    - 这里只允许读取序列起点时刻的 DVL 观测；
+    - 不允许再从“整段序列第一条有效 DVL”回填到 `t0`，
+      否则会把未来观测泄漏到滤波初值里。
+    """
+    mask = np.asarray(dvl_mask, dtype=bool).reshape(-1)
+    if mask.size == 0 or (not bool(mask[0])):
         return np.zeros(3, dtype=float)
-    idx = int(np.argmax(np.asarray(dvl_mask, dtype=bool)))
-    z = np.asarray(dvl_meas[idx], dtype=float).reshape(3)
+    z = np.asarray(dvl_meas[0], dtype=float).reshape(3)
     if not np.all(np.isfinite(z)):
         return np.zeros(3, dtype=float)
     return z
+
+
+def _accept_dvl_measurement(
+    z_v: np.ndarray,
+    *,
+    prev_accepted_z: np.ndarray | None,
+    cfg: KfEskfFusionConfig,
+) -> bool:
+    z = np.asarray(z_v, dtype=float).reshape(3)
+    if not np.all(np.isfinite(z)):
+        return False
+    if float(np.linalg.norm(z)) > float(cfg.max_abs_dvl_speed_mps):
+        return False
+    if prev_accepted_z is not None:
+        if float(np.linalg.norm(z - np.asarray(prev_accepted_z, dtype=float).reshape(3))) > float(cfg.max_dvl_speed_jump_mps):
+            return False
+    return True
 
 
 def _fuse_state_proxies(
@@ -282,6 +330,8 @@ def _fuse_state_proxies(
     acc_bias = np.zeros((n, 3), dtype=float)
     gyro_bias = np.zeros((n, 3), dtype=float)
     dt_since_dvl = np.zeros(n, dtype=float)
+    dvl_accepted = np.zeros(n, dtype=bool)
+    dvl_innovation_norm = np.full(n, np.nan, dtype=float)
 
     v_prev = _select_initial_velocity(vel_meas, has_dvl) if cfg.init_vel_from_first_dvl else np.zeros(3, dtype=float)
     theta = _first_valid_row(att_obs)
@@ -293,6 +343,10 @@ def _fuse_state_proxies(
     acc_lp = _safe_vec(acc[0], np.zeros(3, dtype=float)) - ba
     gyro_lp = _safe_vec(gyro[0], np.zeros(3, dtype=float)) - bg
     last_dvl_t = t[0] if bool(has_dvl[0]) else float("nan")
+    last_dvl_z: np.ndarray | None = None
+    if bool(has_dvl[0]) and np.all(np.isfinite(vel_meas[0])):
+        z0 = _clip_vec_norm(vel_meas[0], cfg.max_abs_dvl_speed_mps)
+        last_dvl_z = z0.copy()
 
     for k in range(n):
         if k == 0:
@@ -322,28 +376,36 @@ def _fuse_state_proxies(
         bg = _clip_vec(bg, cfg.max_abs_bias_gyro_rad_s)
         gyro_corr = gyro_raw - bg
         gyro_lp = (1.0 - float(cfg.gyro_lpf_alpha)) * gyro_lp + float(cfg.gyro_lpf_alpha) * gyro_corr
+        gyro_lp = _clip_vec_norm(gyro_lp, cfg.max_abs_gyro_proxy_rad_s)
 
-        v_pred = v_prev + dt * (acc_raw - ba - np.cross(gyro_lp, v_prev))
+        v_pred = v_prev + dt * (acc_raw - ba - np.cross(gyro_lp, v_prev) - float(cfg.vel_decay_rate) * v_prev)
         p_v = np.maximum(p_v + float(cfg.process_noise_vel) * dt, float(cfg.min_var))
 
         acc_inst = acc_raw - ba
-        if bool(has_dvl[k]) and np.all(np.isfinite(vel_meas[k])):
-            z_v = vel_meas[k]
-            vel_res = _clip_vec(z_v - v_pred, cfg.innovation_clip_vel_mps)
+        if bool(has_dvl[k]) and _accept_dvl_measurement(vel_meas[k], prev_accepted_z=last_dvl_z, cfg=cfg):
+            z_v = _clip_vec_norm(vel_meas[k], cfg.max_abs_dvl_speed_mps)
+            vel_res = z_v - v_pred
+            dvl_innovation_norm[k] = float(np.linalg.norm(vel_res))
+            if float(cfg.innovation_clip_vel_mps) > 0.0:
+                vel_res = _clip_vec_norm(vel_res, cfg.innovation_clip_vel_mps)
             k_v = p_v / np.maximum(p_v + r_v, float(cfg.min_var))
             v_new = v_pred + k_v * vel_res
             p_v = np.maximum((1.0 - k_v) * p_v, float(cfg.min_var))
             ba = ba - float(cfg.bias_correction_gain_acc) * (k_v * vel_res) / max(dt, float(cfg.min_dt_s))
             ba = _clip_vec(ba, cfg.max_abs_bias_acc_mps2)
             acc_from_vel = (v_new - v_prev) / max(dt, float(cfg.min_dt_s)) + np.cross(gyro_lp, v_prev)
+            acc_from_vel = _clip_vec_norm(acc_from_vel, cfg.max_abs_acc_proxy_mps2)
             blend = float(cfg.vel_accel_blend) * float(np.clip(np.mean(k_v), 0.0, 1.0))
             acc_inst = (1.0 - blend) * (acc_raw - ba) + blend * acc_from_vel
             last_dvl_t = float(t[k])
+            last_dvl_z = z_v.copy()
+            dvl_accepted[k] = True
         else:
             v_new = v_pred
 
-        v_new = _clip_vec(v_new, cfg.max_abs_speed_mps)
+        v_new = _clip_vec_norm(v_new, cfg.max_abs_speed_mps)
         acc_lp = (1.0 - float(cfg.accel_lpf_alpha)) * acc_lp + float(cfg.accel_lpf_alpha) * acc_inst
+        acc_lp = _clip_vec_norm(acc_lp, cfg.max_abs_acc_proxy_mps2)
 
         vel[k] = v_new
         acc_f[k] = acc_lp
@@ -352,7 +414,11 @@ def _fuse_state_proxies(
         vel_var[k] = p_v
         acc_bias[k] = ba
         gyro_bias[k] = bg
-        dt_since_dvl[k] = 0.0 if np.isfinite(last_dvl_t) and bool(has_dvl[k]) else (float(t[k] - last_dvl_t) if np.isfinite(last_dvl_t) else np.inf)
+        if np.isfinite(last_dvl_t):
+            raw_dt_since_dvl = 0.0 if bool(dvl_accepted[k]) else float(t[k] - last_dvl_t)
+        else:
+            raw_dt_since_dvl = float(cfg.max_dt_since_dvl_s)
+        dt_since_dvl[k] = float(np.clip(raw_dt_since_dvl, 0.0, float(cfg.max_dt_since_dvl_s)))
 
         v_prev = v_new
 
@@ -365,6 +431,8 @@ def _fuse_state_proxies(
         "acc_bias": acc_bias,
         "gyro_bias": gyro_bias,
         "dt_since_dvl": dt_since_dvl,
+        "dvl_accepted": dvl_accepted,
+        "dvl_innovation_norm": dvl_innovation_norm,
     }
 
 
@@ -459,8 +527,10 @@ def build_fused_train_base_from_frames(
     df["VelKfY_body_mps"] = fused["vel_fused"][:, 1]
     df["VelKfZ_body_mps"] = fused["vel_fused"][:, 2]
 
-    df["HasDvlUpdate"] = dvl_mask.astype(int)
+    df["HasDvlMeasurement"] = dvl_mask.astype(int)
+    df["HasDvlUpdate"] = fused["dvl_accepted"].astype(int)
     df["DtSinceDvl_s"] = fused["dt_since_dvl"]
+    df["DvlInnovationNorm_mps"] = fused["dvl_innovation_norm"]
     df["VelKfVarX_body_mps2"] = fused["vel_var"][:, 0]
     df["VelKfVarY_body_mps2"] = fused["vel_var"][:, 1]
     df["VelKfVarZ_body_mps2"] = fused["vel_var"][:, 2]
@@ -471,7 +541,19 @@ def build_fused_train_base_from_frames(
     df["GyroBiasKfY_body_rad_s"] = fused["gyro_bias"][:, 1]
     df["GyroBiasKfZ_body_rad_s"] = fused["gyro_bias"][:, 2]
 
-    required_finite_cols = list(_PWM_COLS) + list(_POWER_COLS) + list(_KF_TARGET_COLS) + list(_KF_ATT_CTX_COLS)
+    required_finite_cols = (
+        list(_PWM_COLS)
+        + list(_POWER_COLS)
+        + list(_KF_TARGET_COLS)
+        + list(_KF_ATT_CTX_COLS)
+        + [
+            "HasDvlUpdate",
+            "DtSinceDvl_s",
+            "VelKfVarX_body_mps2",
+            "VelKfVarY_body_mps2",
+            "VelKfVarZ_body_mps2",
+        ]
+    )
     qa_report = run_train_base_qa(
         df,
         stage="train_base_kf",

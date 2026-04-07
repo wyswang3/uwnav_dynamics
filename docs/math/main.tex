@@ -3,9 +3,12 @@
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{bm}
 \usepackage{geometry}
+\usepackage{graphicx}
 \usepackage{hyperref}
+\usepackage{subcaption}
 
 \geometry{margin=1in}
+\graphicspath{{figures/}}
 
 \input{macros.tex}
 
@@ -19,9 +22,12 @@
 \newpage
 
 \input{notation}
+\input{preprocessing_pipeline}
 \input{dynamics_model}
 \input{network_structure}
 \input{training_objective}
+\input{transition_solver_feasibility}
 \input{control_integration}
+\input{control_interface}
 
 \end{document}

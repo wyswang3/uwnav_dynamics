@@ -1,67 +1,158 @@
 \section{Notation}
 
-\subsection{Discrete Time and Windows}
+\subsection{Discrete Time and Sampling Axis}
 
-Let the aligned main timeline be indexed by $t \in \mathbb{Z}$ with sampling interval $\Delta t$.
-In the current implementation, $\Delta t = 0.01\,\mathrm{s}$, corresponding to a $100\,\mathrm{Hz}$ main axis.
+Let the aligned main timeline be indexed by $k \in \mathbb{Z}_{\ge 0}$ with sampling interval
+\begin{equation}
+\Delta t = 0.01\,\mathrm{s},
+\end{equation}
+which corresponds to the current $100\,\mathrm{Hz}$ master axis.
 
 We use:
 \begin{itemize}
   \item $L$: history window length,
-  \item $H$: prediction horizon length.
+  \item $H$: prediction horizon length,
+  \item $D_x$: state dimension,
+  \item $D_c$: context dimension,
+  \item $D_{\mathrm{in}}$: model input dimension,
+  \item $D_{\mathrm{out}}$: supervised target dimension.
 \end{itemize}
 
-\subsection{Control, Observation, and Supervision}
+\subsection{Raw Sensor Streams}
 
-At time $t$, the control input is denoted by
+At discrete time $k$, let
 \begin{equation}
-\bu_t \in \mathbb{R}^{8},
+\mathbf{u}_k \in \mathbb{R}^{8}
 \end{equation}
-corresponding to the eight PWM-related thruster command channels.
+denote the thruster-control command vector represented by eight PWM channels.
 
-The aligned observation feature vector is denoted by
+The raw multi-rate observations are denoted abstractly by
 \begin{equation}
-\bz_t \in \mathbb{R}^{D_{\mathrm{in}}},
+\mathcal{Y}_k =
+\left\{
+\mathbf{y}^{\mathrm{imu}}_k,\;
+\mathbf{y}^{\mathrm{dvl}}_k,\;
+\mathbf{y}^{\mathrm{pow}}_k
+\right\},
 \end{equation}
-where the current baseline uses $D_{\mathrm{in}} = 25$ and collects PWM, IMU, velocity-state, and Power features.
+where IMU is high-rate, DVL is sparse low-rate, and Power is low-rate auxiliary sensing.
 
-The supervised prediction target is denoted by
-\begin{equation}
-\by_t \in \mathbb{R}^{D_{\mathrm{out}}},
-\end{equation}
-where the current baseline uses $D_{\mathrm{out}} = 9$ and groups acceleration, angular-rate, and velocity-state terms.
+\subsection{Causal Proxy State and Context}
 
-The history input to the model is
+The current project does not train directly on raw asynchronous observations.
+Instead, a causal filtering stage produces a proxy state
 \begin{equation}
-\bX_t =
+\hat{\mathbf{x}}_k =
 \begin{bmatrix}
-\bz_{t-L+1} \\
+\hat{\mathbf{a}}_k \\
+\hat{\boldsymbol{\omega}}_k \\
+\hat{\mathbf{v}}_k
+\end{bmatrix}
+\in \mathbb{R}^{D_x},
+\qquad D_x = 9,
+\end{equation}
+where:
+\begin{itemize}
+  \item $\hat{\mathbf{a}}_k \in \mathbb{R}^{3}$ is the body-frame linear-acceleration proxy,
+  \item $\hat{\boldsymbol{\omega}}_k \in \mathbb{R}^{3}$ is the body-frame angular-rate proxy,
+  \item $\hat{\mathbf{v}}_k \in \mathbb{R}^{3}$ is the body-frame velocity proxy.
+\end{itemize}
+
+The auxiliary context is denoted by
+\begin{equation}
+\mathbf{c}_k =
+\begin{bmatrix}
+\phi_k &
+\theta_k &
+\sin\psi_k &
+\cos\psi_k &
+\mathbf{q}_k &
+\mathbf{p}_k
+\end{bmatrix}^{\top},
+\end{equation}
+where:
+\begin{itemize}
+  \item $\phi_k, \theta_k, \psi_k$ are attitude terms,
+  \item $\mathbf{q}_k$ denotes state-quality context,
+  \item $\mathbf{p}_k \in \mathbb{R}^{8}$ denotes motor power observations.
+\end{itemize}
+
+For the current quality-context branch,
+\begin{equation}
+\mathbf{q}_k =
+\begin{bmatrix}
+h_k &
+\delta_k &
+\sigma^{2}_{v_x,k} &
+\sigma^{2}_{v_y,k} &
+\sigma^{2}_{v_z,k}
+\end{bmatrix}^{\top},
+\end{equation}
+where $h_k$ indicates whether a DVL update is present, $\delta_k$ denotes the elapsed time since the last DVL correction, and the last three terms denote velocity-state variance proxies.
+
+\subsection{Model Input and Supervision}
+
+The aligned model-side feature vector is
+\begin{equation}
+\mathbf{z}_k =
+\begin{bmatrix}
+\mathbf{u}_k \\
+\hat{\mathbf{x}}_k \\
+\mathbf{c}_k
+\end{bmatrix}
+\in \mathbb{R}^{D_{\mathrm{in}}}.
+\end{equation}
+
+The current active branches use:
+\begin{itemize}
+  \item $D_{\mathrm{in}} = 29$ for the baseline KF-context branch,
+  \item $D_{\mathrm{in}} = 34$ for the quality-context and single-step branches,
+  \item $D_{\mathrm{out}} = D_x = 9$ for all active transition branches.
+\end{itemize}
+
+Given a history window of length $L$, the model input is
+\begin{equation}
+\mathbf{X}^{(L)}_k =
+\begin{bmatrix}
+\mathbf{z}_{k-L+1} \\
 \vdots \\
-\bz_t
+\mathbf{z}_k
 \end{bmatrix}
 \in \mathbb{R}^{L \times D_{\mathrm{in}}}.
 \end{equation}
 
-The future target window is
+The future supervision window is
 \begin{equation}
-\bY_{t+1:t+H} =
+\mathbf{Y}^{(H)}_{k+1:k+H} =
 \begin{bmatrix}
-\by_{t+1} \\
+\hat{\mathbf{x}}_{k+1} \\
 \vdots \\
-\by_{t+H}
+\hat{\mathbf{x}}_{k+H}
 \end{bmatrix}
 \in \mathbb{R}^{H \times D_{\mathrm{out}}}.
 \end{equation}
 
 \subsection{Prediction Outputs}
 
-The model predicts
+The neural model predicts state increments
 \begin{equation}
-\Delta \hat{\bY}_{t+1:t+H} \in \mathbb{R}^{H \times D_{\mathrm{out}}},
+\Delta \hat{\mathbf{Y}}^{(H)}_{k+1:k+H}
+\in \mathbb{R}^{H \times D_{\mathrm{out}}},
 \end{equation}
-as well as diagonal log-variance terms
+and, when the uncertainty branch is enabled, diagonal log-variance terms
 \begin{equation}
-\log \hat{\bm{\sigma}}^2_{t+1:t+H} \in \mathbb{R}^{H \times D_{\mathrm{out}}}.
+\log \hat{\boldsymbol{\sigma}}^2_{k+1:k+H}
+\in \mathbb{R}^{H \times D_{\mathrm{out}}}.
 \end{equation}
 
-Rollout uses the last available state proxy $\by_t$ as initial condition and reconstructs future states from cumulative increments.
+For the current multi-step branch, rollout uses the last proxy state in the history window as initial condition:
+\begin{equation}
+\hat{\mathbf{x}}_{k+j}
+=
+\hat{\mathbf{x}}_{k}
++
+\sum_{i=1}^{j}\Delta \hat{\mathbf{x}}_{k+i},
+\qquad j=1,\dots,H.
+\end{equation}
+
+For the single-step branch, $H=1$, so the predictor is interpreted as a direct approximation of a one-step transition operator.

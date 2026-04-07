@@ -1,49 +1,122 @@
 \section{Training Objective}
 
-\subsection{Current Baseline Objective}
+\subsection{Normalized Training Space}
 
-The current baseline predicts both mean trajectory increments and diagonal uncertainty.
-After rollout, the baseline objective is a diagonal Gaussian negative log-likelihood:
+Let the proxy state be normalized component-wise as
 \begin{equation}
-\mathcal{L}_{\mathrm{NLL}}
+\tilde{\mathbf{x}} = \frac{\mathbf{x} - \boldsymbol{\mu}}{\boldsymbol{\sigma}}.
+\end{equation}
+
+Because the rollout is increment-based, every state component shared between the history input and the target must use the same normalization statistics.
+Otherwise, the recurrence
+\begin{equation}
+\tilde{\mathbf{x}}_{k+1} = \tilde{\mathbf{x}}_{k} + \Delta \tilde{\mathbf{x}}_{k+1}
+\end{equation}
+would lose its physical interpretation in the original state space.
+
+\subsection{Gaussian Output Objective}
+
+When the uncertainty branch is enabled, the predictor outputs both mean increments and diagonal log-variance terms.
+After rollout reconstruction, the baseline probabilistic loss is a diagonal Gaussian negative log-likelihood:
+\begin{equation}
+\mathcal{L}_{\mathrm{nll}}
 =
 \sum_{j=1}^{H}
 \sum_{d=1}^{D_{\mathrm{out}}}
 \left[
-\frac{\left(y_{t+j,d} - \hat{y}_{t+j,d}\right)^2}{\hat{\sigma}_{t+j,d}^{2}}
+\frac{\left(\hat{x}_{k+j,d} - x_{k+j,d}\right)^2}{\hat{\sigma}_{k+j,d}^{2}}
 +
-\log \hat{\sigma}_{t+j,d}^{2}
+\log \hat{\sigma}_{k+j,d}^{2}
 \right].
 \end{equation}
 
-\subsection{Dense and Sparse Supervision}
+\subsection{Mask-Aware Supervision}
 
-The engineering challenge is that supervision is not uniformly dense across modalities:
-\begin{itemize}
-  \item IMU-related target components are available on the main aligned axis,
-  \item DVL-related velocity information is lower-rate and naturally sparse.
-\end{itemize}
-
-This motivates a mask-aware formulation:
+Even after proxy-state construction, some observation-derived quantities remain reliability-dependent.
+This motivates a generic mask-aware form:
 \begin{equation}
 \mathcal{L}_{\mathrm{mask}}
 =
 \sum_{j=1}^{H}
 \sum_{d=1}^{D_{\mathrm{out}}}
-m_{t+j,d}
+m_{k+j,d}
 \left[
-\frac{\left(y_{t+j,d} - \hat{y}_{t+j,d}\right)^2}{\hat{\sigma}_{t+j,d}^{2}}
+\frac{\left(\hat{x}_{k+j,d} - x_{k+j,d}\right)^2}{\hat{\sigma}_{k+j,d}^{2}}
 +
-\log \hat{\sigma}_{t+j,d}^{2}
+\log \hat{\sigma}_{k+j,d}^{2}
 \right],
 \end{equation}
-where $m_{t+j,d} \in \{0,1\}$ encodes whether the target dimension is valid at that time step.
+where $m_{k+j,d} \in \{0,1\}$ denotes whether the supervision at that step and dimension is valid.
 
-\subsection{Interpretation}
+In the current KF-proxy mainline, velocity-state supervision has already been densified through causal fusion, so the engineering importance of masking has shifted from ``sparse DVL labels'' to ``reliability-aware metric interpretation and future observation-consistency extensions''.
 
-In the current repository, the dense baseline is already implemented, while the fully mask-aware loss is a planned extension.
-The mathematical form above is therefore both:
+\subsection{Transition-Balance Objective}
+
+The current mainline optimization focus is not plain NLL minimization.
+Instead, the project uses a transition-oriented objective that emphasizes state-group balance, horizon-tail behavior, and increment consistency.
+
+In abstract form, the loss can be written as
+\begin{equation}
+\mathcal{L}_{\mathrm{tb}}
+=
+\lambda_{\mathrm{state}}\mathcal{L}_{\mathrm{state}}
++
+\lambda_{\Delta}\mathcal{L}_{\Delta}
++
+\lambda_{\mathrm{tail}}\mathcal{L}_{\mathrm{tail}},
+\end{equation}
+where:
 \begin{itemize}
-  \item a precise statement of the intended sparse-supervision objective,
-  \item a bridge between the current baseline and future mask-aware training.
+  \item $\mathcal{L}_{\mathrm{state}}$ penalizes rolled-out state error,
+  \item $\mathcal{L}_{\Delta}$ penalizes increment mismatch,
+  \item $\mathcal{L}_{\mathrm{tail}}$ upweights later horizon steps to suppress long-rollout drift.
 \end{itemize}
+
+In practice, the state components are also grouped as
+\begin{equation}
+\hat{\mathbf{x}}_k =
+\begin{bmatrix}
+\hat{\mathbf{a}}_k &
+\hat{\boldsymbol{\omega}}_k &
+\hat{\mathbf{v}}_k
+\end{bmatrix}^{\top},
+\end{equation}
+so that acceleration, angular-rate, and velocity errors can be weighted separately.
+
+\subsection{Single-Step Interpretation}
+
+For the single-step branch, $H=1$, so the same transition-oriented loss simplifies to a one-step objective:
+\begin{equation}
+\mathcal{L}_{\mathrm{step}}
+=
+\lambda_{\mathrm{state}}
+\left\|
+\hat{\mathbf{x}}_{k+1} - \mathbf{x}_{k+1}
+\right\|^{2}
++
+\lambda_{\Delta}
+\left\|
+\Delta \hat{\mathbf{x}}_{k+1} - \Delta \mathbf{x}_{k+1}
+\right\|^{2}.
+\end{equation}
+
+This is mathematically closer to system identification in state-space form and is therefore the more natural candidate for later solver-style deployment.
+
+\subsection{Model Selection Criterion}
+
+The training objective and the model-selection objective are related but not identical.
+The current repository additionally tracks a validation metric oriented toward transition quality, denoted conceptually by
+\begin{equation}
+\mathrm{Score}_{\mathrm{trans}}
+=
+\alpha_1 E_{\mathrm{global}}
++
+\alpha_2 E_{\mathrm{final}}
++
+\alpha_3 E_{\mathrm{tail}}
++
+\alpha_4 E_{\mathrm{growth}},
+\end{equation}
+where the individual terms summarize global rollout error, final-step error, tail-horizon error, and rollout growth.
+
+This distinction matters because a model that attains low average loss may still be unsuitable as a transition solver if it exhibits unstable tail behavior.

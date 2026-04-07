@@ -11,9 +11,10 @@
 2. 优先使用原始时间轴上的 purged split，避免滑窗边界泄漏，并复用 split/scaler 真源路径。
 3. 基于 `dvl_mask + semantic output layout` 构造与 `Y` 对齐的 `target_mask`。
 4. 对经过 scaler 的输入特征做非有限值清洗，避免稀疏辅助通道中的 `NaN` 直接进入 RNN。
-5. 对历史 artifact 中“velocity mask=true 但目标仍为 NaN”的情况做保守降级。
-6. 对仅发生在 `target_mask=False` 位置的目标侧非有限值做兼容清洗。
-7. 产出 `(X, Y, target_mask)` DataLoader，供训练主路径直接消费。
+5. 对共享状态维执行 `X/Y` scaler 对齐，避免 rollout 初值 `y0` 与 `Y` 落在不同 z-space。
+6. 对历史 artifact 中“velocity mask=true 但目标仍为 NaN”的情况做保守降级。
+7. 对仅发生在 `target_mask=False` 位置的目标侧非有限值做兼容清洗。
+8. 产出 `(X, Y, target_mask)` DataLoader，供训练主路径直接消费。
 
 数据流：
 features.npz / labels.npz
@@ -46,6 +47,7 @@ train/val/test DataLoader
 - runtime mask 的唯一执行真源是 batch 中的 `target_mask`。
 - `meta.yaml` 只做记录，不参与训练运行时 mask 裁决。
 - 对输入 `X` 的非有限值清洗只发生在训练消费端，不修改原始 dataset artifact。
+- 对共享状态维的 scaler 对齐只修改 run-scoped scaler artifact，不回写 dataset。
 - 对 velocity 语义组允许“mask=true 但目标非有限”的历史 artifact 兼容降级；
   该降级只发生在 runtime `target_mask` 构造阶段，不回写 dataset。
 - 对目标 `Y` 仅兼容清洗那些已经被 `target_mask=False` 排除的非有限值；
@@ -110,6 +112,8 @@ class _LoadedDatasetArrays:
     Y: np.ndarray
     target_mask: np.ndarray
     semantic_layout: SemanticOutputLayout
+    input_cols: tuple[str, ...] | None
+    target_cols: tuple[str, ...] | None
     raw_mask_source: str
     mask_shapes: Dict[str, tuple[int, ...]]
     window_start_indices: np.ndarray | None
@@ -149,11 +153,14 @@ def _load_dataset_arrays(data_dir: Path) -> _LoadedDatasetArrays:
         raise FileNotFoundError(f"Missing: {lab_npz}")
 
     mask_shapes: Dict[str, tuple[int, ...]] = {}
-    with np.load(feat_npz, allow_pickle=False) as z_feat:
+    # `features.npz["input_cols"]` 由 dataset build 以 object array 落盘；
+    # 这里需要允许 metadata 读盘，否则无法恢复共享状态维映射。
+    with np.load(feat_npz, allow_pickle=True) as z_feat:
         if "X" not in z_feat:
             raise KeyError(f"'X' not found in {feat_npz}")
         X = np.asarray(z_feat["X"], dtype=np.float32)
         idx0 = np.asarray(z_feat["idx0"], dtype=np.int64) if "idx0" in z_feat else None
+        input_cols = tuple(str(x) for x in np.asarray(z_feat["input_cols"]).tolist()) if "input_cols" in z_feat else None
         for k in ("dvl_mask_hist", "power_mask_hist"):
             if k in z_feat:
                 mask_shapes[k] = tuple(np.asarray(z_feat[k]).shape)
@@ -214,12 +221,81 @@ def _load_dataset_arrays(data_dir: Path) -> _LoadedDatasetArrays:
         Y=Y,
         target_mask=target_mask,
         semantic_layout=semantic_layout,
+        input_cols=input_cols,
+        target_cols=target_cols,
         raw_mask_source=raw_mask_source,
         mask_shapes=mask_shapes,
         window_start_indices=idx0,
         window_span=window_span,
         total_rows=total_rows,
     )
+
+
+def _align_shared_state_scalers(
+    *,
+    x_scaler: Dict[str, np.ndarray],
+    y_scaler: Dict[str, np.ndarray],
+    input_cols: tuple[str, ...] | None,
+    target_cols: tuple[str, ...] | None,
+) -> tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], tuple[int, ...], bool]:
+    """
+    对齐共享状态维的 `X/Y` scaler 统计量。
+
+    设计原因：
+    - rollout 初值 `y0` 来自 `X[:, -1, y_in_idx]`
+    - 训练目标 `Y` 则整体使用 `y_scaler`
+    - 若共享状态维在 `x_scaler / y_scaler` 中统计量不同，则 `y0` 与 `Y`
+      会落在不同 z-space，破坏状态转移 loss 的数值语义。
+
+    当前最小实现不改 train/eval 接口，而是：
+    - 通过 dataset artifact 中的 `input_cols / target_cols` 恢复共享状态映射
+    - 把 `x_scaler` 对应共享状态维的 `mean/std` 直接收口到 `y_scaler`
+    """
+    if input_cols is None or target_cols is None:
+        return x_scaler, y_scaler, tuple(), False
+
+    x_mean = np.asarray(x_scaler["mean"], dtype=np.float32).copy()
+    x_std = np.asarray(x_scaler["std"], dtype=np.float32).copy()
+    y_mean = np.asarray(y_scaler["mean"], dtype=np.float32).copy()
+    y_std = np.asarray(y_scaler["std"], dtype=np.float32).copy()
+
+    if len(target_cols) != y_mean.shape[0] or len(target_cols) != y_std.shape[0]:
+        raise ValueError(
+            "target_cols length does not match y_scaler feature dim: "
+            f"len(target_cols)={len(target_cols)} y_mean={y_mean.shape} y_std={y_std.shape}"
+        )
+    if len(input_cols) != x_mean.shape[0] or len(input_cols) != x_std.shape[0]:
+        raise ValueError(
+            "input_cols length does not match x_scaler feature dim: "
+            f"len(input_cols)={len(input_cols)} x_mean={x_mean.shape} x_std={x_std.shape}"
+        )
+
+    input_index = {str(col): idx for idx, col in enumerate(input_cols)}
+    shared_x_idx: list[int] = []
+    for col in target_cols:
+        if col not in input_index:
+            return x_scaler, y_scaler, tuple(), False
+        shared_x_idx.append(int(input_index[col]))
+
+    changed = False
+    for y_idx, x_idx in enumerate(shared_x_idx):
+        if (
+            not np.isclose(float(x_mean[x_idx]), float(y_mean[y_idx]))
+            or not np.isclose(float(x_std[x_idx]), float(y_std[y_idx]))
+        ):
+            changed = True
+        x_mean[x_idx] = y_mean[y_idx]
+        x_std[x_idx] = y_std[y_idx]
+
+    aligned_x = {
+        "mean": x_mean,
+        "std": x_std,
+    }
+    aligned_y = {
+        "mean": y_mean,
+        "std": y_std,
+    }
+    return aligned_x, aligned_y, tuple(shared_x_idx), changed
 
 
 def _validate_indices(
@@ -510,13 +586,36 @@ def prepare_train_data(cfg: DataConfig, run_layout: RunLayout) -> PreparedTrainD
     if x_scaler_path.exists() and y_scaler_path.exists():
         x_scaler = load_scaler(x_scaler_path)
         y_scaler = load_scaler(y_scaler_path)
-        print(f"[SCALER] reuse: {run_layout.scalers_dir}")
+        x_scaler, y_scaler, shared_x_idx, changed = _align_shared_state_scalers(
+            x_scaler=x_scaler,
+            y_scaler=y_scaler,
+            input_cols=loaded.input_cols,
+            target_cols=loaded.target_cols,
+        )
+        if changed:
+            save_scaler(x_scaler_path, x_scaler)
+            save_scaler(y_scaler_path, y_scaler)
+            print(
+                "[SCALER] repaired shared-state stats on reused scaler artifact: "
+                f"{run_layout.scalers_dir} shared_x_idx={list(shared_x_idx)}"
+            )
+        else:
+            print(f"[SCALER] reuse: {run_layout.scalers_dir}")
     else:
         x_scaler = fit_scaler(X_all[train_idx])
         y_scaler = fit_scaler(Y_all[train_idx])
+        x_scaler, y_scaler, shared_x_idx, changed = _align_shared_state_scalers(
+            x_scaler=x_scaler,
+            y_scaler=y_scaler,
+            input_cols=loaded.input_cols,
+            target_cols=loaded.target_cols,
+        )
         save_scaler(x_scaler_path, x_scaler)
         save_scaler(y_scaler_path, y_scaler)
-        print(f"[SCALER] fitted on train split and saved to: {run_layout.scalers_dir}")
+        msg = f"[SCALER] fitted on train split and saved to: {run_layout.scalers_dir}"
+        if changed:
+            msg += f" (aligned shared-state dims at X indices {list(shared_x_idx)})"
+        print(msg)
 
     mask_train = target_mask_all[train_idx]
     mask_val = target_mask_all[val_idx]

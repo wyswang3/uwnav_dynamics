@@ -1,31 +1,31 @@
 # 项目交接指南
 
-更新时间：2026-03-28
+更新时间：2026-04-07
 
 ## 1. 当前接手时先知道什么
 
-当前项目的主线已经明确切换为：
+当前项目主线已经从“先跑长时拟合矩阵”进一步收口为：
 
-**`KF / ESKF 融合预处理 -> 长期拟合训练 -> 8 卡筛选 -> 长时拟合图证据`**
+**`因果 KF 状态代理量 -> 共享状态维 scaler 收口 -> 一步状态转移求解器升级`**
 
-当前不要再从旧的 controller / transition validation 叙事切入。  
-当前最重要的问题是：
+当前不要再从旧的 controller / transition validation 壳层切入。  
+当前最重要的问题已经变成：
 
-- 状态代理量是否足够干净
-- 训练目标是否真的约束长期 rollout
-- 哪组模型在长期拟合上更稳
+- 当前状态代理量链是否满足严格因果
+- rollout 训练的数值语义是否一致
+- 下一阶段如何把模型收口成更接近 `x_{t+1}=f(x_t,u_t,c_t)` 的一步算子
 
 ## 2. 先读哪几份文档
 
 建议顺序：
 
-1. [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
-2. [kf_fusion_preprocess_training_v2.md](/home/wys/uwnav_dynamics/docs/design/kf_fusion_preprocess_training_v2.md)
-3. [快捷命令行.md](/home/wys/uwnav_dynamics/docs/快捷命令行.md)
-4. [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)
-5. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
+1. [transition_solver_phase1_upgrade.md](/home/wys/uwnav_dynamics/docs/design/transition_solver_phase1_upgrade.md)
+2. [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
+3. [kf_fusion_preprocess_training_v2.md](/home/wys/uwnav_dynamics/docs/design/kf_fusion_preprocess_training_v2.md)
+4. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
+5. [快捷命令行.md](/home/wys/uwnav_dynamics/docs/快捷命令行.md)
 
-如果只是要尽快迁移到服务器，前 3 份足够。
+如果只是要尽快恢复本地上下文，前 3 份足够。
 
 ## 2.1 下次接手的 5 分钟恢复顺序
 
@@ -39,43 +39,48 @@ export PYTHONPATH=src
 
 然后按这个顺序恢复上下文：
 
-1. 先看本文件第 `3.1` 节，确认三处未闭合阻塞。
-2. 再看 `docs/handover_kf_training_server_v2.md` 第 `4.2` 节，确认服务器上的正确执行顺序。
-3. 再看 `docs/快捷命令行.md`，直接复用命令模板。
-4. 如果要继续修代码，优先从 `kf_eskf.py`、`data_pipeline.py`、`s1_predictor.py` 三处开始。
+1. 先看本文件第 `3.1` 节，确认 Phase 1 已完成内容与剩余阻塞。
+2. 再看 `docs/design/transition_solver_phase1_upgrade.md` 第 `5` 节，确认本地最小执行顺序。
+3. 再看 `docs/handover_kf_training_server_v2.md` 第 `4.2` 节，确认服务器上的执行顺序。
+4. 如果要继续修代码，优先从 `data_pipeline.py`、`s1_predictor.py`、`run_train.py` 三处开始。
 
 ## 3. 当前已经落地的事实
 
 当前可以直接依赖的事实：
 
-- IMU `transform -> gravity -> bias -> filter` 预处理链已经稳定。
+- IMU `transform -> gravity -> bias -> filter` 预处理链稳定。
 - `KF / ESKF` 融合模块已经落地到 `src/uwnav_dynamics/preprocess/fusion/`。
-- 新的 KF 融合基础表已经可以生成。
 - `kf_ctx_v2` 数据集契约已经固定为 `29` 维输入、`9` 维目标。
 - 训练损失已经支持 `transition_balance`。
-- 训练期 best ckpt 已经支持用 `val_transition_score` 而不是单纯 `val_loss` 选模。
-- 8 卡训练矩阵已经准备好，但当前不建议在修完三处阻塞前直接启动。
+- 训练期 best ckpt 已经支持按 `val_transition_score` 选模。
+- Phase 1 已修复：
+  - 融合初始化未来 DVL 泄漏
+  - 共享状态维 `X/Y` scaler 语义错位
+- Phase 2 预备配置已新增：
+  - `configs/dataset/pooltest02_s1_kf_ctx_quality_v3.yaml`
+  - `configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml`
+- Phase 2 单步分支已新增：
+  - `configs/dataset/pooltest02_s1_kf_ctx_quality_step_v1.yaml`
+  - `configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml`
 
-## 3.1 当前必须先修的三处问题
+## 3.1 当前阶段结论
 
-在最近一次状态转移训练审查后，当前还有三处关键阻塞没有闭合：
+Phase 1 已完成并收口了前两个基础阻塞：
 
-1. `KF / ESKF` 融合初始化仍可能泄漏未来速度信息。  
-   代码位置：`src/uwnav_dynamics/preprocess/fusion/kf_eskf.py`  
-   当前 `_select_initial_velocity()` 会取“整段序列第一条有效 DVL”，
-   这会把未来观测带回序列起点。
+1. `KF / ESKF` 融合初始化已改为严格因果 warm-start  
+   代码位置：`src/uwnav_dynamics/preprocess/fusion/kf_eskf.py`
 
-2. rollout 训练当前仍存在 `X / Y` 双 scaler 语义错位风险。  
-   代码位置：`src/uwnav_dynamics/train/data_pipeline.py`、`src/uwnav_dynamics/train/run_train.py`  
-   当前 `x_scaler` 与 `y_scaler` 分别独立拟合，但训练时 `y0` 从 `X` 取，
-   `Y` 从 `y_scaler` 空间比较；如果共享状态维的统计量不一致，
-   则状态转移 loss 的物理语义会被破坏。
+2. rollout 训练的共享状态维 scaler 已收口为单一统计量  
+   代码位置：`src/uwnav_dynamics/train/data_pipeline.py`
 
-3. 当前模型仍是“历史窗 -> 固定未来块输出”预测器，
-   还不是严格的 `x_{t+1} = f(x_t, u_t)` 一步状态转移算子。  
-   代码位置：`configs/dataset/pooltest02_s1_kf_ctx_v2.yaml`、`configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml`、`src/uwnav_dynamics/models/nets/s1_predictor.py`
+当前剩余主阻塞：
 
-因此，当前不要直接进入正式 8 卡训练。
+3. 模型仍是“历史窗 -> 固定未来块输出”预测器，
+   还不是严格的一步状态转移算子。  
+   代码位置：`src/uwnav_dynamics/models/nets/s1_predictor.py`
+
+因此，当前可以恢复单卡 smoke 与新一轮数据重建，
+但还不建议把项目表述成“已具备闭环求解器”。
 
 ## 4. 当前最短工作流
 
@@ -91,8 +96,8 @@ export PYTHONPATH=src
 ```bash
 PYTHONPATH=src PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q \
   tests/test_kf_eskf_fusion.py \
+  tests/test_train_data_pipeline_nan_sanitization.py \
   tests/test_transition_balance_design.py \
-  tests/test_trainer_controls.py \
   tests/test_kf_ctx_training_config_v2.py
 ```
 
@@ -110,11 +115,39 @@ python -m uwnav_dynamics.preprocess.build_dataset \
   -y configs/dataset/pooltest02_s1_kf_ctx_v2.yaml
 ```
 
+如果要测试质量上下文版输入链，改用：
+
+```bash
+python -m uwnav_dynamics.preprocess.build_dataset \
+  -y configs/dataset/pooltest02_s1_kf_ctx_quality_v3.yaml
+```
+
+如果要测试单步状态转移版数据集，改用：
+
+```bash
+python -m uwnav_dynamics.preprocess.build_dataset \
+  -y configs/dataset/pooltest02_s1_kf_ctx_quality_step_v1.yaml
+```
+
 4. 单卡训练 smoke
 
 ```bash
 python -m uwnav_dynamics.cli.train \
   -y configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml
+```
+
+质量上下文版 smoke：
+
+```bash
+python -m uwnav_dynamics.cli.train \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml
+```
+
+单步状态转移版 smoke：
+
+```bash
+python -m uwnav_dynamics.cli.train \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
 ```
 
 5. 8 卡训练矩阵
@@ -173,9 +206,10 @@ run 级筛选：
 
 下一步最合理的顺序是：
 
-1. 先修复融合初始化泄漏
-2. 再修复共享状态维的 scaler 语义
-3. 把训练任务收口成更接近 `x_{t+1}=f(x_t,u_t)` 的一步状态转移形式
-4. 之后再重建数据集、做单卡 smoke、启动 8 卡矩阵
+1. 用 Phase 1 修复后的代码重建融合基础表与数据集
+2. 先对比 v2、quality v3 与 quality step v1 的单卡 smoke
+3. 评估是否把一步状态转移分支转正为主线
+4. 之后再重开 8 卡矩阵与 top2 图包
 
-如果后续要继续扩展，应优先扩训练与评估链，而不是重新打开旧阶段的验证壳层。
+如果后续要继续扩展，应优先扩训练与评估链、求解器接口与最小 replay 验证，
+而不是重新打开旧阶段的大型验证壳层。

@@ -1,43 +1,82 @@
 \section{Control Integration}
 
-\subsection{Model Interface for Control}
+\subsection{Target Role of the Learned Model}
 
-The long-term target is to use the learned predictor as a short-horizon dynamics model inside a controller:
+The long-term target is to use the learned predictor as a short-horizon transition model inside a controller, a lightweight simulator, or a model-based reinforcement-learning loop.
+The intended interface is therefore not merely ``predict the next logged trajectory,'' but
 \begin{equation}
-\hat{\by}_{t+1:t+H} = f_{\theta}(\bX_t, \bu_{t:t+H-1}),
+\hat{\mathbf{x}}_{k+1:k+H}
+=
+f_{\theta}\!\left(\hat{\mathbf{x}}_{k}, \mathbf{u}_{k:k+H-1}, \mathbf{c}_{k}\right),
 \end{equation}
-possibly together with uncertainty outputs.
+possibly together with uncertainty and reliability information.
 
-\subsection{MPC-Oriented Objective}
+\subsection{Why Offline Screening Is Still Necessary}
 
-A generic finite-horizon control objective can be written as
+At the current project stage, the repository should not claim verified closed-loop readiness.
+Before the predictor is inserted into a control loop, it must first satisfy offline criteria related to numerical stability and transition fidelity.
+
+The current offline metrics therefore act as a screening layer:
+\begin{itemize}
+  \item global error terms such as RMSE and MAE,
+  \item final-step error,
+  \item rollout-growth measures,
+  \item tail-horizon error statistics,
+  \item worst-component bias and non-finite-event counts.
+\end{itemize}
+
+These metrics do not prove closed-loop stability, but they do provide evidence about whether the learned model can serve as a plausible short-horizon solver candidate.
+
+\subsection{Controller-Oriented Objective}
+
+If the predictor is later used inside a finite-horizon controller, a generic objective can be written as
 \begin{equation}
-\min_{\bu_{t:t+H-1}}
-\sum_{k=0}^{H-1}
+\min_{\mathbf{u}_{k:k+H-1}}
+\sum_{j=0}^{H-1}
 \left(
-\|\hat{\bx}_{t+k} - \bx^{\star}_{t+k}\|_{\bm{Q}}^{2}
+\left\|
+\hat{\mathbf{x}}_{k+j} - \mathbf{x}^{\star}_{k+j}
+\right\|_{\mathbf{Q}}^{2}
 +
-\|\bu_{t+k}\|_{\bm{R}}^{2}
+\left\|
+\mathbf{u}_{k+j}
+\right\|_{\mathbf{R}}^{2}
 \right),
 \end{equation}
 subject to actuator and safety constraints.
 
-\subsection{Current Status}
+In this context, the learned model is valuable only if its short-horizon rollout remains numerically stable and sensitive to the applied control sequence.
 
-The repository is not yet an MPC implementation.
-However, the current training and evaluation design already prepares the ingredients needed for future integration:
+\subsection{Why the Single-Step Branch Matters}
+
+The single-step transition branch is strategically important for control integration because it more directly matches the recursive computation required by control and simulation:
+\begin{equation}
+\hat{\mathbf{x}}_{k+1}
+=
+f_{\theta}^{\mathrm{step}}\!\left(\hat{\mathbf{x}}_{k}, \mathbf{u}_{k}, \mathbf{c}_{k}\right).
+\end{equation}
+
+Compared with a fixed future-block predictor, this form offers:
 \begin{itemize}
-  \item short-horizon rollout semantics,
-  \item uncertainty outputs,
-  \item configuration and artifact traceability,
-  \item explicit room for structured priors.
+  \item cleaner solver semantics,
+  \item easier online recursion,
+  \item clearer controller and RL interface design,
+  \item more direct latency accounting in closed-loop evaluation.
 \end{itemize}
 
-\subsection{Near-Term Research Direction}
+\subsection{Current Boundary of Claims}
 
-Before closed-loop integration, the following steps are still required:
+The present repository does \emph{not} yet establish:
 \begin{itemize}
-  \item mask-aware sparse supervision for low-rate observations,
-  \item stronger rollout contract consistency,
-  \item clearer evaluation metrics that reflect control utility.
+  \item closed-loop stability guarantees,
+  \item high-fidelity physical-simulator equivalence,
+  \item or deployment-grade safety certification.
+\end{itemize}
+
+What it does establish is a mathematically and engineeringly coherent bridge from offline sequence fitting to transition-solver evaluation:
+\begin{itemize}
+  \item causal proxy-state construction,
+  \item transition-oriented training and selection,
+  \item artifact-based offline screening,
+  \item and a clear path toward controller-compatible interfaces.
 \end{itemize}

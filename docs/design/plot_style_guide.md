@@ -101,10 +101,13 @@
 
 - `single`：单图或单栏图
 - `sensor_3row`：IMU / rollout / pred-vs-observed 的 3 行共享 x 轴图
+- `rollout_3row_compact`：评估样例图使用的紧凑 3 行共享 x 轴图
 - `sensor_2row`：DVL raw 两行图
 - `sensor_4x2`：Power 4×2 面板
 - `compare_3row`：多模型 horizon compare
 - `component_3x3`：9 分量逐轴对比或残差图
+- `component_3x3_compact`：评估分量审查图使用的紧凑 3×3 版式
+- `dashboard_2x2_compact`：评估总览图使用的紧凑 2×2 版式
 
 ## 7. 坐标轴规则
 
@@ -130,6 +133,7 @@
 - 只解释必要语义
 - 尽量只出现一次
 - 能放在坐标轴外时，优先放在画布顶部空白区，避免遮挡曲线和局部极值。
+- 对评估样例图、九宫格审查图等紧凑版式，优先改为单轴内小 legend，避免顶部横幅侵占有效绘图区。
 - 图例背景保持透明，不额外添加底色块。
 - 单变量子图默认无 legend
 - 不把正文说明塞进图例
@@ -181,8 +185,10 @@
 ### 10.3 Rollout 图
 
 - 优先使用 3×1 共享 x 轴布局
+- 当前评估样例默认使用更扁的紧凑 3×1 版式
 - 行语义使用 `||Acc||`、`||Gyro||`、`||Vel||`
 - `Observed target` 与 `Prediction` 使用线型主导区分
+- legend 默认收敛到单个子图内，不再占据整图顶部横幅
 - 读取 `pred_samples.npz` 与可选 `pred_context.npz`
 - 若存在 `target_mask`，masked-out 位置应以轻量标记显示在对应 group 曲线上
 
@@ -194,6 +200,7 @@
 - 当前正式支持：
   - `group_norm` mode：3×1 总览图
   - `component` mode：3×3 分量逐轴图
+- 对这两类图，默认采用紧凑画幅；legend 只保留在一个子图内
 
 ### 10.5 Component Residual 图
 
@@ -201,6 +208,7 @@
 - 每个输出分量单独绘制 `prediction - target`
 - 若存在 `target_mask`，masked-out 位置应以轻量标记显示
 - 风格上沿用 `X/Y/Z` 稳定配色，不额外引入新调色板
+- 默认采用紧凑 3×3 版式，并只在一个子图内保留 legend
 
 ### 10.6 Model Compare 图
 

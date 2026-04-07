@@ -1,0 +1,72 @@
+dataset:
+  name: "2026-01-10_pooltest02_s1_kf_ctx_quality_v3"
+
+  # 在 v2 的 KF 状态代理量基础上，把 DVL 新鲜度与速度方差上下文也接入输入。
+  base_table:
+    csv: "out/train/2026-01-10_pooltest02_train_base_kf_v2.csv"
+    time_col: "t_s"
+
+  sliding_window:
+    hist_len: 100
+    pred_len: 10
+    stride: 1
+
+    input_cols:
+      - ch1_cmd
+      - ch2_cmd
+      - ch3_cmd
+      - ch4_cmd
+      - ch5_cmd
+      - ch6_cmd
+      - ch7_cmd
+      - ch8_cmd
+
+      - AccKfX_body_mps2
+      - AccKfY_body_mps2
+      - AccKfZ_body_mps2
+      - GyroKfX_body_rad_s
+      - GyroKfY_body_rad_s
+      - GyroKfZ_body_rad_s
+      - VelKfX_body_mps
+      - VelKfY_body_mps
+      - VelKfZ_body_mps
+
+      - RollKf_rad
+      - PitchKf_rad
+      - SinYawKf
+      - CosYawKf
+
+      - HasDvlUpdate
+      - DtSinceDvl_s
+      - VelKfVarX_body_mps2
+      - VelKfVarY_body_mps2
+      - VelKfVarZ_body_mps2
+
+      - P0_W
+      - P1_W
+      - P2_W
+      - P3_W
+      - P4_W
+      - P5_W
+      - P6_W
+      - P7_W
+
+    target_cols:
+      - AccKfX_body_mps2
+      - AccKfY_body_mps2
+      - AccKfZ_body_mps2
+      - GyroKfX_body_rad_s
+      - GyroKfY_body_rad_s
+      - GyroKfZ_body_rad_s
+      - VelKfX_body_mps
+      - VelKfY_body_mps
+      - VelKfZ_body_mps
+
+    valid_mask_col: null
+    min_valid_ratio: 1.0
+    drop_incomplete: true
+    label_dvl_mask_mode: "all_true"
+
+  output:
+    dir: "data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_v3"
+    normalize: "standard"
