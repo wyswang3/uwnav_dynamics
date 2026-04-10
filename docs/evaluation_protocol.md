@@ -385,3 +385,112 @@ smoke test 不要求：
 - 更完整的 mask-aware sample-level 可视化
 - 不确定度校准指标
 - 更贴近控制性能的评估指标
+
+## 9. 状态求解器 replay 评估协议
+
+当任务目标从“轨迹块预测”升级为“经验型系统状态求解器”时，
+必须补充长序列 autoregressive replay 评估，
+不能只看单窗口 horizon 指标。
+
+### 9.1 最小 replay 产物
+
+一次有效的 replay 评估至少应产出：
+
+- `metrics.yaml`
+- `segment_metrics.csv`
+- `component_metrics.csv`
+- `pred_samples.npz`
+- `resolved_replay.yaml`
+
+推荐目录约定：
+
+```text
+run.out_dir/run.variant/replay_<split>/
+```
+
+### 9.2 replay 主指标
+
+当前阶段推荐把以下指标作为状态求解器主指标：
+
+- 全局精度：
+  - `rmse_global`
+  - `mae_global`
+- 长期末步精度：
+  - `final_step.rmse_global_mean`
+  - `final_step.mae_global_mean`
+  - `tail_error.final_step_abs_p95_global`
+- 长期误差增长：
+  - `rollout_growth.rmse_last_over_first_mean`
+  - `rollout_growth.rmse_last_over_first_p95`
+  - `rollout_growth.mae_last_over_first_mean`
+  - `rollout_growth.mae_last_over_first_p95`
+- 尾部风险：
+  - `tail_error.abs_p95_global`
+  - `tail_error.abs_p99_global`
+- 系统偏差：
+  - `bias.worst_component`
+  - `bias.worst_abs_bias`
+- 稳定性与可运行性：
+  - `segment_count`
+  - `total_steps`
+  - `nonfinite_trigger_count`
+  - `robustness.finite_pass_rate`
+
+解释边界：
+
+- `rmse_global / mae_global`
+  - 说明整体拟合误差
+  - 但不能单独代表长时稳定性
+- `final_step.*`
+  - 更贴近“累计递推到段尾以后还能否保持可用”
+- `rollout_growth.*`
+  - 用于识别误差是否随递推快速放大
+- `tail_error.*`
+  - 用于识别长尾风险和坏 case
+- `worst_abs_bias`
+  - 用于识别是否存在明显系统偏差
+- `nonfinite_trigger_count`
+  - 只要大于 0，就不应进入主线候选
+
+### 9.3 多方案统一汇总与排行
+
+若要比较多个候选模型，
+必须使用统一 replay 协议落盘：
+
+```text
+work_dir/
+  manifest.yaml
+  summary.csv
+  ranking.csv
+  runs/<candidate_name>/...
+```
+
+其中：
+
+- `summary.csv`
+  - 保存所有候选的原始 replay 主指标与路径
+- `ranking.csv`
+  - 按统一排行协议输出“谁更好”的排序结果
+- `manifest.yaml`
+  - 固定本次批量比较使用的 split、最小 segment 长度、保存样例数量与排行协议
+
+当前推荐排行协议：
+
+- 先过硬门槛：
+  - `segment_count > 0`
+  - `nonfinite_trigger_count == 0`
+- 再按以下主指标做加权排行，统一采用“越小越好”：
+  - `rmse_global`
+  - `mae_global`
+  - `final_step.rmse_global_mean`
+  - `rollout_growth.rmse_last_over_first_p95`
+  - `tail_error.abs_p95_global`
+  - `tail_error.abs_p99_global`
+  - `bias.worst_abs_bias`
+
+注意：
+
+- 该排行协议服务于“离线 replay 筛选”
+- 它不是闭环控制最终结论
+- 若未来进入 controller replay / simulator loop，
+  应继续并行记录时延、循环频率、失败步数等在线指标

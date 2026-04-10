@@ -1,6 +1,6 @@
 # KF 融合训练服务器迁移交接文档
 
-更新时间：2026-04-07  
+更新时间：2026-04-10  
 当前工作分支：`feature/kf-preprocess-training-v1`
 
 ## 1. 迁移目标
@@ -65,10 +65,12 @@
 
 文档：
 
+- `docs/README.md`
 - `README.md`
 - `docs/handover_guide.md`
 - `docs/handover_kf_training_server_v2.md`
-- `docs/快捷命令行.md`
+- `docs/data_management.md`
+- `docs/reference/quick_commands.md`
 - `docs/design/kf_fusion_preprocess_training_v2.md`
 
 ## 3.1 下次进入服务器后的最小恢复动作
@@ -113,6 +115,42 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q \
 4. 再进入 8 卡服务器批次
 
 一步状态转移训练配置仍是后续主线，不属于本页的已完成部分。
+
+### 4.2.1 一键全流程入口
+
+如果服务器环境已经就绪，
+当前更推荐直接使用全流程总控入口：
+
+```bash
+python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_server_full_pipeline_v1.yaml
+```
+
+该入口会按顺序执行：
+
+1. KF / ESKF 融合基础表生成
+2. `quality_v3` 与 `quality_step_v1` 数据集构建
+3. 单卡 smoke
+4. 两个 8 卡矩阵批次
+5. 基于 `train_matrix/summary.csv` 自动生成 replay matrix 并完成长序列方案评估
+
+主要总控产物：
+
+```text
+out/server_pipeline/pooltest02_kf_full_v1/manifest.yaml
+out/server_pipeline/pooltest02_kf_full_v1/phase_status.csv
+out/server_pipeline/pooltest02_kf_full_v1/generated_replay_matrix/*.yaml
+out/server_pipeline/pooltest02_kf_full_v1/logs/*.log
+```
+
+最终结果重点看：
+
+```text
+out/train_matrix/pooltest02_s1_kf_quality_8gpu_v1/summary.csv
+out/train_matrix/pooltest02_s1_kf_quality_step_8gpu_v1/summary.csv
+out/replay_matrix/pooltest02_s1_kf_quality_8gpu_v1/ranking.csv
+out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v1/ranking.csv
+```
 
 ### 4.3 生成融合基础表
 

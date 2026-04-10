@@ -230,14 +230,49 @@ python -m uwnav_dynamics.cli.train_matrix \
 - 控制循环周期
 - 实际运行频率
 
+## 状态求解器升级
+
+当前已经新增最小“经验型状态求解器 + 长序列 replay”升级链：
+
+- 求解器模块：`src/uwnav_dynamics/solver/transition_solver.py`
+- replay 验证：`src/uwnav_dynamics/cli/transition_replay.py`
+- replay 批量排行：`src/uwnav_dynamics/cli/transition_replay_matrix.py`
+- 服务器全流程：`src/uwnav_dynamics/cli/server_pipeline.py`
+
+推荐先用 `pred_len=1` 的一步状态转移分支训练，再做长序列 replay：
+
+```bash
+python -m uwnav_dynamics.cli.train \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+
+python -m uwnav_dynamics.cli.transition_replay \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --min_steps 50
+
+python -m uwnav_dynamics.cli.transition_replay_matrix \
+  -c configs/launch/replay_matrix_example.yaml
+
+python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_server_full_pipeline_v1.yaml
+```
+
+详细升级路线见：
+
+- `docs/design/transition_solver_phase2_replay_upgrade.md`
+
 ## 文档入口
 
+- 文档总导航：`docs/README.md`
 - 项目状态：`docs/project_status.md`
 - 当前交接入口：`docs/handover_guide.md`
+- 数据与 git 规则：`docs/data_management.md`
 - 服务器执行入口：`docs/handover_kf_training_server_v2.md`
+- 命令手册：`docs/reference/quick_commands.md`
 - 工程升级路线：`docs/engineering_roadmap.md`
 - 建模路线：`docs/modeling_roadmap.md`
 - 设计说明：`docs/design/transition_solver_phase1_upgrade.md`
+- 状态求解器升级：`docs/design/transition_solver_phase2_replay_upgrade.md`
 - 数学原理：`docs/math/main.tex`
 - 评估规范：`docs/evaluation_protocol.md`
 - 文件索引：`docs/repo_index.md`

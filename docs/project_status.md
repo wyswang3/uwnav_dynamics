@@ -1,6 +1,6 @@
 # 项目当前状态
 
-更新时间：2026-04-07
+更新时间：2026-04-10
 
 ## 1. 当前阶段
 
@@ -57,6 +57,15 @@
   - `tail_error`
   - `worst_abs_bias`
 
+### 状态求解器升级
+
+- 已新增训练后状态求解器封装：
+  - `src/uwnav_dynamics/solver/transition_solver.py`
+- 已新增长序列 autoregressive replay 验证入口：
+  - `src/uwnav_dynamics/solver/replay.py`
+  - `src/uwnav_dynamics/cli/transition_replay.py`
+- 当前建议优先基于 `quality_step_v1` 分支验证经验型状态求解器
+
 ## 3. 当前最重要的工程事实
 
 当前要特别明确三件事：
@@ -106,6 +115,7 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 - 8 卡矩阵尚未按 Phase 1 修复后的契约正式重跑
 - 新图包尚未用修复后的 run 重新生成
 - 若模型主体不进一步收口为一步转移器，长期自由递推能力仍可能不足
+- 当前 replay 仍属于开环重放验证，还不是闭环控制证明
 
 ## 7. 当前推荐动作
 

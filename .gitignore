@@ -1,13 +1,23 @@
 ############################
 # datasets / logs / artifacts
 ############################
-data/
+data/*
+!data/raw/
+!data/raw/**
+data/interim/
+data/processed/
+data/splits/
+data/raw/**/*_aligned.csv
+data/raw/**/*_aligned.png
+data/raw/**/offline_nav_outputs/
 datasets/
 out/
 outputs/
 runs/
 logs/
 checkpoints/
+!data/raw/**/logs/
+!data/raw/**/logs/**
 
 ############################
 # numpy / torch artifacts
@@ -18,6 +28,13 @@ checkpoints/
 *.pth
 *.ckpt
 *.bin
+!data/raw/**/*.npy
+!data/raw/**/*.npz
+!data/raw/**/*.bin
+!data/raw/**/*.csv
+!data/raw/**/*.txt
+!data/raw/**/*.log
+!data/raw/**/*.bag
 
 ############################
 # python cache

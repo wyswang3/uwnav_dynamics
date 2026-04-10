@@ -1,0 +1,18 @@
+launcher:
+  work_dir: out/replay_matrix/pooltest02_transition_solver_compare
+  split: test
+  device: cpu
+  min_steps: 50
+  save_samples: 8
+  fail_fast: false
+
+runs:
+  - name: quality_step_b4u1
+    label: B4+U1 Step
+    role: primary
+    train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+
+  - name: quality_v3_b4u1
+    label: B4+U1 Horizon
+    role: baseline
+    train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml

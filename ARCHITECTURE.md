@@ -167,6 +167,26 @@ raw IMU
 - `configs/launch/pooltest02_s1_kf_quality_8gpu_v1.yaml`
 - `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml`
 
+### 第 7 层：状态求解器与 Replay 验证层
+
+关键模块：
+
+- `src/uwnav_dynamics/solver/transition_solver.py`
+- `src/uwnav_dynamics/solver/replay.py`
+- `src/uwnav_dynamics/cli/transition_replay.py`
+
+职责：
+
+- 将训练好的网络模型封装成经验型状态求解器
+- 提供最小一步状态递推接口
+- 基于现有实验数据执行长序列 autoregressive replay
+
+当前边界：
+
+- `pred_len=1` 模型是首选求解器主线
+- `pred_len>1` 模型仅保守兼容为“取第一步预测”
+- replay 只证明长序列递推可行性，不替代闭环控制验证
+
 ## 3. 系统级数据流
 
 ```text
@@ -186,6 +206,8 @@ proxy-state dataset build
 S1Predictor training
         ↓
 offline rollout evaluation
+        ↓
+transition solver replay validation
         ↓
 transition-solver readiness analysis
         ↓

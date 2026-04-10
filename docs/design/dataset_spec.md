@@ -27,10 +27,13 @@ data/
 
 推荐语义：
 
-- `raw/`：原始日志，只读保存
-- `interim/`：中间预处理与对齐产物，可重建
-- `processed/`：训练直接消费的数据集产物
-- `splits/`：若需要外部统一 split 索引，可在此保存
+- `raw/`：原始日志，只读保存，作为 git 入库真源
+- `interim/`：中间预处理与对齐产物，可重建，不入 git
+- `processed/`：训练直接消费的数据集产物，可重建，不入 git
+- `splits/`：若需要外部统一 split 索引，可在此保存，默认不入 git
+
+更具体的 git 管理与重建规则见
+[data_management.md](/home/wys/uwnav_dynamics/docs/data_management.md)。
 
 ## 3. 日志命名规则
 

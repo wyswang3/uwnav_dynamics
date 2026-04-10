@@ -5,7 +5,8 @@
 注意：
 
 - 本文是代码与文件定位索引，不是当前交接入口。
-- 初次接手请先读 [handover_guide.md](/home/wys/uwnav_dynamics/docs/handover_guide.md)、
+- 初次接手请先读 [README.md](/home/wys/uwnav_dynamics/docs/README.md)、
+  [handover_guide.md](/home/wys/uwnav_dynamics/docs/handover_guide.md)、
   [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md) 和
   [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)。
 
@@ -25,6 +26,9 @@
 |---|---|---|
 | `src/uwnav_dynamics/cli/eval.py` | 正式评估 CLI 入口，自动选择 checkpoint，并按需编排“数值评估 -> viz 出图”。 | 输入：train YAML、可选 ckpt/split/device/plot 参数；输出：评估目录与可选 `plots/*`。 |
 | `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计 dense/masked 指标并写出控制前诊断摘要。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`（含 layout/supervision/control_readiness metadata）、`rmse_by_horizon.csv`、`mae_by_horizon.csv`、`rmse_by_horizon_masked.csv`、`mae_by_horizon_masked.csv`、`pred_samples.npz`。 |
+| `src/uwnav_dynamics/cli/transition_replay.py` | 状态求解器 replay CLI 入口，执行长序列 autoregressive 重放验证。 | 输入：train YAML + ckpt + split；输出：`replay_<split>/metrics.yaml`、`segment_metrics.csv`、`pred_samples.npz`。 |
+| `src/uwnav_dynamics/cli/transition_replay_matrix.py` | 多候选 replay 批量评估入口，统一写 `manifest.yaml / summary.csv / ranking.csv`。 | 输入：replay matrix YAML；输出：多方案 replay 汇总表、排行表和各候选独立 replay 目录。 |
+| `src/uwnav_dynamics/cli/server_pipeline.py` | 服务器全流程总控入口，串联 preprocess、smoke、8 卡矩阵训练与 replay 排名。 | 输入：server pipeline YAML；输出：`manifest.yaml`、`phase_status.csv`、阶段日志与最终结果目录。 |
 
 ## 3) 数据预处理入口（pipeline / align / build_dataset）
 
@@ -53,6 +57,9 @@
 | `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | 输出语义布局 helper，统一组件标签、`acc/gyro/vel` 分组与 legacy fallback。 | 输入：`metrics.yaml` 或 `target_cols`；输出：semantic layout metadata。 |
 | `src/uwnav_dynamics/supervision_mask.py` | 监督有效性 helper，将 `dvl_mask + semantic layout` 构造成 `target_mask`。 | 输入：`labels.npz["dvl_mask"]` 与 semantic layout；输出：`target_mask:(N,H,D)`；对 KF dense target 数据集，`dvl_mask` 也可以是全真。 |
 | `src/uwnav_dynamics/models/utils/rollout.py` | rollout 工具函数（从 `dY` 累加得到未来状态序列）。 | 输入：`y0` 与 `dY`；输出：`y_hat`。 |
+| `src/uwnav_dynamics/solver/transition_solver.py` | 训练后经验型状态求解器封装，提供单步状态预测与 autoregressive 递推接口。 | 输入：train YAML + ckpt + scaler + history window；输出：下一时刻状态或 replay 预测序列。 |
+| `src/uwnav_dynamics/solver/replay.py` | 基于 `base_csv + idx0 + split` 的长序列 replay 验证模块。 | 输入：processed dataset、split、transition solver；输出：replay metrics、segment 级 CSV 与样例 NPZ。 |
+| `src/uwnav_dynamics/solver/reporting.py` | replay 指标压平与标准排行协议定义。 | 输入：replay `metrics.yaml`；输出：`summary.csv` 字段、排行指标集合与协议说明。 |
 | `src/uwnav_dynamics/models/losses/nll.py` | 对角高斯 NLL 损失定义，支持 dense 与 masked 两条监督路径。 | 输入：`y_hat/y_true/logvar` 与可选 `target_mask`；输出：标量 loss。 |
 | `src/uwnav_dynamics/models/blocks/__init__.py` | blocks 统一导出入口。 | 输入：无；输出：模块类与配置类命名空间。 |
 
@@ -62,6 +69,8 @@
 |---|---|---|
 | `configs/train/pooltest02_s1_lstm_v0.yaml` | 历史训练总配置（run/data/model/rollout/loss/optim/train）。 | 输入：被 `train/config.py` 读取；输出：驱动历史 baseline 路线。 |
 | `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml` | 当前 KF 主线训练配置，启用 grouped head、transition_balance 与 `val_transition_score`。 | 输入：被 `train/config.py` 读取；输出：驱动当前长期拟合训练主线。 |
+| `configs/launch/replay_matrix_example.yaml` | replay 批量评估示例配置，演示如何比较 step 与 horizon 两类候选。 | 输入：被 `cli.transition_replay_matrix` 读取；输出：驱动 `summary.csv / ranking.csv` 生成。 |
+| `configs/launch/pooltest02_server_full_pipeline_v1.yaml` | 8 卡服务器全流程示例配置，串联 fusion、dataset、smoke、train_matrix 与 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
 | `configs/dataset/pooltest02.yaml` | 原始数据集规格（传感器文件选择、pwm_timebase、valid_window）。 | 输入：被 `DatasetSpec.load` 读取；输出：解析后的传感器路径与 reader kwargs。 |
 | `configs/dataset/pooltest02_s1.yaml` | 数据集构建配置（base_table + sliding_window + output）。 | 输入：被 `build_dataset.py` 读取；输出：决定 `features/labels/meta` 生成方式。 |
 | `configs/dataset/pooltest02_s1_kf_ctx_v2.yaml` | KF 融合状态代理量数据集配置（29 维输入、9 维 KF target）。 | 输入：被 `build_dataset.py` 读取；输出：`data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2`。 |

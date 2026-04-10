@@ -1,6 +1,6 @@
 # 项目交接指南
 
-更新时间：2026-04-07
+更新时间：2026-04-10
 
 ## 1. 当前接手时先知道什么
 
@@ -19,11 +19,12 @@
 
 建议顺序：
 
-1. [transition_solver_phase1_upgrade.md](/home/wys/uwnav_dynamics/docs/design/transition_solver_phase1_upgrade.md)
-2. [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
-3. [kf_fusion_preprocess_training_v2.md](/home/wys/uwnav_dynamics/docs/design/kf_fusion_preprocess_training_v2.md)
-4. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
-5. [快捷命令行.md](/home/wys/uwnav_dynamics/docs/快捷命令行.md)
+1. [README.md](/home/wys/uwnav_dynamics/docs/README.md)
+2. [transition_solver_phase1_upgrade.md](/home/wys/uwnav_dynamics/docs/design/transition_solver_phase1_upgrade.md)
+3. [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
+4. [kf_fusion_preprocess_training_v2.md](/home/wys/uwnav_dynamics/docs/design/kf_fusion_preprocess_training_v2.md)
+5. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
+6. [quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
 
 如果只是要尽快恢复本地上下文，前 3 份足够。
 
@@ -42,7 +43,8 @@ export PYTHONPATH=src
 1. 先看本文件第 `3.1` 节，确认 Phase 1 已完成内容与剩余阻塞。
 2. 再看 `docs/design/transition_solver_phase1_upgrade.md` 第 `5` 节，确认本地最小执行顺序。
 3. 再看 `docs/handover_kf_training_server_v2.md` 第 `4.2` 节，确认服务器上的执行顺序。
-4. 如果要继续修代码，优先从 `data_pipeline.py`、`s1_predictor.py`、`run_train.py` 三处开始。
+4. 需要查命令时，去 `docs/reference/quick_commands.md`，不要把它当主交接文档。
+5. 如果要继续修代码，优先从 `data_pipeline.py`、`s1_predictor.py`、`run_train.py` 三处开始。
 
 ## 3. 当前已经落地的事实
 

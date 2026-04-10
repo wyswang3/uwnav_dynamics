@@ -20,6 +20,9 @@
 │   │   ├── pooltest02.yaml
 │   │   └── pooltest02_s1.yaml
 │   ├── eval
+│   ├── launch
+│   │   ├── pooltest02_server_full_pipeline_v1.yaml
+│   │   └── replay_matrix_example.yaml
 │   ├── loss
 │   ├── model
 │   │   ├── ablations
@@ -31,6 +34,21 @@
 │       └── pooltest02_s1_lstm_v0.yaml
 ├── data
 │   ├── interim
+│   │   ├── 2026-01-06_pooltest01
+│   │   │   └── offline_nav_outputs
+│   │   │       ├── 20260107_161043
+│   │   │       │   ├── meta.yaml
+│   │   │       │   ├── plots
+│   │   │       │   │   ├── speed_vs_time.png
+│   │   │       │   │   ├── trajectory_en.png
+│   │   │       │   │   ├── up_vs_time.png
+│   │   │       │   │   └── yaw_vs_time.png
+│   │   │       │   └── trajectory.csv
+│   │   │       └── 20260107_220058
+│   │   └── 2026-01-10_pooltest02
+│   │       └── pwm
+│   │           ├── pwm_log_20260110_193725_aligned.csv
+│   │           └── pwm_log_20260110_193725_aligned.png
 │   ├── raw
 │   │   ├── 2026-01-06_pooltest01
 │   │   │   ├── dvl
@@ -42,16 +60,6 @@
 │   │   │   │   └── min_imu_tb_20260104_195323.csv
 │   │   │   ├── logs
 │   │   │   │   └── pwm_log_20260104_200827.csv
-│   │   │   ├── offline_nav_outputs
-│   │   │   │   ├── 20260107_161043
-│   │   │   │   │   ├── meta.yaml
-│   │   │   │   │   ├── plots
-│   │   │   │   │   │   ├── speed_vs_time.png
-│   │   │   │   │   │   ├── trajectory_en.png
-│   │   │   │   │   │   ├── up_vs_time.png
-│   │   │   │   │   │   └── yaw_vs_time.png
-│   │   │   │   │   └── trajectory.csv
-│   │   │   │   └── 20260107_220058
 │   │   │   └── volt
 │   │   │       └── motor_data_20260104_195325.csv
 │   │   └── 2026-01-10_pooltest02
@@ -72,20 +80,23 @@
 │   │       ├── logs
 │   │       │   ├── pwm_log_20260110_192435.csv
 │   │       │   ├── pwm_log_20260110_193725.csv
-│   │       │   ├── pwm_log_20260110_193725_aligned.csv
-│   │       │   └── pwm_log_20260110_193725_aligned.png
 │   │       └── volt
 │   │           ├── motor_data_20260110_192308.csv
 │   │           └── motor_data_20260110_193455.csv
 │   └── splits
 ├── docs
+│   ├── README.md
+│   ├── archive
+│   │   └── figures_mermaid.md
 │   ├── config_contract.md
+│   ├── data_management.md
 │   ├── design
 │   │   ├── dataset_spec.md
 │   │   ├── imu_plot_style.md
 │   │   ├── kf_fusion_preprocess_training_v2.md
 │   │   ├── plot_style_guide.md
-│   │   └── transition_solver_phase1_upgrade.md
+│   │   ├── transition_solver_phase1_upgrade.md
+│   │   └── transition_solver_phase2_replay_upgrade.md
 │   ├── engineering_roadmap.md
 │   ├── evaluation_protocol.md
 │   ├── handover_guide.md
@@ -117,9 +128,9 @@
 │   │   ├── transition_solver_feasibility.tex
 │   │   └── uncertainty.tex
 │   ├── modeling_roadmap.md
-│   ├── paint
-│   │   └── figures_mermaid.md
 │   ├── project_status.md
+│   ├── reference
+│   │   └── quick_commands.md
 │   ├── repo_index.md
 │   ├── repo_tree.txt
 │   ├── thesis
@@ -127,7 +138,6 @@
 │   │   ├── ch4_sec43_data_and_training_audit.md
 │   │   ├── ch4_sec43_network_audit.md
 │   │   └── train_model.md
-│   └── 快捷命令行.md
 ├── pytest.ini
 ├── repo_tree.txt
 ├── runs
@@ -141,6 +151,9 @@
 │       │   ├── __init__.py
 │       │   ├── eval.py
 │       │   ├── pipeline.py
+│       │   ├── server_pipeline.py
+│       │   ├── transition_replay.py
+│       │   ├── transition_replay_matrix.py
 │       │   ├── train.py
 │       │   └── utils.py
 │       ├── core
@@ -217,6 +230,11 @@
 │       │   ├── run_train.py
 │       │   ├── runtime.py
 │       │   └── trainer.py
+│       ├── solver
+│       │   ├── __init__.py
+│       │   ├── replay.py
+│       │   ├── reporting.py
+│       │   └── transition_solver.py
 │       └── viz
 │           ├── __init__.py
 │           ├── eval
@@ -237,4 +255,7 @@
     ├── test_eval_config_parity.py
     ├── test_experiment_layout.py
     ├── test_split_no_leak.py
+    ├── test_server_pipeline.py
+    ├── test_transition_replay_cli.py
+    ├── test_transition_replay_matrix.py
     └── test_train_runtime.py
