@@ -33,6 +33,7 @@ plot 模块通过 helper 构造 figure / axes / legend
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -310,6 +311,59 @@ def get_observed_pred_styles() -> Dict[str, SeriesStyle]:
     return dict(_OBSERVED_PRED_SERIES)
 
 
+def normalize_model_label(label: str) -> str:
+    """
+    统一历史与当前模型标签的展示简称。
+
+    目标：
+    - 不改变 run.variant / artifact 路径；
+    - 只在图例、坐标轴 tick label 等展示层面把历史代号收口为简短语义名。
+    """
+    text = str(label).strip()
+    if text == "":
+        return text
+
+    replacements: list[tuple[str, str]] = [
+        (r"^B0 baseline seed(\d+)$", r"Base s\1"),
+        (r"^B0 hidden512$", "BaseWide"),
+        (r"^B0 512x3$", "BaseDeep"),
+        (r"^B1 thruster$", "Thr"),
+        (r"^B2 hydro$", "Hydro"),
+        (r"^U1 uncertainty seed(\d+)$", r"Unc s\1"),
+        (r"^U1 uncertainty$", "Unc"),
+        (r"^B4 thruster\+hydro seed(\d+)$", r"Dyn s\1"),
+        (r"^B4 thruster\+hydro$", "Dyn"),
+        (r"^B4\+U1(?: final-confirm| control-confirm)? seed(\d+)$", r"DynUnc s\1"),
+        (r"^B4\+U1 default seed(\d+)$", r"DynUnc default s\1"),
+        (r"^B4\+U1 tuned seed(\d+)$", r"DynUnc tuned s\1"),
+        (r"^Old U1 seed(\d+)$", r"Legacy-Unc s\1"),
+        (r"^Old B4U1 seed(\d+)$", r"Legacy-DynUnc s\1"),
+        (r"^Current Step B0 seed(\d+)$", r"StepBase s\1"),
+        (r"^Current Step B4 seed(\d+)$", r"StepDyn s\1"),
+        (r"^Step joint NLL seed(\d+)$", r"StepNLL s\1"),
+        (r"^Step grouped TB seed(\d+)$", r"StepBase s\1"),
+        (r"^Step grouped TB strong-delta seed(\d+)$", r"StepDelta s\1"),
+        (r"^Step grouped TB blocks seed(\d+)$", r"StepDyn s\1"),
+        (r"^KF joint NLL seed(\d+)$", r"KFNLL s\1"),
+        (r"^KF grouped TB seed(\d+)$", r"KFBase s\1"),
+        (r"^KF grouped TB DVLaux seed(\d+)$", r"KFDvlAux s\1"),
+        (r"^KF grouped TB B4 seed(\d+)$", r"KFDyn s\1"),
+        (r"^KF Ctx joint NLL seed(\d+)$", r"KFCtxNLL s\1"),
+        (r"^KF Ctx grouped TB seed(\d+)$", r"KFCtxBase s\1"),
+        (r"^KF Ctx grouped TB longtail seed(\d+)$", r"KFCtxTail s\1"),
+        (r"^KF Ctx grouped TB blocks seed(\d+)$", r"KFCtxDyn s\1"),
+        (r"^QV3 grouped TB seed(\d+)$", r"QualBase s\1"),
+        (r"^QV3 grouped TB longtail seed(\d+)$", r"QualTail s\1"),
+        (r"^QV3 grouped TB blocks seed(\d+)$", r"QualDyn s\1"),
+        (r"^V2 grouped TB blocks seed(\d+)$", r"QualDynV2 s\1"),
+    ]
+    for pattern, repl in replacements:
+        normalized = re.sub(pattern, repl, text)
+        if normalized != text:
+            return normalized
+    return text
+
+
 def infer_model_role(label: str, explicit_role: Optional[str] = None) -> str:
     """根据标签文本或显式提示推断模型角色。"""
     if explicit_role is not None:
@@ -318,7 +372,7 @@ def infer_model_role(label: str, explicit_role: Optional[str] = None) -> str:
             raise KeyError(f"Unknown model role: {explicit_role!r}")
         return role
 
-    lowered = label.lower()
+    lowered = normalize_model_label(label).lower()
     if any(tok in lowered for tok in ("ours", "our", "proposed", "primary")):
         return "primary"
     if any(tok in lowered for tok in ("ablation", "abl")):

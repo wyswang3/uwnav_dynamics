@@ -1,6 +1,6 @@
 # Round 5 single-source matrix:
 # - keep the round4 narrowed candidate set; do not reopen broad architecture search
-# - use new seeds 6~9 to confirm whether U1 or B4+U1 is the more reliable final candidate
+# - use new seeds 6~9 to confirm whether Unc or DynUnc is the more reliable final candidate
 # - keep the training budget and data path unchanged to preserve cross-round comparability
 # - use masked metrics + control_readiness as the final offline screening signal
 
@@ -38,7 +38,7 @@ common_overrides:
 
 runs:
   - name: u1_seed6
-    label: U1 uncertainty seed6
+    label: Unc s6
     role: ablation
     overrides:
       run:
@@ -50,7 +50,7 @@ runs:
             enabled: true
 
   - name: u1_seed7
-    label: U1 uncertainty seed7
+    label: Unc s7
     role: ablation
     overrides:
       run:
@@ -62,7 +62,7 @@ runs:
             enabled: true
 
   - name: u1_seed8
-    label: U1 uncertainty seed8
+    label: Unc s8
     role: ablation
     overrides:
       run:
@@ -74,7 +74,7 @@ runs:
             enabled: true
 
   - name: u1_seed9
-    label: U1 uncertainty seed9
+    label: Unc s9
     role: ablation
     overrides:
       run:
@@ -86,7 +86,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed6
-    label: B4+U1 final-confirm seed6
+    label: DynUnc s6
     role: primary
     overrides:
       run:
@@ -102,7 +102,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed7
-    label: B4+U1 final-confirm seed7
+    label: DynUnc s7
     role: primary
     overrides:
       run:
@@ -118,7 +118,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed8
-    label: B4+U1 final-confirm seed8
+    label: DynUnc s8
     role: primary
     overrides:
       run:
@@ -134,7 +134,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed9
-    label: B4+U1 final-confirm seed9
+    label: DynUnc s9
     role: primary
     overrides:
       run:

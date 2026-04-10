@@ -1,0 +1,97 @@
+launcher:
+  work_dir: out/replay_matrix/pooltest02_old_vs_current_observed_dvl_replay_v1
+  split: test
+  device: cuda
+  min_steps: 50
+  max_segments: 24
+  save_samples: 8
+  fail_fast: false
+
+runs:
+  - name: old_u1_seed8
+    label: Legacy-Unc s8
+    role: baseline
+    train_yaml: configs/train/generated/pooltest02_s1_round5_finalconfirm_e120/u1_seed8.yaml
+    eval:
+      name: observed_dvl_velocity
+      pred_source: feature_row
+      pred_cols: [VelX_state_mps, VelY_state_mps, VelZ_state_mps]
+      target_cols: [VelBx_body_mps, VelBy_body_mps, VelBz_body_mps]
+      mask_cols: [dvl_mask, has_dvl, has_dvl_bi, has_dvl_bi_mask, HasDvlMeasurement]
+
+  - name: old_u1_seed9
+    label: Legacy-Unc s9
+    role: baseline
+    train_yaml: configs/train/generated/pooltest02_s1_round5_finalconfirm_e120/u1_seed9.yaml
+    eval:
+      name: observed_dvl_velocity
+      pred_source: feature_row
+      pred_cols: [VelX_state_mps, VelY_state_mps, VelZ_state_mps]
+      target_cols: [VelBx_body_mps, VelBy_body_mps, VelBz_body_mps]
+      mask_cols: [dvl_mask, has_dvl, has_dvl_bi, has_dvl_bi_mask, HasDvlMeasurement]
+
+  - name: old_b4u1_seed8
+    label: Legacy-DynUnc s8
+    role: primary
+    train_yaml: configs/train/generated/pooltest02_s1_round5_finalconfirm_e120/b4u1_seed8.yaml
+    eval:
+      name: observed_dvl_velocity
+      pred_source: feature_row
+      pred_cols: [VelX_state_mps, VelY_state_mps, VelZ_state_mps]
+      target_cols: [VelBx_body_mps, VelBy_body_mps, VelBz_body_mps]
+      mask_cols: [dvl_mask, has_dvl, has_dvl_bi, has_dvl_bi_mask, HasDvlMeasurement]
+
+  - name: old_b4u1_seed9
+    label: Legacy-DynUnc s9
+    role: primary
+    train_yaml: configs/train/generated/pooltest02_s1_round5_finalconfirm_e120/b4u1_seed9.yaml
+    eval:
+      name: observed_dvl_velocity
+      pred_source: feature_row
+      pred_cols: [VelX_state_mps, VelY_state_mps, VelZ_state_mps]
+      target_cols: [VelBx_body_mps, VelBy_body_mps, VelBz_body_mps]
+      mask_cols: [dvl_mask, has_dvl, has_dvl_bi, has_dvl_bi_mask, HasDvlMeasurement]
+
+  - name: current_step_b0_seed8
+    label: StepBase s8
+    role: baseline
+    train_yaml: configs/train/generated/pooltest02_s1_kf_quality_step_8gpu_v1/step_b0_grouped_tb_seed8.yaml
+    eval:
+      name: observed_dvl_velocity
+      pred_source: feature_row
+      pred_cols: [VelKfX_body_mps, VelKfY_body_mps, VelKfZ_body_mps]
+      target_cols: [VelBx_body_mps, VelBy_body_mps, VelBz_body_mps]
+      mask_cols: [dvl_mask, has_dvl, has_dvl_bi, has_dvl_bi_mask, HasDvlMeasurement]
+
+  - name: current_step_b0_seed9
+    label: StepBase s9
+    role: baseline
+    train_yaml: configs/train/generated/pooltest02_s1_kf_quality_step_8gpu_v1/step_b0_grouped_tb_seed9.yaml
+    eval:
+      name: observed_dvl_velocity
+      pred_source: feature_row
+      pred_cols: [VelKfX_body_mps, VelKfY_body_mps, VelKfZ_body_mps]
+      target_cols: [VelBx_body_mps, VelBy_body_mps, VelBz_body_mps]
+      mask_cols: [dvl_mask, has_dvl, has_dvl_bi, has_dvl_bi_mask, HasDvlMeasurement]
+
+  - name: current_step_b4_seed8
+    label: StepDyn s8
+    role: primary
+    train_yaml: configs/train/generated/pooltest02_s1_kf_quality_step_8gpu_v1/step_b4_grouped_tb_blocks_seed8.yaml
+    eval:
+      name: observed_dvl_velocity
+      pred_source: feature_row
+      pred_cols: [VelKfX_body_mps, VelKfY_body_mps, VelKfZ_body_mps]
+      target_cols: [VelBx_body_mps, VelBy_body_mps, VelBz_body_mps]
+      mask_cols: [dvl_mask, has_dvl, has_dvl_bi, has_dvl_bi_mask, HasDvlMeasurement]
+
+  - name: current_step_b4_seed9
+    label: StepDyn s9
+    role: primary
+    train_yaml: configs/train/generated/pooltest02_s1_kf_quality_step_8gpu_v1/step_b4_grouped_tb_blocks_seed9.yaml
+    eval:
+      name: observed_dvl_velocity
+      pred_source: feature_row
+      pred_cols: [VelKfX_body_mps, VelKfY_body_mps, VelKfZ_body_mps]
+      target_cols: [VelBx_body_mps, VelBy_body_mps, VelBz_body_mps]
+      mask_cols: [dvl_mask, has_dvl, has_dvl_bi, has_dvl_bi_mask, HasDvlMeasurement]

@@ -32,7 +32,7 @@ common_overrides:
 
 runs:
   - name: step_a0_joint_nll_seed8
-    label: Step joint NLL seed8
+    label: StepNLL s8
     role: baseline
     overrides:
       run:
@@ -54,7 +54,7 @@ runs:
         dvl_obs_weight: 0.0
 
   - name: step_a0_joint_nll_seed9
-    label: Step joint NLL seed9
+    label: StepNLL s9
     role: baseline
     overrides:
       run:
@@ -76,7 +76,7 @@ runs:
         dvl_obs_weight: 0.0
 
   - name: step_b0_grouped_tb_seed8
-    label: Step grouped TB seed8
+    label: StepBase s8
     role: primary
     overrides:
       run:
@@ -84,7 +84,7 @@ runs:
         variant: STEP_B0_grouped_tb_seed8
 
   - name: step_b0_grouped_tb_seed9
-    label: Step grouped TB seed9
+    label: StepBase s9
     role: primary
     overrides:
       run:
@@ -92,7 +92,7 @@ runs:
         variant: STEP_B0_grouped_tb_seed9
 
   - name: step_b2_grouped_tb_strong_delta_seed8
-    label: Step grouped TB strong-delta seed8
+    label: StepDelta s8
     role: ablation
     overrides:
       run:
@@ -105,7 +105,7 @@ runs:
         vel_weight: 2.3
 
   - name: step_b2_grouped_tb_strong_delta_seed9
-    label: Step grouped TB strong-delta seed9
+    label: StepDelta s9
     role: ablation
     overrides:
       run:
@@ -118,7 +118,7 @@ runs:
         vel_weight: 2.3
 
   - name: step_b4_grouped_tb_blocks_seed8
-    label: Step grouped TB blocks seed8
+    label: StepDyn s8
     role: primary
     overrides:
       run:
@@ -132,7 +132,7 @@ runs:
             enabled: true
 
   - name: step_b4_grouped_tb_blocks_seed9
-    label: Step grouped TB blocks seed9
+    label: StepDyn s9
     role: primary
     overrides:
       run:

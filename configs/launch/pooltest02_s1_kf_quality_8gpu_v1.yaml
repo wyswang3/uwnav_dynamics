@@ -32,7 +32,7 @@ common_overrides:
 
 runs:
   - name: qv3_b0_grouped_tb_seed8
-    label: QV3 grouped TB seed8
+    label: QualBase s8
     role: baseline
     overrides:
       run:
@@ -40,7 +40,7 @@ runs:
         variant: QV3_B0_grouped_tb_seed8
 
   - name: qv3_b0_grouped_tb_seed9
-    label: QV3 grouped TB seed9
+    label: QualBase s9
     role: baseline
     overrides:
       run:
@@ -48,7 +48,7 @@ runs:
         variant: QV3_B0_grouped_tb_seed9
 
   - name: qv3_b2_grouped_tb_longtail_seed8
-    label: QV3 grouped TB longtail seed8
+    label: QualTail s8
     role: ablation
     overrides:
       run:
@@ -61,7 +61,7 @@ runs:
         vel_weight: 2.2
 
   - name: qv3_b2_grouped_tb_longtail_seed9
-    label: QV3 grouped TB longtail seed9
+    label: QualTail s9
     role: ablation
     overrides:
       run:
@@ -74,7 +74,7 @@ runs:
         vel_weight: 2.2
 
   - name: qv3_b4_grouped_tb_blocks_seed8
-    label: QV3 grouped TB blocks seed8
+    label: QualDyn s8
     role: primary
     overrides:
       run:
@@ -88,7 +88,7 @@ runs:
             enabled: true
 
   - name: qv3_b4_grouped_tb_blocks_seed9
-    label: QV3 grouped TB blocks seed9
+    label: QualDyn s9
     role: primary
     overrides:
       run:
@@ -102,7 +102,7 @@ runs:
             enabled: true
 
   - name: v2_b4_grouped_tb_blocks_seed8
-    label: V2 grouped TB blocks seed8
+    label: QualDynV2 s8
     role: primary
     overrides:
       run:
@@ -119,7 +119,7 @@ runs:
             enabled: true
 
   - name: v2_b4_grouped_tb_blocks_seed9
-    label: V2 grouped TB blocks seed9
+    label: QualDynV2 s9
     role: primary
     overrides:
       run:

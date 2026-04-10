@@ -9,7 +9,8 @@ autoregressive 长序列 replay 验证，补上“固定窗口 rollout”之外�
 1. 从 `processed dataset + meta.yaml + base_csv` 恢复连续时间轴上的输入/目标序列。
 2. 根据 split 对应的窗口起点 `idx0` 切出可重放的连续 segment。
 3. 用求解器递推主状态、保留未来控制/上下文模板，执行长序列 autoregressive replay。
-4. 汇总全局、segment 末步、误差增长、尾部误差与偏差指标，并落盘 artifact。
+4. 支持“预测列 / 统一目标列 / 观测 mask”自定义评估口径，便于跨主线公平比较。
+5. 汇总全局、segment 末步、误差增长、阈值生存、尾部误差与偏差指标，并落盘 artifact。
 
 数据流：
 data_dir/meta.yaml + base_csv + features.idx0 + split_indices
@@ -18,7 +19,7 @@ replay segments on raw timeline
     ↓
 transition solver autoregressive rollout
     ↓
-replay metrics / segment_metrics.csv / pred_samples.npz
+replay metrics / segment_metrics.csv / step_metrics.csv / pred_samples.npz
 
 依赖模块：
 - numpy
@@ -31,6 +32,8 @@ replay metrics / segment_metrics.csv / pred_samples.npz
 备注：
 - 当前 replay 验证默认把未来控制/上下文当作已知模板，
   只递推主状态槽位 `y_in_idx`。
+- 若不同训练主线的代理状态定义不一致，可通过自定义评估口径，
+  统一映射到 `base_csv` 中同一组观测列上再比较。
 - 这一步用于验证“经验型状态求解器”的长序列可行性，
   不是闭环控制最终证明。
 """
@@ -55,6 +58,7 @@ class ReplayDataset:
     """replay 验证所需的连续基表与窗口索引。"""
     data_dir: Path
     base_csv: Path
+    base_frame: pd.DataFrame
     hist_len: int
     pred_len: int
     input_cols: tuple[str, ...]
@@ -62,6 +66,38 @@ class ReplayDataset:
     inputs: np.ndarray
     targets: np.ndarray
     idx0: np.ndarray
+
+
+@dataclass(frozen=True)
+class ReplayEvalSpec:
+    """
+    replay 统一比较时的额外评估口径。
+
+    设计目的：
+    - 默认 replay 仍按各自数据集的 `target_cols` 评估；
+    - 若需要跨不同训练主线做公平比较，可指定“从预测特征行里取哪些列，
+      并与 base_csv 中哪组观测列对齐比较”。
+    """
+
+    name: str = "dataset_target"
+    pred_source: str = "state"  # "state" | "feature_row"
+    pred_cols: tuple[str, ...] = ()
+    target_cols: tuple[str, ...] = ()
+    mask_cols: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReplayThresholdSpec:
+    """
+    长线拟合判据使用的默认阈值。
+
+    备注：
+    - 当前默认值优先服务“体速度对 DVL 观测”的 replay 口径；
+    - 若未来改成其他状态量，建议在 launcher 中显式覆盖。
+    """
+
+    rmse_threshold: float = 0.05
+    abs_error_threshold: float = 0.10
 
 
 @dataclass(frozen=True)
@@ -133,6 +169,7 @@ def load_replay_dataset(data_dir: str | Path) -> ReplayDataset:
     return ReplayDataset(
         data_dir=data_dir,
         base_csv=base_csv,
+        base_frame=base_df,
         hist_len=hist_len,
         pred_len=pred_len,
         input_cols=input_cols,
@@ -200,9 +237,45 @@ def build_replay_segments(
     return segments
 
 
-def _global_rmse_mae(y_hat: np.ndarray, y_true: np.ndarray) -> tuple[float, float]:
+def _expand_eval_mask(mask: np.ndarray | None, *, shape: tuple[int, int]) -> np.ndarray:
+    """把 1D/2D mask 统一广播成 `(T,D)` 布尔矩阵。"""
+    t_steps, n_dim = int(shape[0]), int(shape[1])
+    if mask is None:
+        return np.ones((t_steps, n_dim), dtype=bool)
+    arr = np.asarray(mask)
+    if arr.ndim == 1:
+        if arr.shape[0] != t_steps:
+            raise ValueError(f"mask length mismatch: {arr.shape[0]} vs {t_steps}")
+        return np.repeat(arr.reshape(t_steps, 1).astype(bool), n_dim, axis=1)
+    if arr.ndim == 2 and tuple(arr.shape) == (t_steps, 1):
+        return np.repeat(arr.astype(bool), n_dim, axis=1)
+    if arr.ndim == 2 and tuple(arr.shape) == (t_steps, n_dim):
+        return arr.astype(bool, copy=False)
+    raise ValueError(f"Unsupported mask shape {tuple(arr.shape)} for target shape {shape}")
+
+
+def _valid_eval_mask(y_hat: np.ndarray, y_true: np.ndarray, *, mask: np.ndarray | None = None) -> np.ndarray:
+    """构造“用户掩码 + 有限值”联合有效掩码。"""
+    y_hat_arr = np.asarray(y_hat, dtype=np.float64)
+    y_true_arr = np.asarray(y_true, dtype=np.float64)
+    if y_hat_arr.shape != y_true_arr.shape:
+        raise ValueError(f"Prediction/target shape mismatch: {y_hat_arr.shape} vs {y_true_arr.shape}")
+    eval_mask = _expand_eval_mask(mask, shape=y_hat_arr.shape)
+    return eval_mask & np.isfinite(y_hat_arr) & np.isfinite(y_true_arr)
+
+
+def _masked_values(values: np.ndarray, *, valid_mask: np.ndarray) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float64)
+    mask = np.asarray(valid_mask, dtype=bool)
+    if arr.shape != mask.shape:
+        raise ValueError(f"Value/mask shape mismatch: {arr.shape} vs {mask.shape}")
+    return arr[mask]
+
+
+def _global_rmse_mae(y_hat: np.ndarray, y_true: np.ndarray, *, mask: np.ndarray | None = None) -> tuple[float, float]:
+    valid_mask = _valid_eval_mask(y_hat, y_true, mask=mask)
     err = np.asarray(y_hat - y_true, dtype=np.float64)
-    vals = err.reshape(-1)
+    vals = _masked_values(err, valid_mask=valid_mask)
     if vals.size <= 0:
         return float("nan"), float("nan")
     return float(np.sqrt(np.mean(vals * vals))), float(np.mean(np.abs(vals)))
@@ -215,6 +288,47 @@ def _edge_ratio(first: float, last: float) -> float:
     if abs(float(first)) <= eps:
         return 1.0 if abs(float(last)) <= eps else float("inf")
     return float(last / first)
+
+
+def _nanmean_or_nan(values: np.ndarray | Sequence[float]) -> float:
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    finite = arr[np.isfinite(arr)]
+    if finite.size <= 0:
+        return float("nan")
+    return float(np.mean(finite))
+
+
+def _nanpercentile_or_nan(values: np.ndarray | Sequence[float], q: float) -> float:
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    finite = arr[np.isfinite(arr)]
+    if finite.size <= 0:
+        return float("nan")
+    return float(np.percentile(finite, q))
+
+
+def _linear_slope(values: np.ndarray | Sequence[float]) -> float:
+    """对 step-wise 曲线做最小二乘线性斜率估计。"""
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    finite_mask = np.isfinite(arr)
+    if int(finite_mask.sum()) < 2:
+        return float("nan")
+    x = np.arange(1, arr.size + 1, dtype=np.float64)[finite_mask]
+    y = arr[finite_mask]
+    x_center = x - np.mean(x)
+    denom = float(np.sum(x_center * x_center))
+    if denom <= 0.0:
+        return float("nan")
+    y_center = y - np.mean(y)
+    return float(np.sum(x_center * y_center) / denom)
+
+
+def _first_threshold_breach_step(values: np.ndarray | Sequence[float], *, threshold: float) -> int | None:
+    """返回首次超过阈值的 1-based step；未超过则返回 None。"""
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    hit = np.where(np.isfinite(arr) & (arr > float(threshold)))[0]
+    if hit.size <= 0:
+        return None
+    return int(hit[0] + 1)
 
 
 def _tail_percentiles(values: np.ndarray, *, percentiles: Sequence[float]) -> dict[str, float]:
@@ -230,11 +344,13 @@ def _component_metric_rows(
     y_true: np.ndarray,
     *,
     component_labels: Sequence[str],
+    mask: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     err = np.asarray(y_hat - y_true, dtype=np.float64)
+    valid_mask = _valid_eval_mask(y_hat, y_true, mask=mask)
     rows: list[dict[str, Any]] = []
     for dim, label in enumerate(component_labels):
-        vals = err[:, dim]
+        vals = err[:, dim][valid_mask[:, dim]]
         rows.append(
             {
                 "component": str(label),
@@ -267,6 +383,175 @@ def _pad_sample_segments(segments: list[dict[str, Any]], *, dout: int) -> tuple[
     return y_hat, y_true, mask
 
 
+def _resolve_eval_mask_rows(base_rows: pd.DataFrame, *, mask_cols: Sequence[str]) -> np.ndarray:
+    """
+    从 base_csv 行片段中恢复评估掩码。
+
+    约定：
+    - `mask_cols` 作为候选列列表，取第一列存在的列；
+    - 若未提供 `mask_cols`，则视为全有效；
+    - 若提供了候选列但都不存在，直接 fail-fast。
+    """
+    if len(mask_cols) <= 0:
+        return np.ones(len(base_rows), dtype=bool)
+    for col in mask_cols:
+        if col in base_rows.columns:
+            vals = pd.to_numeric(base_rows[col], errors="coerce").to_numpy(dtype=float)
+            return np.isfinite(vals) & (vals > 0.5)
+    raise KeyError(f"None of eval.mask_cols exist in base_csv: {list(mask_cols)}")
+
+
+def _build_step_metric_rows(
+    segment_curves: Sequence[dict[str, Any]],
+    *,
+    thresholds: ReplayThresholdSpec,
+) -> list[dict[str, Any]]:
+    """把各段逐步误差曲线汇总成 step-wise artifact。"""
+    if len(segment_curves) <= 0:
+        return []
+    max_len = max(int(curve["n_steps"]) for curve in segment_curves)
+    rows: list[dict[str, Any]] = []
+    for step_idx in range(max_len):
+        abs_chunks: list[np.ndarray] = []
+        active_segments = 0
+        rmse_survivors = 0
+        abs_survivors = 0
+        for curve in segment_curves:
+            if step_idx >= int(curve["n_steps"]):
+                continue
+            step_abs = np.asarray(curve["abs_values"][step_idx], dtype=np.float64).reshape(-1)
+            if step_abs.size <= 0:
+                continue
+            active_segments += 1
+            abs_chunks.append(step_abs)
+            rmse_breach_step = curve["rmse_breach_step"]
+            abs_breach_step = curve["abs_breach_step"]
+            if rmse_breach_step is None or int(rmse_breach_step) > (step_idx + 1):
+                rmse_survivors += 1
+            if abs_breach_step is None or int(abs_breach_step) > (step_idx + 1):
+                abs_survivors += 1
+
+        if abs_chunks:
+            abs_vals = np.concatenate(abs_chunks, axis=0)
+            rmse_global = float(np.sqrt(np.mean(abs_vals * abs_vals)))
+            mae_global = float(np.mean(abs_vals))
+            abs_p50 = float(np.percentile(abs_vals, 50.0))
+            abs_p95 = float(np.percentile(abs_vals, 95.0))
+        else:
+            abs_vals = np.zeros((0,), dtype=np.float64)
+            rmse_global = float("nan")
+            mae_global = float("nan")
+            abs_p50 = float("nan")
+            abs_p95 = float("nan")
+
+        rows.append(
+            {
+                "step": int(step_idx + 1),
+                "active_segments": int(active_segments),
+                "value_count": int(abs_vals.size),
+                "rmse_global": rmse_global,
+                "mae_global": mae_global,
+                "abs_p50_global": abs_p50,
+                "abs_p95_global": abs_p95,
+                "rmse_survival_rate": (
+                    float(rmse_survivors / active_segments) if active_segments > 0 else float("nan")
+                ),
+                "abs_survival_rate": (
+                    float(abs_survivors / active_segments) if active_segments > 0 else float("nan")
+                ),
+                "rmse_threshold": float(thresholds.rmse_threshold),
+                "abs_error_threshold": float(thresholds.abs_error_threshold),
+            }
+        )
+    return rows
+
+
+def _resolve_eval_arrays(
+    *,
+    replay_dataset: ReplayDataset,
+    rollout_rows: np.ndarray,
+    predicted_states: np.ndarray,
+    hist_stop: int,
+    target_stop: int,
+    eval_spec: ReplayEvalSpec | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, tuple[str, ...], dict[str, Any]]:
+    """
+    根据评估口径恢复本段 `y_hat / y_true / mask`。
+    """
+    if eval_spec is None:
+        return (
+            np.asarray(predicted_states, dtype=np.float32),
+            np.asarray(replay_dataset.targets[hist_stop:target_stop, :], dtype=np.float32),
+            None,
+            replay_dataset.target_cols,
+            {
+                "name": "dataset_target",
+                "pred_source": "state",
+                "pred_cols": list(replay_dataset.target_cols),
+                "target_cols": list(replay_dataset.target_cols),
+                "mask_cols": [],
+                "last_step_policy": "segment_last_step",
+            },
+        )
+
+    spec = ReplayEvalSpec(
+        name=str(eval_spec.name or "custom_eval"),
+        pred_source=str(eval_spec.pred_source or "state"),
+        pred_cols=tuple(str(v) for v in eval_spec.pred_cols),
+        target_cols=tuple(str(v) for v in eval_spec.target_cols),
+        mask_cols=tuple(str(v) for v in eval_spec.mask_cols),
+    )
+    if spec.pred_source not in {"state", "feature_row"}:
+        raise ValueError(f"Unsupported eval.pred_source={spec.pred_source!r}; expect 'state' or 'feature_row'")
+    if len(spec.target_cols) <= 0:
+        raise ValueError("eval.target_cols must be non-empty when eval spec is provided")
+
+    base_rows = replay_dataset.base_frame.iloc[hist_stop:target_stop, :]
+    missing_targets = [c for c in spec.target_cols if c not in base_rows.columns]
+    if missing_targets:
+        raise KeyError(f"base_csv missing eval.target_cols: {missing_targets}")
+    y_true = base_rows.loc[:, list(spec.target_cols)].to_numpy(dtype=np.float32, copy=True)
+    mask = _resolve_eval_mask_rows(base_rows, mask_cols=spec.mask_cols)
+
+    if spec.pred_source == "state":
+        y_hat = np.asarray(predicted_states, dtype=np.float32)
+        if len(spec.pred_cols) > 0 and tuple(spec.pred_cols) != tuple(replay_dataset.target_cols):
+            raise ValueError("eval.pred_cols is only supported with pred_source='feature_row'")
+        if y_hat.shape[1] != len(spec.target_cols):
+            raise ValueError(
+                "state prediction dim does not match eval.target_cols: "
+                f"{y_hat.shape[1]} vs {len(spec.target_cols)}"
+            )
+        pred_cols = tuple(replay_dataset.target_cols)
+    else:
+        if len(spec.pred_cols) <= 0:
+            raise ValueError("eval.pred_cols must be non-empty when pred_source='feature_row'")
+        pred_idx: list[int] = []
+        for col in spec.pred_cols:
+            if col not in replay_dataset.input_cols:
+                raise KeyError(f"eval.pred_cols column not found in input_cols: {col}")
+            pred_idx.append(int(replay_dataset.input_cols.index(col)))
+        y_hat = np.asarray(rollout_rows[:, pred_idx], dtype=np.float32)
+        pred_cols = tuple(spec.pred_cols)
+
+    if y_hat.shape != y_true.shape:
+        raise ValueError(f"eval prediction/target shape mismatch: {y_hat.shape} vs {y_true.shape}")
+    return (
+        y_hat,
+        y_true,
+        mask,
+        tuple(str(v) for v in spec.target_cols),
+        {
+            "name": spec.name,
+            "pred_source": spec.pred_source,
+            "pred_cols": list(pred_cols),
+            "target_cols": list(spec.target_cols),
+            "mask_cols": list(spec.mask_cols),
+            "last_step_policy": "last_valid_observation" if len(spec.mask_cols) > 0 else "segment_last_step",
+        },
+    )
+
+
 def run_transition_replay(
     *,
     replay_dataset: ReplayDataset,
@@ -277,6 +562,8 @@ def run_transition_replay(
     max_segments: int | None = None,
     max_steps_per_segment: int | None = None,
     save_samples: int = 8,
+    eval_spec: ReplayEvalSpec | None = None,
+    thresholds: ReplayThresholdSpec | None = None,
 ) -> ReplayResult:
     """
     执行长序列 autoregressive replay，并汇总数值结果。
@@ -298,11 +585,17 @@ def run_transition_replay(
             f"Try lowering min_steps (current={min_steps})."
         )
 
+    resolved_thresholds = thresholds or ReplayThresholdSpec()
     all_hat: list[np.ndarray] = []
     all_true: list[np.ndarray] = []
+    all_masks: list[np.ndarray] = []
     segment_rows: list[dict[str, Any]] = []
+    segment_curves: list[dict[str, Any]] = []
     sample_segments: list[dict[str, Any]] = []
     nonfinite_trigger_count = 0
+    eval_meta: dict[str, Any] | None = None
+    component_labels: tuple[str, ...] = replay_dataset.target_cols
+    final_step_abs_segments: list[np.ndarray] = []
 
     for segment in segments:
         start = int(segment.start_idx0)
@@ -327,28 +620,99 @@ def run_transition_replay(
             initial_history_physical=history,
             future_feature_templates_physical=future_templates,
         )
-        y_hat = np.asarray(rollout.predicted_states, dtype=np.float32)
-        if y_hat.shape != y_true.shape:
-            raise ValueError(f"segment {segment.segment_id} prediction shape mismatch: {y_hat.shape} vs {y_true.shape}")
+        y_hat, y_true_eval, eval_mask, eval_labels, segment_eval_meta = _resolve_eval_arrays(
+            replay_dataset=replay_dataset,
+            rollout_rows=rollout.replay_rows,
+            predicted_states=rollout.predicted_states,
+            hist_stop=hist_stop,
+            target_stop=target_stop,
+            eval_spec=eval_spec,
+        )
+        if eval_meta is None:
+            eval_meta = dict(segment_eval_meta)
+            component_labels = tuple(eval_labels)
+        if y_hat.shape != y_true_eval.shape:
+            raise ValueError(f"segment {segment.segment_id} prediction shape mismatch: {y_hat.shape} vs {y_true_eval.shape}")
 
         nonfinite_trigger_count += int(rollout.nonfinite_trigger_count)
         all_hat.append(y_hat)
-        all_true.append(y_true)
+        all_true.append(y_true_eval)
+        all_masks.append(_expand_eval_mask(eval_mask, shape=y_hat.shape))
 
-        seg_rmse, seg_mae = _global_rmse_mae(y_hat, y_true)
-        first_rmse, first_mae = _global_rmse_mae(y_hat[:1, :], y_true[:1, :])
-        final_rmse, final_mae = _global_rmse_mae(y_hat[-1:, :], y_true[-1:, :])
+        seg_valid_mask = _valid_eval_mask(y_hat, y_true_eval, mask=eval_mask)
+        seg_rmse, seg_mae = _global_rmse_mae(y_hat, y_true_eval, mask=eval_mask)
+        seg_abs = np.abs(np.asarray(y_hat - y_true_eval, dtype=np.float64))
+        step_rmse_curve = np.full(int(segment.n_steps), np.nan, dtype=np.float64)
+        step_mae_curve = np.full(int(segment.n_steps), np.nan, dtype=np.float64)
+        step_abs_max_curve = np.full(int(segment.n_steps), np.nan, dtype=np.float64)
+        step_abs_values: list[np.ndarray] = []
+        for step_idx in range(int(segment.n_steps)):
+            row_mask = seg_valid_mask[step_idx:step_idx + 1, :]
+            row_abs = _masked_values(seg_abs[step_idx:step_idx + 1, :], valid_mask=row_mask)
+            step_abs_values.append(np.asarray(row_abs, dtype=np.float64))
+            if row_abs.size <= 0:
+                continue
+            step_rmse_curve[step_idx] = float(np.sqrt(np.mean(row_abs * row_abs)))
+            step_mae_curve[step_idx] = float(np.mean(row_abs))
+            step_abs_max_curve[step_idx] = float(np.max(row_abs))
+        valid_rows = np.where(seg_valid_mask.any(axis=1))[0]
+        first_idx = int(valid_rows[0]) if valid_rows.size > 0 else None
+        last_idx = int(valid_rows[-1]) if valid_rows.size > 0 else None
+        first_rmse, first_mae = (
+            _global_rmse_mae(y_hat[first_idx:first_idx + 1, :], y_true_eval[first_idx:first_idx + 1, :], mask=eval_mask[first_idx:first_idx + 1] if eval_mask is not None else None)
+            if first_idx is not None
+            else (float("nan"), float("nan"))
+        )
+        final_rmse, final_mae = (
+            _global_rmse_mae(y_hat[last_idx:last_idx + 1, :], y_true_eval[last_idx:last_idx + 1, :], mask=eval_mask[last_idx:last_idx + 1] if eval_mask is not None else None)
+            if last_idx is not None
+            else (float("nan"), float("nan"))
+        )
+        if last_idx is not None:
+            final_step_abs_segments.append(
+                _masked_values(
+                    np.abs(np.asarray(y_hat[last_idx:last_idx + 1, :] - y_true_eval[last_idx:last_idx + 1, :], dtype=np.float64)),
+                    valid_mask=_valid_eval_mask(
+                        y_hat[last_idx:last_idx + 1, :],
+                        y_true_eval[last_idx:last_idx + 1, :],
+                        mask=eval_mask[last_idx:last_idx + 1] if eval_mask is not None else None,
+                    ),
+                )
+            )
+        rmse_breach_step = _first_threshold_breach_step(
+            step_rmse_curve,
+            threshold=float(resolved_thresholds.rmse_threshold),
+        )
+        abs_breach_step = _first_threshold_breach_step(
+            step_abs_max_curve,
+            threshold=float(resolved_thresholds.abs_error_threshold),
+        )
         segment_rows.append(
             {
                 "segment_id": int(segment.segment_id),
                 "start_idx0": int(segment.start_idx0),
                 "n_steps": int(segment.n_steps),
+                "eval_steps": int(seg_valid_mask.any(axis=1).sum()),
                 "rmse_global": seg_rmse,
                 "mae_global": seg_mae,
                 "final_step_rmse": final_rmse,
                 "final_step_mae": final_mae,
                 "rmse_last_over_first": _edge_ratio(first_rmse, final_rmse),
                 "mae_last_over_first": _edge_ratio(first_mae, final_mae),
+                "rmse_threshold_breach_step": float(rmse_breach_step) if rmse_breach_step is not None else float("nan"),
+                "abs_error_threshold_breach_step": float(abs_breach_step) if abs_breach_step is not None else float("nan"),
+            }
+        )
+        segment_curves.append(
+            {
+                "segment_id": int(segment.segment_id),
+                "n_steps": int(segment.n_steps),
+                "abs_values": step_abs_values,
+                "rmse_curve": step_rmse_curve,
+                "mae_curve": step_mae_curve,
+                "abs_max_curve": step_abs_max_curve,
+                "rmse_breach_step": rmse_breach_step,
+                "abs_breach_step": abs_breach_step,
             }
         )
         if len(sample_segments) < int(save_samples):
@@ -358,35 +722,31 @@ def run_transition_replay(
                     "start_idx0": int(segment.start_idx0),
                     "n_steps": int(segment.n_steps),
                     "y_hat": y_hat,
-                    "y_true": y_true,
+                    "y_true": y_true_eval,
                 }
             )
 
     y_hat_all = np.concatenate(all_hat, axis=0)
     y_true_all = np.concatenate(all_true, axis=0)
-    global_rmse, global_mae = _global_rmse_mae(y_hat_all, y_true_all)
-    final_step_err = np.asarray(
-        [
-            np.abs(np.asarray(seg["y_hat"][-1], dtype=np.float64) - np.asarray(seg["y_true"][-1], dtype=np.float64))
-            for seg in sample_segments + []  # keep type stable
-        ],
-        dtype=np.float64,
+    eval_mask_all = np.concatenate(all_masks, axis=0) if all_masks else None
+    global_rmse, global_mae = _global_rmse_mae(y_hat_all, y_true_all, mask=eval_mask_all)
+    final_step_vals = (
+        np.concatenate([arr for arr in final_step_abs_segments if np.asarray(arr).size > 0], axis=0)
+        if len(final_step_abs_segments) > 0
+        else np.zeros((0,), dtype=np.float64)
     )
-    if len(sample_segments) < len(segment_rows):
-        final_step_err = np.asarray(
-            [
-                np.abs(all_hat[i][-1].astype(np.float64) - all_true[i][-1].astype(np.float64))
-                for i in range(len(segment_rows))
-            ],
-            dtype=np.float64,
-        )
 
-    all_abs_err = np.abs(np.asarray(y_hat_all - y_true_all, dtype=np.float64))
+    valid_mask_all = _valid_eval_mask(y_hat_all, y_true_all, mask=eval_mask_all)
+    all_abs_err = _masked_values(np.abs(np.asarray(y_hat_all - y_true_all, dtype=np.float64)), valid_mask=valid_mask_all)
     component_rows = _component_metric_rows(
         y_hat_all,
         y_true_all,
-        component_labels=replay_dataset.target_cols,
+        component_labels=component_labels,
+        mask=eval_mask_all,
     )
+    step_metric_rows = _build_step_metric_rows(segment_curves, thresholds=resolved_thresholds)
+    step_rmse_curve = np.asarray([float(row["rmse_global"]) for row in step_metric_rows], dtype=np.float64)
+    step_rmse_curve_clipped = np.clip(step_rmse_curve, 1e-12, None)
     worst_component = None
     worst_abs_bias = float("nan")
     for row in component_rows:
@@ -400,9 +760,19 @@ def run_transition_replay(
 
     growth_rmse = np.asarray([float(row["rmse_last_over_first"]) for row in segment_rows], dtype=np.float64)
     growth_mae = np.asarray([float(row["mae_last_over_first"]) for row in segment_rows], dtype=np.float64)
+    rmse_breach_steps = np.asarray(
+        [float(curve["rmse_breach_step"]) if curve["rmse_breach_step"] is not None else float("nan") for curve in segment_curves],
+        dtype=np.float64,
+    )
+    abs_breach_steps = np.asarray(
+        [float(curve["abs_breach_step"]) if curve["abs_breach_step"] is not None else float("nan") for curve in segment_curves],
+        dtype=np.float64,
+    )
     sample_y_hat, sample_y_true, sample_mask = _pad_sample_segments(sample_segments, dout=int(y_hat_all.shape[1]))
     segment_lengths = np.asarray([int(row["n_steps"]) for row in segment_rows], dtype=np.float64)
-    finite_segments = int(nonfinite_trigger_count == 0)
+    eval_steps = int(valid_mask_all.any(axis=1).sum())
+    eval_values = int(valid_mask_all.sum())
+    segment_success_count = int(len(segment_rows))
 
     metrics = {
         "schema_version": "transition_replay_v1",
@@ -411,15 +781,25 @@ def run_transition_replay(
         "split": str(split_name),
         "solver_step_semantics": str(solver.step_semantics),
         "model_pred_len": int(solver.cfg_model.pred_len),
+        "eval": eval_meta or {
+            "name": "dataset_target",
+            "pred_source": "state",
+            "pred_cols": list(replay_dataset.target_cols),
+            "target_cols": list(replay_dataset.target_cols),
+            "mask_cols": [],
+            "last_step_policy": "segment_last_step",
+        },
         "segment_count": int(len(segment_rows)),
         "total_steps": int(y_hat_all.shape[0]),
+        "eval_steps": int(eval_steps),
+        "eval_values": int(eval_values),
         "nonfinite_trigger_count": int(nonfinite_trigger_count),
         "rmse_global": global_rmse,
         "mae_global": global_mae,
         "final_step": {
             "rmse_global_mean": float(np.mean([float(row["final_step_rmse"]) for row in segment_rows])),
             "mae_global_mean": float(np.mean([float(row["final_step_mae"]) for row in segment_rows])),
-            "abs_p95_global": _tail_percentiles(final_step_err, percentiles=(95.0,))["p95"],
+            "abs_p95_global": _tail_percentiles(final_step_vals, percentiles=(95.0,))["p95"],
         },
         "rollout_growth": {
             "rmse_last_over_first_mean": float(np.nanmean(growth_rmse)),
@@ -430,22 +810,46 @@ def run_transition_replay(
         "tail_error": {
             "abs_p95_global": _tail_percentiles(all_abs_err, percentiles=(95.0,))["p95"],
             "abs_p99_global": _tail_percentiles(all_abs_err, percentiles=(99.0,))["p99"],
-            "final_step_abs_p95_global": _tail_percentiles(final_step_err, percentiles=(95.0,))["p95"],
+            "final_step_abs_p95_global": _tail_percentiles(final_step_vals, percentiles=(95.0,))["p95"],
+        },
+        "long_horizon": {
+            "schema_version": "transition_replay_long_horizon_v1",
+            "rmse_slope": _linear_slope(step_rmse_curve),
+            "log_rmse_slope": _linear_slope(np.log(step_rmse_curve_clipped)),
+            "thresholds": {
+                "rmse": float(resolved_thresholds.rmse_threshold),
+                "abs_error": float(resolved_thresholds.abs_error_threshold),
+            },
+            "time_to_threshold": {
+                "rmse": {
+                    "failure_rate": float(np.isfinite(rmse_breach_steps).sum() / max(len(segment_curves), 1)),
+                    "survival_rate": float(1.0 - (np.isfinite(rmse_breach_steps).sum() / max(len(segment_curves), 1))),
+                    "breach_step_mean": _nanmean_or_nan(rmse_breach_steps),
+                    "breach_step_p95": _nanpercentile_or_nan(rmse_breach_steps, 95.0),
+                },
+                "abs_error": {
+                    "failure_rate": float(np.isfinite(abs_breach_steps).sum() / max(len(segment_curves), 1)),
+                    "survival_rate": float(1.0 - (np.isfinite(abs_breach_steps).sum() / max(len(segment_curves), 1))),
+                    "breach_step_mean": _nanmean_or_nan(abs_breach_steps),
+                    "breach_step_p95": _nanpercentile_or_nan(abs_breach_steps, 95.0),
+                },
+            },
         },
         "bias": {
             "worst_component": worst_component,
             "worst_abs_bias": worst_abs_bias,
         },
         "robustness": {
-            "finite_pass_rate": float(finite_segments / max(int(len(segment_rows)), 1)),
-            "segment_success_count": int(finite_segments),
-            "segment_failure_count": int(len(segment_rows) - finite_segments),
+            "finite_pass_rate": float(segment_success_count / max(int(len(segment_rows)), 1)),
+            "segment_success_count": int(segment_success_count),
+            "segment_failure_count": int(len(segment_rows) - segment_success_count),
         },
         "segment_stats": {
             "n_steps_mean": float(np.mean(segment_lengths)),
             "n_steps_p95": float(np.percentile(segment_lengths, 95.0)),
         },
         "component_metrics": component_rows,
+        "step_metrics": step_metric_rows,
     }
     return ReplayResult(
         metrics=metrics,
@@ -459,7 +863,8 @@ def run_transition_replay(
 def _write_segment_metric_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
     header = (
         "segment_id,start_idx0,n_steps,rmse_global,mae_global,"
-        "final_step_rmse,final_step_mae,rmse_last_over_first,mae_last_over_first"
+        "final_step_rmse,final_step_mae,rmse_last_over_first,mae_last_over_first,"
+        "rmse_threshold_breach_step,abs_error_threshold_breach_step"
     )
     lines = [header]
     for row in rows:
@@ -475,6 +880,8 @@ def _write_segment_metric_csv(path: Path, rows: Sequence[dict[str, Any]]) -> Non
                     f"{float(row['final_step_mae']):.8f}",
                     f"{float(row['rmse_last_over_first']):.8f}",
                     f"{float(row['mae_last_over_first']):.8f}",
+                    f"{float(row['rmse_threshold_breach_step']):.8f}",
+                    f"{float(row['abs_error_threshold_breach_step']):.8f}",
                 ]
             )
         )
@@ -499,6 +906,33 @@ def _write_component_metric_csv(path: Path, rows: Sequence[dict[str, Any]]) -> N
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_step_metric_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    header = (
+        "step,active_segments,value_count,rmse_global,mae_global,abs_p50_global,abs_p95_global,"
+        "rmse_survival_rate,abs_survival_rate,rmse_threshold,abs_error_threshold"
+    )
+    lines = [header]
+    for row in rows:
+        lines.append(
+            ",".join(
+                [
+                    str(int(row["step"])),
+                    str(int(row["active_segments"])),
+                    str(int(row["value_count"])),
+                    f"{float(row['rmse_global']):.8f}",
+                    f"{float(row['mae_global']):.8f}",
+                    f"{float(row['abs_p50_global']):.8f}",
+                    f"{float(row['abs_p95_global']):.8f}",
+                    f"{float(row['rmse_survival_rate']):.8f}",
+                    f"{float(row['abs_survival_rate']):.8f}",
+                    f"{float(row['rmse_threshold']):.8f}",
+                    f"{float(row['abs_error_threshold']):.8f}",
+                ]
+            )
+        )
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_replay_outputs(
     *,
     out_dir: str | Path,
@@ -516,6 +950,7 @@ def write_replay_outputs(
     metrics_payload["artifacts"] = {
         "segment_metrics_csv": "segment_metrics.csv",
         "component_metrics_csv": "component_metrics.csv",
+        "step_metrics_csv": "step_metrics.csv",
         "pred_samples": "pred_samples.npz",
         "resolved_replay_yaml": "resolved_replay.yaml",
     }
@@ -533,6 +968,7 @@ def write_replay_outputs(
 
     _write_segment_metric_csv(out_path / "segment_metrics.csv", replay_result.segment_rows)
     _write_component_metric_csv(out_path / "component_metrics.csv", replay_result.metrics["component_metrics"])
+    _write_step_metric_csv(out_path / "step_metrics.csv", replay_result.metrics["step_metrics"])
     np.savez_compressed(
         out_path / "pred_samples.npz",
         y_hat=replay_result.sample_pred_y_hat,

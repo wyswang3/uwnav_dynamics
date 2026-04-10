@@ -32,7 +32,7 @@ common_overrides:
 
 runs:
   - name: b0_seed0
-    label: B0 baseline seed0
+    label: Base s0
     role: baseline
     overrides:
       run:
@@ -40,7 +40,7 @@ runs:
         variant: B0_baseline_seed0
 
   - name: b0_seed1
-    label: B0 baseline seed1
+    label: Base s1
     role: baseline
     overrides:
       run:
@@ -48,7 +48,7 @@ runs:
         variant: B0_baseline_seed1
 
   - name: b0_big512
-    label: B0 hidden512
+    label: BaseWide
     role: ablation
     overrides:
       run:
@@ -58,7 +58,7 @@ runs:
         rnn_hidden: 512
 
   - name: b0_deep512x3
-    label: B0 512x3
+    label: BaseDeep
     role: ablation
     overrides:
       run:
@@ -70,7 +70,7 @@ runs:
         dropout: 0.1
 
   - name: b1_thruster
-    label: B1 thruster
+    label: Thr
     role: ablation
     overrides:
       run:
@@ -82,7 +82,7 @@ runs:
             enabled: true
 
   - name: b2_hydro
-    label: B2 hydro
+    label: Hydro
     role: ablation
     overrides:
       run:
@@ -94,7 +94,7 @@ runs:
             enabled: true
 
   - name: u1_uncertainty
-    label: U1 uncertainty
+    label: Unc
     role: primary
     overrides:
       run:
@@ -106,7 +106,7 @@ runs:
             enabled: true
 
   - name: b4_thruster_hydro
-    label: B4 thruster+hydro
+    label: Dyn
     role: primary
     overrides:
       run:

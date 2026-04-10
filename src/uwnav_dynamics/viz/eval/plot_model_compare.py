@@ -53,6 +53,7 @@ from uwnav_dynamics.viz.style.sci_style import (
     get_figure_size,
     get_model_role_styles,
     infer_model_role,
+    normalize_model_label,
     save_figure,
     setup_mpl,
 )
@@ -95,9 +96,10 @@ def build_horizon_compare_figure(
     if len(eval_dirs) != len(labels):
         raise ValueError("len(eval_dirs) must equal len(labels)")
 
-    resolved_roles = _resolve_roles(labels, roles)
+    display_labels = [normalize_model_label(label) for label in labels]
+    resolved_roles = _resolve_roles(display_labels, roles)
     order = {"primary": 0, "ablation": 1, "baseline": 2}
-    zipped = sorted(zip(eval_dirs, labels, resolved_roles), key=lambda item: order[item[2]])
+    zipped = sorted(zip(eval_dirs, display_labels, resolved_roles), key=lambda item: order[item[2]])
     resolved_role_styles = get_model_role_styles([item[2] for item in zipped])
 
     hd0, _, semantic_layout0 = _metric_from_dir(Path(zipped[0][0]), cfg.metric, artifact_variant=artifact_variant)

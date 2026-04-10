@@ -8,8 +8,9 @@
 主要功能：
 1. 从 matrix yaml 读取多个候选模型的 train yaml / ckpt / split / replay 参数。
 2. 顺序执行每个候选的状态求解器 replay 验证，并把结果落到独立目录。
-3. 汇总所有候选的核心指标到 `summary.csv`。
-4. 按统一排行协议生成 `ranking.csv`，便于判断当前最优方案。
+3. 支持按 run 指定自定义评估口径，把不同主线的预测统一映射到同一观测真源上比较。
+4. 汇总所有候选的核心指标到 `summary.csv`，并保留长线阈值统计。
+5. 按统一排行协议生成 `ranking.csv`，并自动输出 replay compare 图。
 
 数据流：
 replay matrix yaml
@@ -20,7 +21,7 @@ run_transition_replay()
     ↓
 per-run replay artifact
     ↓
-summary.csv / ranking.csv / manifest.yaml
+summary.csv / ranking.csv / manifest.yaml / compare_<split>/*
 
 依赖模块：
 - csv
@@ -33,6 +34,8 @@ summary.csv / ranking.csv / manifest.yaml
 
 备注：
 - 当前入口服务“离线 replay 统一筛选”，不是训练调度器。
+- 若比较对象来自不同训练主线，优先通过 `runs[].eval`
+  指定统一的预测列 / 目标列 / 观测 mask，再做排行。
 - 排行协议只用于离线候选比较，不等价于闭环最终结论。
 """
 
@@ -49,7 +52,13 @@ import yaml
 
 from uwnav_dynamics.experiment.layout import load_yaml_dict
 from uwnav_dynamics.experiment.paths import relative_path_str, to_snapshot_value
-from uwnav_dynamics.solver.replay import load_replay_dataset, run_transition_replay, write_replay_outputs
+from uwnav_dynamics.solver.replay import (
+    ReplayEvalSpec,
+    ReplayThresholdSpec,
+    load_replay_dataset,
+    run_transition_replay,
+    write_replay_outputs,
+)
 from uwnav_dynamics.solver.reporting import (
     REPLAY_RANK_METRICS,
     REPLAY_SUMMARY_FIELDS,
@@ -76,6 +85,7 @@ class ReplayMatrixRunSpec:
     max_segments: int | None = None
     max_steps_per_segment: int | None = None
     save_samples: int | None = None
+    eval: ReplayEvalSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +98,10 @@ class ReplayMatrixConfig:
     max_segments: int | None
     max_steps_per_segment: int | None
     save_samples: int
+    rmse_threshold: float
+    abs_error_threshold: float
+    plots: bool
+    plot_fmt: str
     fail_fast: bool
     runs: tuple[ReplayMatrixRunSpec, ...] = ()
 
@@ -108,6 +122,14 @@ def _parse_optional_path(value: Any, *, where: str) -> Path | None:
     if value in (None, ""):
         return None
     return Path(str(value))
+
+
+def _parse_str_list(value: Any, *, where: str) -> tuple[str, ...]:
+    if value in (None, ""):
+        return ()
+    if not isinstance(value, list):
+        raise TypeError(f"{where} must be a list of strings")
+    return tuple(str(v) for v in value)
 
 
 def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
@@ -142,6 +164,17 @@ def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
         role = None if role_raw in (None, "") else str(role_raw)
         if role is not None and role not in _ROLE_CHOICES:
             raise ValueError(f"runs[{idx}].role={role!r} not in {sorted(_ROLE_CHOICES)}")
+        eval_raw = entry.get("eval")
+        eval_cfg = None
+        if eval_raw not in (None, {}):
+            eval_map = _require_mapping(eval_raw, where=f"runs[{idx}].eval")
+            eval_cfg = ReplayEvalSpec(
+                name=str(eval_map.get("name", "custom_eval")).strip() or "custom_eval",
+                pred_source=str(eval_map.get("pred_source", "state")).strip() or "state",
+                pred_cols=_parse_str_list(eval_map.get("pred_cols"), where=f"runs[{idx}].eval.pred_cols"),
+                target_cols=_parse_str_list(eval_map.get("target_cols"), where=f"runs[{idx}].eval.target_cols"),
+                mask_cols=_parse_str_list(eval_map.get("mask_cols"), where=f"runs[{idx}].eval.mask_cols"),
+            )
 
         parsed_runs.append(
             ReplayMatrixRunSpec(
@@ -159,6 +192,7 @@ def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
                     where=f"runs[{idx}].max_steps_per_segment",
                 ),
                 save_samples=_parse_optional_int(entry.get("save_samples"), where=f"runs[{idx}].save_samples"),
+                eval=eval_cfg,
             )
         )
 
@@ -173,6 +207,10 @@ def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
             where="launcher.max_steps_per_segment",
         ),
         save_samples=int(launcher.get("save_samples", 8)),
+        rmse_threshold=float(launcher.get("rmse_threshold", 0.05)),
+        abs_error_threshold=float(launcher.get("abs_error_threshold", 0.10)),
+        plots=bool(launcher.get("plots", True)),
+        plot_fmt=str(launcher.get("plot_fmt", "png")),
         fail_fast=bool(launcher.get("fail_fast", False)),
         runs=tuple(parsed_runs),
     )
@@ -252,6 +290,10 @@ def _write_manifest(*, cfg: ReplayMatrixConfig, path: Path, repo_root: Path) -> 
                 "max_segments": cfg.max_segments,
                 "max_steps_per_segment": cfg.max_steps_per_segment,
                 "save_samples": cfg.save_samples,
+                "rmse_threshold": cfg.rmse_threshold,
+                "abs_error_threshold": cfg.abs_error_threshold,
+                "plots": cfg.plots,
+                "plot_fmt": cfg.plot_fmt,
                 "fail_fast": cfg.fail_fast,
             },
             base_dir=path.parent,
@@ -271,6 +313,15 @@ def _write_manifest(*, cfg: ReplayMatrixConfig, path: Path, repo_root: Path) -> 
                     "max_segments": run.max_segments,
                     "max_steps_per_segment": run.max_steps_per_segment,
                     "save_samples": run.save_samples,
+                    "eval": None
+                    if run.eval is None
+                    else {
+                        "name": run.eval.name,
+                        "pred_source": run.eval.pred_source,
+                        "pred_cols": list(run.eval.pred_cols),
+                        "target_cols": list(run.eval.target_cols),
+                        "mask_cols": list(run.eval.mask_cols),
+                    },
                 },
                 base_dir=path.parent,
             )
@@ -324,6 +375,32 @@ def _write_ranking(*, rows: Sequence[dict[str, Any]], path: Path) -> None:
             writer.writerow(payload)
 
 
+def _generate_compare_outputs(*, cfg: ReplayMatrixConfig, rows: Sequence[dict[str, Any]], work_dir: Path) -> None:
+    if not cfg.plots:
+        return
+    successful = [
+        row
+        for row in rows
+        if str(row.get("status", "")) == "ok"
+        and (work_dir / str(row.get("out_dir", "")) / "metrics.yaml").exists()
+    ]
+    if len(successful) < 2:
+        print("[REPLAY_MATRIX] skip compare plots: fewer than 2 successful runs")
+        return
+
+    from uwnav_dynamics.viz.eval.plot_replay_compare import ReplayComparePlotCfg, plot_replay_compare
+
+    compare_dir = work_dir / f"compare_{cfg.split}"
+    plot_replay_compare(
+        run_dirs=[work_dir / str(row["out_dir"]) for row in successful],
+        labels=[str(row["label"]) for row in successful],
+        roles=[str(row["role"]) if str(row.get("role", "")) else None for row in successful],
+        out_dir=compare_dir,
+        cfg=ReplayComparePlotCfg(fmt=cfg.plot_fmt),
+    )
+    print(f"[REPLAY_MATRIX] compare plots written to: {compare_dir}")
+
+
 def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) -> tuple[Path, Path]:
     """按统一协议执行多个候选模型的长序列 replay，并写出 summary/ranking。"""
     work_dir = _resolve_repo_path(repo_root, cfg.work_dir)
@@ -367,6 +444,11 @@ def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) ->
                     else cfg.max_steps_per_segment
                 ),
                 save_samples=int(run.save_samples if run.save_samples is not None else cfg.save_samples),
+                eval_spec=run.eval,
+                thresholds=ReplayThresholdSpec(
+                    rmse_threshold=float(cfg.rmse_threshold),
+                    abs_error_threshold=float(cfg.abs_error_threshold),
+                ),
             )
             cfg_snapshot = {
                 "train_yaml": _resolve_repo_path(repo_root, run.train_yaml),
@@ -383,6 +465,17 @@ def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) ->
                     else cfg.max_steps_per_segment
                 ),
                 "save_samples": int(run.save_samples if run.save_samples is not None else cfg.save_samples),
+                "rmse_threshold": float(cfg.rmse_threshold),
+                "abs_error_threshold": float(cfg.abs_error_threshold),
+                "eval": None
+                if run.eval is None
+                else {
+                    "name": run.eval.name,
+                    "pred_source": run.eval.pred_source,
+                    "pred_cols": list(run.eval.pred_cols),
+                    "target_cols": list(run.eval.target_cols),
+                    "mask_cols": list(run.eval.mask_cols),
+                },
             }
             write_replay_outputs(
                 out_dir=out_dir,
@@ -405,6 +498,7 @@ def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) ->
     ranking_rows = _compute_ranking_rows(summary_rows)
     ranking_path = work_dir / "ranking.csv"
     _write_ranking(rows=ranking_rows, path=ranking_path)
+    _generate_compare_outputs(cfg=cfg, rows=summary_rows, work_dir=work_dir)
     return summary_path, ranking_path
 
 

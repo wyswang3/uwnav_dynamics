@@ -56,6 +56,7 @@ from uwnav_dynamics.viz.style.sci_style import (
     get_group_styles,
     get_model_role_styles,
     infer_model_role,
+    normalize_model_label,
     save_figure,
     setup_mpl,
 )
@@ -154,6 +155,7 @@ def build_groups_vs_horizon_figure(
 ) -> Tuple[plt.Figure, plt.Axes]:
     """构建按组聚合的 horizon 指标曲线图。"""
     setup_mpl()
+    display_labels = [normalize_model_label(label) for label in labels]
 
     hd0, _, semantic_layout0 = _metric_from_dir(eval_dirs[0], cfg.metric, artifact_variant=artifact_variant)
     H = hd0.shape[0]
@@ -163,8 +165,8 @@ def build_groups_vs_horizon_figure(
 
     group_styles = get_group_styles()
     legend_ncol = 3 if len(eval_dirs) == 1 else min(len(labels), 4)
-    resolved_role_styles = get_model_role_styles([infer_model_role(label) for label in labels])
-    for idx, (eval_dir, lab) in enumerate(zip(eval_dirs, labels)):
+    resolved_role_styles = get_model_role_styles([infer_model_role(label) for label in display_labels])
+    for idx, (eval_dir, lab) in enumerate(zip(eval_dirs, display_labels)):
         hd, _, semantic_layout = _metric_from_dir(eval_dir, cfg.metric, artifact_variant=artifact_variant)
         curves = _group_curves(hd, semantic_layout)
 

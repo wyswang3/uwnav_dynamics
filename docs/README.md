@@ -19,11 +19,18 @@
 - [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
 - [design/transition_solver_phase2_replay_upgrade.md](/home/wys/uwnav_dynamics/docs/design/transition_solver_phase2_replay_upgrade.md)
 - [evaluation_protocol.md](/home/wys/uwnav_dynamics/docs/evaluation_protocol.md)
+- [design/model_variant_aliases.md](/home/wys/uwnav_dynamics/docs/design/model_variant_aliases.md)
 
 如果目标是在 8 卡服务器上一键跑完整流程，优先看：
 
 - [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
 - [reference/quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
+
+如果目标是比较“过去主线 vs 当前主线”谁更适合状态转移求解器，优先看：
+
+- [design/old_vs_current_transition_compare_v1.md](/home/wys/uwnav_dynamics/docs/design/old_vs_current_transition_compare_v1.md)
+- [evaluation_protocol.md](/home/wys/uwnav_dynamics/docs/evaluation_protocol.md)
+- [design/model_variant_aliases.md](/home/wys/uwnav_dynamics/docs/design/model_variant_aliases.md)
 
 ## 2. 当前文档分层
 
@@ -42,6 +49,7 @@
 ### 2.2 `design/`：设计说明与接口约束
 
 - 数据契约、绘图规范、阶段设计说明
+- [design/model_variant_aliases.md](/home/wys/uwnav_dynamics/docs/design/model_variant_aliases.md)：网络方案简称规范
 
 ### 2.3 `reference/`：命令手册与执行参考
 

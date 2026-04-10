@@ -32,7 +32,7 @@ common_overrides:
 
 runs:
   - name: kfctx_a0_joint_nll_seed8
-    label: KF Ctx joint NLL seed8
+    label: KFCtxNLL s8
     role: baseline
     overrides:
       run:
@@ -54,7 +54,7 @@ runs:
         dvl_obs_weight: 0.0
 
   - name: kfctx_a0_joint_nll_seed9
-    label: KF Ctx joint NLL seed9
+    label: KFCtxNLL s9
     role: baseline
     overrides:
       run:
@@ -76,7 +76,7 @@ runs:
         dvl_obs_weight: 0.0
 
   - name: kfctx_b0_grouped_tb_seed8
-    label: KF Ctx grouped TB seed8
+    label: KFCtxBase s8
     role: primary
     overrides:
       run:
@@ -84,7 +84,7 @@ runs:
         variant: KFCTX_B0_grouped_tb_seed8
 
   - name: kfctx_b0_grouped_tb_seed9
-    label: KF Ctx grouped TB seed9
+    label: KFCtxBase s9
     role: primary
     overrides:
       run:
@@ -92,7 +92,7 @@ runs:
         variant: KFCTX_B0_grouped_tb_seed9
 
   - name: kfctx_b2_grouped_tb_longtail_seed8
-    label: KF Ctx grouped TB longtail seed8
+    label: KFCtxTail s8
     role: ablation
     overrides:
       run:
@@ -105,7 +105,7 @@ runs:
         vel_weight: 2.2
 
   - name: kfctx_b2_grouped_tb_longtail_seed9
-    label: KF Ctx grouped TB longtail seed9
+    label: KFCtxTail s9
     role: ablation
     overrides:
       run:
@@ -118,7 +118,7 @@ runs:
         vel_weight: 2.2
 
   - name: kfctx_b4_grouped_tb_blocks_seed8
-    label: KF Ctx grouped TB blocks seed8
+    label: KFCtxDyn s8
     role: primary
     overrides:
       run:
@@ -132,7 +132,7 @@ runs:
             enabled: true
 
   - name: kfctx_b4_grouped_tb_blocks_seed9
-    label: KF Ctx grouped TB blocks seed9
+    label: KFCtxDyn s9
     role: primary
     overrides:
       run:

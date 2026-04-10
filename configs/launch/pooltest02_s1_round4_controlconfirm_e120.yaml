@@ -1,6 +1,6 @@
 # Round 4 single-source matrix:
-# - stop broad architecture search; round3 already showed B4+U1 default is the best candidate
-# - keep only the strongest challenger U1 and the current best primary B4+U1 default
+# - stop broad architecture search; round3 already showed DynUnc default is the best candidate
+# - keep only the strongest challenger Unc and the current best primary DynUnc default
 # - do not introduce new training-parameter branches in this round
 # - extend seeds to verify whether control-readiness diagnostics stay stable
 # - use the new control_readiness evaluation/plot path as the main offline screening signal
@@ -39,7 +39,7 @@ common_overrides:
 
 runs:
   - name: u1_seed2
-    label: U1 uncertainty seed2
+    label: Unc s2
     role: ablation
     overrides:
       run:
@@ -51,7 +51,7 @@ runs:
             enabled: true
 
   - name: u1_seed3
-    label: U1 uncertainty seed3
+    label: Unc s3
     role: ablation
     overrides:
       run:
@@ -63,7 +63,7 @@ runs:
             enabled: true
 
   - name: u1_seed4
-    label: U1 uncertainty seed4
+    label: Unc s4
     role: ablation
     overrides:
       run:
@@ -75,7 +75,7 @@ runs:
             enabled: true
 
   - name: u1_seed5
-    label: U1 uncertainty seed5
+    label: Unc s5
     role: ablation
     overrides:
       run:
@@ -87,7 +87,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed2
-    label: B4+U1 control-confirm seed2
+    label: DynUnc s2
     role: primary
     overrides:
       run:
@@ -103,7 +103,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed3
-    label: B4+U1 control-confirm seed3
+    label: DynUnc s3
     role: primary
     overrides:
       run:
@@ -119,7 +119,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed4
-    label: B4+U1 control-confirm seed4
+    label: DynUnc s4
     role: primary
     overrides:
       run:
@@ -135,7 +135,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed5
-    label: B4+U1 control-confirm seed5
+    label: DynUnc s5
     role: primary
     overrides:
       run:

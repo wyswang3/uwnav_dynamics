@@ -32,7 +32,7 @@ common_overrides:
 
 runs:
   - name: kf_a0_joint_nll_seed8
-    label: KF joint NLL seed8
+    label: KFNLL s8
     role: baseline
     overrides:
       run:
@@ -54,7 +54,7 @@ runs:
         dvl_obs_weight: 0.0
 
   - name: kf_a0_joint_nll_seed9
-    label: KF joint NLL seed9
+    label: KFNLL s9
     role: baseline
     overrides:
       run:
@@ -76,7 +76,7 @@ runs:
         dvl_obs_weight: 0.0
 
   - name: kf_b0_grouped_tb_seed8
-    label: KF grouped TB seed8
+    label: KFBase s8
     role: primary
     overrides:
       run:
@@ -84,7 +84,7 @@ runs:
         variant: KF_B0_grouped_tb_seed8
 
   - name: kf_b0_grouped_tb_seed9
-    label: KF grouped TB seed9
+    label: KFBase s9
     role: primary
     overrides:
       run:
@@ -92,7 +92,7 @@ runs:
         variant: KF_B0_grouped_tb_seed9
 
   - name: kf_b1_grouped_tb_dvlaux_seed8
-    label: KF grouped TB DVLaux seed8
+    label: KFDvlAux s8
     role: ablation
     overrides:
       run:
@@ -108,7 +108,7 @@ runs:
         dvl_obs_delta: 1.0
 
   - name: kf_b1_grouped_tb_dvlaux_seed9
-    label: KF grouped TB DVLaux seed9
+    label: KFDvlAux s9
     role: ablation
     overrides:
       run:
@@ -124,7 +124,7 @@ runs:
         dvl_obs_delta: 1.0
 
   - name: kf_b4_grouped_tb_thruster_hydro_seed8
-    label: KF grouped TB B4 seed8
+    label: KFDyn s8
     role: primary
     overrides:
       run:
@@ -138,7 +138,7 @@ runs:
             enabled: true
 
   - name: kf_b4_grouped_tb_thruster_hydro_seed9
-    label: KF grouped TB B4 seed9
+    label: KFDyn s9
     role: primary
     overrides:
       run:

@@ -9,7 +9,7 @@
 1. 解析 train yaml、checkpoint、split 与 replay 运行参数。
 2. 加载训练后模型与 run-scoped split/scaler artifact，构造状态求解器。
 3. 基于 `processed dataset + base_csv` 执行长序列 replay 验证。
-4. 将数值结果落盘到 `replay_<split>/` 目录，供后续图表与筛选复用。
+4. 将数值结果落盘到 `replay_<split>/` 目录，包含 step-wise 长线 artifact，供后续图表与筛选复用。
 
 数据流：
 train yaml + ckpt
@@ -18,7 +18,7 @@ trained transition solver
     ↓
 autoregressive replay on split segments
     ↓
-metrics.yaml / segment_metrics.csv / pred_samples.npz
+metrics.yaml / segment_metrics.csv / step_metrics.csv / pred_samples.npz
 
 依赖模块：
 - uwnav_dynamics.cli.utils
@@ -38,7 +38,12 @@ from pathlib import Path
 
 from uwnav_dynamics.cli.utils import pick_ckpt
 from uwnav_dynamics.experiment.layout import run_layout_from_train_yaml
-from uwnav_dynamics.solver.replay import load_replay_dataset, run_transition_replay, write_replay_outputs
+from uwnav_dynamics.solver.replay import (
+    ReplayThresholdSpec,
+    load_replay_dataset,
+    run_transition_replay,
+    write_replay_outputs,
+)
 from uwnav_dynamics.solver.transition_solver import load_trained_transition_solver
 
 
@@ -54,6 +59,8 @@ def main() -> int:
     ap.add_argument("--max_segments", type=int, default=None)
     ap.add_argument("--max_steps_per_segment", type=int, default=None)
     ap.add_argument("--save_samples", type=int, default=8)
+    ap.add_argument("--rmse_threshold", type=float, default=0.05)
+    ap.add_argument("--abs_error_threshold", type=float, default=0.10)
     args = ap.parse_args()
 
     train_yaml = Path(args.yaml)
@@ -76,6 +83,10 @@ def main() -> int:
         max_segments=args.max_segments,
         max_steps_per_segment=args.max_steps_per_segment,
         save_samples=int(args.save_samples),
+        thresholds=ReplayThresholdSpec(
+            rmse_threshold=float(args.rmse_threshold),
+            abs_error_threshold=float(args.abs_error_threshold),
+        ),
     )
     cfg_snapshot = {
         "train_yaml": str(train_yaml),
@@ -88,6 +99,8 @@ def main() -> int:
         "max_segments": args.max_segments,
         "max_steps_per_segment": args.max_steps_per_segment,
         "save_samples": int(args.save_samples),
+        "rmse_threshold": float(args.rmse_threshold),
+        "abs_error_threshold": float(args.abs_error_threshold),
     }
     write_replay_outputs(
         out_dir=out_dir,
@@ -102,6 +115,10 @@ def main() -> int:
     print(f"[REPLAY] solver_step_semantics={replay_result.metrics['solver_step_semantics']}")
     print(f"[REPLAY] rmse_global={replay_result.metrics['rmse_global']:.6f}")
     print(f"[REPLAY] mae_global={replay_result.metrics['mae_global']:.6f}")
+    print(
+        "[REPLAY] rmse_threshold_failure_rate="
+        f"{replay_result.metrics['long_horizon']['time_to_threshold']['rmse']['failure_rate']:.6f}"
+    )
     print(f"[REPLAY] segment_count={replay_result.metrics['segment_count']}")
     print(f"[REPLAY] total_steps={replay_result.metrics['total_steps']}")
     return 0

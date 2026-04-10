@@ -8,7 +8,7 @@
 
 主要功能：
 1. 定义 replay `summary.csv` 的稳定字段集合。
-2. 从 `metrics.yaml` 抽取全局误差、末步误差、误差增长、尾部风险与偏差指标。
+2. 从 `metrics.yaml` 抽取全局误差、末步误差、误差增长、阈值失效、尾部风险与偏差指标。
 3. 定义标准排行协议，明确哪些指标参与“哪种方案更好”的排序。
 
 数据流：
@@ -50,8 +50,16 @@ REPLAY_SUMMARY_FIELDS = [
     "rmse_growth_p95",
     "mae_growth_mean",
     "mae_growth_p95",
+    "rmse_step_slope",
+    "log_rmse_step_slope",
     "tail_abs_p95_global",
     "tail_abs_p99_global",
+    "rmse_threshold",
+    "rmse_threshold_failure_rate",
+    "rmse_threshold_breach_step_mean",
+    "abs_error_threshold",
+    "abs_error_threshold_failure_rate",
+    "abs_error_threshold_breach_step_mean",
     "worst_bias_component",
     "worst_abs_bias",
 ]
@@ -63,7 +71,9 @@ REPLAY_RANK_METRICS = [
     ("final_step_rmse_global_mean", 3.0),
     ("rmse_growth_p95", 2.0),
     ("tail_abs_p95_global", 2.0),
+    ("rmse_threshold_failure_rate", 2.0),
     ("tail_abs_p99_global", 1.0),
+    ("abs_error_threshold_failure_rate", 1.0),
     ("worst_abs_bias", 1.0),
 ]
 
@@ -85,6 +95,11 @@ def flatten_replay_metrics(metrics: Mapping[str, Any] | None) -> dict[str, Any]:
     final_step = _nested_get(metrics, "final_step", default={})
     rollout_growth = _nested_get(metrics, "rollout_growth", default={})
     tail_error = _nested_get(metrics, "tail_error", default={})
+    long_horizon = _nested_get(metrics, "long_horizon", default={})
+    threshold_cfg = _nested_get(long_horizon, "thresholds", default={})
+    threshold_time = _nested_get(long_horizon, "time_to_threshold", default={})
+    rmse_threshold = _nested_get(threshold_time, "rmse", default={})
+    abs_threshold = _nested_get(threshold_time, "abs_error", default={})
     bias = _nested_get(metrics, "bias", default={})
     robustness = _nested_get(metrics, "robustness", default={})
     segment_stats = _nested_get(metrics, "segment_stats", default={})
@@ -108,8 +123,16 @@ def flatten_replay_metrics(metrics: Mapping[str, Any] | None) -> dict[str, Any]:
         "rmse_growth_p95": _nested_get(rollout_growth, "rmse_last_over_first_p95"),
         "mae_growth_mean": _nested_get(rollout_growth, "mae_last_over_first_mean"),
         "mae_growth_p95": _nested_get(rollout_growth, "mae_last_over_first_p95"),
+        "rmse_step_slope": _nested_get(long_horizon, "rmse_slope"),
+        "log_rmse_step_slope": _nested_get(long_horizon, "log_rmse_slope"),
         "tail_abs_p95_global": _nested_get(tail_error, "abs_p95_global"),
         "tail_abs_p99_global": _nested_get(tail_error, "abs_p99_global"),
+        "rmse_threshold": _nested_get(threshold_cfg, "rmse"),
+        "rmse_threshold_failure_rate": _nested_get(rmse_threshold, "failure_rate"),
+        "rmse_threshold_breach_step_mean": _nested_get(rmse_threshold, "breach_step_mean"),
+        "abs_error_threshold": _nested_get(threshold_cfg, "abs_error"),
+        "abs_error_threshold_failure_rate": _nested_get(abs_threshold, "failure_rate"),
+        "abs_error_threshold_breach_step_mean": _nested_get(abs_threshold, "breach_step_mean"),
         "worst_bias_component": _nested_get(bias, "worst_component"),
         "worst_abs_bias": _nested_get(bias, "worst_abs_bias"),
     }
@@ -134,6 +157,7 @@ def replay_ranking_protocol() -> dict[str, Any]:
             "rmse_global",
             "final_step_rmse_global_mean",
             "rmse_growth_p95",
+            "rmse_threshold_failure_rate",
             "name",
         ],
     }

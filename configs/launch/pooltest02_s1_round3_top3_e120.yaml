@@ -1,11 +1,11 @@
 # Round 3 single-source matrix:
 # - this file is the only maintained config source for round3
 # - use round2_struct40 results to narrow the structure search to
-#   B0 baseline / U1 ablation / B4+U1 primary
-# - drop B4 because its 2-seed family average is worse than U1 on
+#   Base baseline / Unc ablation / DynUnc primary
+# - drop Dyn because its 2-seed family average is worse than Unc on
 #   rmse_global / mae_global / rmse_global_masked / mae_global_masked
 # - restore the training budget to 120 epochs
-# - add one conservative B4+U1 training-parameter branch to test whether
+# - add one conservative DynUnc training-parameter branch to test whether
 #   lower lr + stronger wd + small dropout improves long-run generalization
 
 base_train_yaml: configs/train/pooltest02_s1_lstm_v0.yaml
@@ -42,7 +42,7 @@ common_overrides:
 
 runs:
   - name: b0_seed0
-    label: B0 baseline seed0
+    label: Base s0
     role: baseline
     overrides:
       run:
@@ -50,7 +50,7 @@ runs:
         variant: B0_baseline_seed0_e120
 
   - name: b0_seed1
-    label: B0 baseline seed1
+    label: Base s1
     role: baseline
     overrides:
       run:
@@ -58,7 +58,7 @@ runs:
         variant: B0_baseline_seed1_e120
 
   - name: u1_seed0
-    label: U1 uncertainty seed0
+    label: Unc s0
     role: ablation
     overrides:
       run:
@@ -70,7 +70,7 @@ runs:
             enabled: true
 
   - name: u1_seed1
-    label: U1 uncertainty seed1
+    label: Unc s1
     role: ablation
     overrides:
       run:
@@ -82,7 +82,7 @@ runs:
             enabled: true
 
   - name: b4u1_default_seed0
-    label: B4+U1 default seed0
+    label: DynUnc default s0
     role: primary
     overrides:
       run:
@@ -98,7 +98,7 @@ runs:
             enabled: true
 
   - name: b4u1_default_seed1
-    label: B4+U1 default seed1
+    label: DynUnc default s1
     role: primary
     overrides:
       run:
@@ -114,7 +114,7 @@ runs:
             enabled: true
 
   - name: b4u1_tuned_seed0
-    label: B4+U1 tuned seed0
+    label: DynUnc tuned s0
     role: primary
     overrides:
       run:
@@ -134,7 +134,7 @@ runs:
         weight_decay: 3.0e-4
 
   - name: b4u1_tuned_seed1
-    label: B4+U1 tuned seed1
+    label: DynUnc tuned s1
     role: primary
     overrides:
       run:

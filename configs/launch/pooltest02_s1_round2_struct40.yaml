@@ -1,6 +1,6 @@
 # Round 2 matrix:
 # - keep the backbone fixed
-# - compare B0 / B4 / U1 / B4+U1
+# - compare Base / Dyn / Unc / DynUnc
 # - use two seeds for each branch
 # - shorten training to 40 epochs to reduce overfitting risk
 
@@ -38,7 +38,7 @@ common_overrides:
 
 runs:
   - name: b0_seed0
-    label: B0 baseline seed0
+    label: Base s0
     role: baseline
     overrides:
       run:
@@ -46,7 +46,7 @@ runs:
         variant: B0_baseline_seed0_e40
 
   - name: b0_seed1
-    label: B0 baseline seed1
+    label: Base s1
     role: baseline
     overrides:
       run:
@@ -54,7 +54,7 @@ runs:
         variant: B0_baseline_seed1_e40
 
   - name: b4_seed0
-    label: B4 thruster+hydro seed0
+    label: Dyn s0
     role: primary
     overrides:
       run:
@@ -68,7 +68,7 @@ runs:
             enabled: true
 
   - name: b4_seed1
-    label: B4 thruster+hydro seed1
+    label: Dyn s1
     role: primary
     overrides:
       run:
@@ -82,7 +82,7 @@ runs:
             enabled: true
 
   - name: u1_seed0
-    label: U1 uncertainty seed0
+    label: Unc s0
     role: primary
     overrides:
       run:
@@ -94,7 +94,7 @@ runs:
             enabled: true
 
   - name: u1_seed1
-    label: U1 uncertainty seed1
+    label: Unc s1
     role: primary
     overrides:
       run:
@@ -106,7 +106,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed0
-    label: B4+U1 seed0
+    label: DynUnc s0
     role: primary
     overrides:
       run:
@@ -122,7 +122,7 @@ runs:
             enabled: true
 
   - name: b4u1_seed1
-    label: B4+U1 seed1
+    label: DynUnc s1
     role: primary
     overrides:
       run:

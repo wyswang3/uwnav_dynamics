@@ -398,6 +398,7 @@ smoke test 不要求：
 
 - `metrics.yaml`
 - `segment_metrics.csv`
+- `step_metrics.csv`
 - `component_metrics.csv`
 - `pred_samples.npz`
 - `resolved_replay.yaml`
@@ -407,6 +408,11 @@ smoke test 不要求：
 ```text
 run.out_dir/run.variant/replay_<split>/
 ```
+
+若启用批量 replay compare，还应额外产出：
+
+- `compare_<split>/replay_model_compare.png`
+- `compare_<split>/replay_long_horizon_curves.png`
 
 ### 9.2 replay 主指标
 
@@ -424,9 +430,19 @@ run.out_dir/run.variant/replay_<split>/
   - `rollout_growth.rmse_last_over_first_p95`
   - `rollout_growth.mae_last_over_first_mean`
   - `rollout_growth.mae_last_over_first_p95`
+- 长线拟合趋势：
+  - `long_horizon.rmse_slope`
+  - `long_horizon.log_rmse_slope`
 - 尾部风险：
   - `tail_error.abs_p95_global`
   - `tail_error.abs_p99_global`
+- 阈值失效与生存：
+  - `long_horizon.thresholds.rmse`
+  - `long_horizon.thresholds.abs_error`
+  - `long_horizon.time_to_threshold.rmse.failure_rate`
+  - `long_horizon.time_to_threshold.rmse.breach_step_mean`
+  - `long_horizon.time_to_threshold.abs_error.failure_rate`
+  - `long_horizon.time_to_threshold.abs_error.breach_step_mean`
 - 系统偏差：
   - `bias.worst_component`
   - `bias.worst_abs_bias`
@@ -445,12 +461,61 @@ run.out_dir/run.variant/replay_<split>/
   - 更贴近“累计递推到段尾以后还能否保持可用”
 - `rollout_growth.*`
   - 用于识别误差是否随递推快速放大
+- `long_horizon.*slope`
+  - 用于区分“整体误差缓慢增长”与“误差随 step 明显抬升”
 - `tail_error.*`
   - 用于识别长尾风险和坏 case
+- `time_to_threshold.*`
+  - 用于识别“什么时候开始明显失控”
+  - 当前同时保留：
+    - `failure_rate`：有多少段在本段长度内触发阈值失效
+    - `breach_step_mean`：已失效段平均在第几步越阈
 - `worst_abs_bias`
   - 用于识别是否存在明显系统偏差
 - `nonfinite_trigger_count`
   - 只要大于 0，就不应进入主线候选
+
+### 9.2.1 当前长线阈值默认值
+
+当前 replay 主线默认服务“体速度对 DVL 观测”的统一口径，
+因此批量 replay compare 默认采用：
+
+- `rmse_threshold = 0.05`
+- `abs_error_threshold = 0.10`
+
+单位均为 `m/s`。
+
+说明：
+
+- 这组默认值是当前速度长期拟合筛选用的工程阈值，不是普适真理；
+- 若未来 replay 目标改成其他状态量，必须在 launcher 中显式覆盖阈值，并在 `manifest.yaml` 中留痕。
+
+### 9.2.2 `step_metrics.csv` 语义
+
+`step_metrics.csv` 用于承载长线逐步统计，不要求与训练 horizon artifact 完全同构。
+
+当前最小列约定：
+
+- `step`
+- `active_segments`
+- `value_count`
+- `rmse_global`
+- `mae_global`
+- `abs_p50_global`
+- `abs_p95_global`
+- `rmse_survival_rate`
+- `abs_survival_rate`
+- `rmse_threshold`
+- `abs_error_threshold`
+
+其中：
+
+- `rmse_global / mae_global / abs_p95_global`
+  - 表示相对 step `k` 上的跨段聚合误差
+- `rmse_survival_rate / abs_survival_rate`
+  - 表示到 step `k` 为止仍未越阈的 segment 比例
+- 该 artifact 主要供 replay compare 图与长线审计使用
+  - 不替代 `segment_metrics.csv`
 
 ### 9.3 多方案统一汇总与排行
 
@@ -485,7 +550,9 @@ work_dir/
   - `final_step.rmse_global_mean`
   - `rollout_growth.rmse_last_over_first_p95`
   - `tail_error.abs_p95_global`
+  - `long_horizon.time_to_threshold.rmse.failure_rate`
   - `tail_error.abs_p99_global`
+  - `long_horizon.time_to_threshold.abs_error.failure_rate`
   - `bias.worst_abs_bias`
 
 注意：
@@ -494,3 +561,29 @@ work_dir/
 - 它不是闭环控制最终结论
 - 若未来进入 controller replay / simulator loop，
   应继续并行记录时延、循环频率、失败步数等在线指标
+
+### 9.4 当前推荐可视化
+
+当前阶段 replay model selection 至少应并行输出两张图：
+
+1. `replay_model_compare.*`
+   - 用于集中查看：
+     - `rmse_global`
+     - `final_step`
+     - `growth`
+     - `tail`
+     - `threshold failure`
+     - `worst bias`
+
+2. `replay_long_horizon_curves.*`
+   - 用于查看随 step 推进的：
+     - `rmse_global`
+     - `abs_p95_global`
+     - `rmse_survival_rate`
+     - `abs_survival_rate`
+
+判断原则：
+
+- summary 图用于快速筛掉明显差的候选
+- long-horizon 曲线图用于判断模型是“整体更准”还是“后段更稳”
+- 若 summary 排名接近，但 survival 曲线后段明显分叉，应优先相信 survival 结果

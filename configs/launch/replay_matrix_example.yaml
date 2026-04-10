@@ -8,11 +8,11 @@ launcher:
 
 runs:
   - name: quality_step_b4u1
-    label: B4+U1 Step
+    label: DynUnc Step
     role: primary
     train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
 
   - name: quality_v3_b4u1
-    label: B4+U1 Horizon
+    label: DynUnc Horizon
     role: baseline
     train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml
