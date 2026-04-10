@@ -9,7 +9,7 @@
 1. 生成 `acc / gyro / vel` 三组语义权重向量。
 2. 生成强调尾部 horizon 的时间权重向量。
 3. 从未来状态序列反推真实状态增量 `dY_true`。
-4. 计算带 mask / 组权重 / horizon 权重的 Huber 损失与正则项。
+4. 计算带 mask / 组权重 / horizon 权重的 MSE / Huber 损失与正则项。
 
 数据流：
 y0 / y_true / y_hat / dY / logvar / target_mask
@@ -18,7 +18,7 @@ group weights + horizon weights
     ↓
 weighted reduction
     ↓
-state / delta / uncertainty regularization terms
+    state / delta / uncertainty regularization terms
 
 依赖模块：
 - torch
@@ -150,6 +150,26 @@ def masked_weighted_huber_loss(
     huber = torch.where(abs_err <= delta_t, quad, lin)
     return reduce_weighted_mean(
         huber,
+        target_mask=target_mask,
+        component_weight=component_weight,
+        horizon_weight=horizon_weight,
+    )
+
+
+def masked_weighted_mse_loss(
+    y_hat: torch.Tensor,
+    y_true: torch.Tensor,
+    *,
+    target_mask: torch.Tensor | None = None,
+    component_weight: torch.Tensor | None = None,
+    horizon_weight: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """计算可组合的带权 MSE 损失。"""
+    if y_hat.shape != y_true.shape:
+        raise ValueError(f"shape mismatch: y_hat{tuple(y_hat.shape)}, y_true{tuple(y_true.shape)}")
+    mse = torch.square(y_hat - y_true)
+    return reduce_weighted_mean(
+        mse,
         target_mask=target_mask,
         component_weight=component_weight,
         horizon_weight=horizon_weight,

@@ -46,10 +46,14 @@
 ### 训练与评估
 
 - `transition_balance` 已接入主训练路径
+- `transition_balance` 当前已补入保守的 `state_mse_weight`，用于提供通用 state regression 基线
 - grouped head 已接入 `S1Predictor`
 - 训练期监控仍支持：
   - `val_loss`
   - `val_transition_score`
+- 训练期 history / summary 现并行记录：
+  - `val_rmse_global_zspace`
+  - `val_mae_global_zspace`
 - 离线评估仍保留：
   - `rmse_global / mae_global`
   - `final_step`

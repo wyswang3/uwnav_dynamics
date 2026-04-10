@@ -13,6 +13,7 @@
 5. 在 P0.1 中以最小方式接入 `dvl_obs` 辅助监督，不改变主 state head 路径。
 6. 在当前阶段支持面向状态转移的 composite loss，用于更强地约束 `acc / gyro / vel`。
 7. 支持训练期 `val_transition_score` monitor，用更偏长期 rollout 的信号选择 best ckpt。
+8. 在训练期并行记录 z-space `RMSE / MAE`，补充通用误差基线。
 
 数据流：
 train yaml + CLI override
@@ -77,6 +78,7 @@ from uwnav_dynamics.models.losses.state_transition import (
     build_delta_targets,
     build_group_weight_vector,
     build_horizon_weight_vector,
+    masked_weighted_mse_loss,
     masked_weighted_huber_loss,
     positive_logvar_penalty,
     reduce_weighted_mean,
@@ -96,6 +98,8 @@ def _write_train_history_csv(path: Path, rows: list[dict[str, object]]) -> Path:
         "epoch",
         "train_loss",
         "val_loss",
+        "val_rmse_global_zspace",
+        "val_mae_global_zspace",
         "monitor_name",
         "monitor_value",
         "lr",
@@ -129,7 +133,7 @@ def _write_train_summary_yaml(
 ) -> Path:
     """把训练阶段关键摘要统一写成审计友好的 yaml。"""
     payload = {
-        "schema_version": "train_summary_v2",
+        "schema_version": "train_summary_v3",
         "best_val": float(fit_result["best_val"]),
         "best_epoch": int(fit_result["best_epoch"]),
         "monitor_name": str(fit_result.get("monitor_name", "val_loss")),
@@ -138,6 +142,10 @@ def _write_train_summary_yaml(
         "selected_val_loss": float(fit_result.get("selected_val_loss", fit_result["best_val"])),
         "best_val_loss": float(fit_result.get("best_val_loss", fit_result["best_val"])),
         "best_val_loss_epoch": int(fit_result.get("best_val_loss_epoch", fit_result["best_epoch"])),
+        "selected_val_rmse_global_zspace": fit_result.get("selected_val_rmse_global_zspace"),
+        "selected_val_mae_global_zspace": fit_result.get("selected_val_mae_global_zspace"),
+        "best_val_rmse_global_zspace": fit_result.get("best_val_rmse_global_zspace"),
+        "best_val_mae_global_zspace": fit_result.get("best_val_mae_global_zspace"),
         "epochs_ran": int(fit_result["epochs_ran"]),
         "stopped_early": bool(fit_result["stopped_early"]),
         "final_lr": float(fit_result["final_lr"]),
@@ -162,6 +170,29 @@ def _write_train_summary_yaml(
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(payload, f, sort_keys=False, allow_unicode=True)
     return path
+
+
+def _global_rmse_mae_torch(
+    y_hat: torch.Tensor,
+    y_true: torch.Tensor,
+    target_mask: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """在训练期 z-space 上计算全局 RMSE / MAE。"""
+    err = y_hat - y_true
+    if target_mask is None:
+        mse = torch.mean(err * err)
+        mae = torch.mean(torch.abs(err))
+        return torch.sqrt(mse), mae
+
+    if target_mask.shape != y_hat.shape:
+        raise ValueError(f"target_mask shape mismatch: expect {tuple(y_hat.shape)}, got {tuple(target_mask.shape)}")
+    mask = target_mask.to(device=y_hat.device, dtype=y_hat.dtype)
+    valid = mask.sum()
+    if float(valid.item()) <= 0.0:
+        raise ValueError("target_mask contains zero valid supervision elements during training monitor")
+    mse = ((err * err) * mask).sum() / valid
+    mae = (torch.abs(err) * mask).sum() / valid
+    return torch.sqrt(mse), mae
 
 
 def build_monitor_fn(
@@ -249,6 +280,31 @@ def build_monitor_fn(
     return _monitor
 
 
+def build_extra_val_metrics_fn(y_in_idx) -> Callable:
+    """
+    构造训练期附加验证指标。
+
+    当前固定输出：
+      - `val_rmse_global_zspace`
+      - `val_mae_global_zspace`
+    """
+
+    def _metrics(model, X, Y, target_mask=None):
+        if hasattr(model, "forward_with_aux"):
+            dY, _logvar, _aux = model.forward_with_aux(X)
+        else:
+            dY, _logvar = model(X)
+        y0 = extract_y0_from_x_last(X, y_in_idx)
+        y_hat = rollout_from_delta(y0, dY)
+        rmse, mae = _global_rmse_mae_torch(y_hat, Y, target_mask)
+        return {
+            "val_rmse_global_zspace": rmse,
+            "val_mae_global_zspace": mae,
+        }
+
+    return _metrics
+
+
 def build_loss_fn(
     logvar_clip_min: float,
     logvar_clip_max: float,
@@ -256,6 +312,7 @@ def build_loss_fn(
     *,
     dout: int = 9,
     loss_type: str = "nll_diag",
+    state_mse_weight: float = 0.0,
     state_huber_weight: float = 0.0,
     state_huber_delta: float = 1.0,
     delta_huber_weight: float = 0.0,
@@ -275,6 +332,7 @@ def build_loss_fn(
       2) `transition_balance`：在 NLL 之外加入
          - 语义组加权
          - horizon 尾部加权
+         - rollout state MSE
          - rollout state Huber
          - delta transition Huber
          - 正向 logvar 正则
@@ -325,6 +383,14 @@ def build_loss_fn(
                 component_weight=component_weight,
                 horizon_weight=horizon_weight,
             )
+            if float(state_mse_weight) > 0.0:
+                total = total + float(state_mse_weight) * masked_weighted_mse_loss(
+                    y_hat,
+                    Y,
+                    target_mask=target_mask,
+                    component_weight=component_weight,
+                    horizon_weight=horizon_weight,
+                )
             if float(state_huber_weight) > 0.0:
                 total = total + float(state_huber_weight) * masked_weighted_huber_loss(
                     y_hat,
@@ -491,6 +557,7 @@ def main() -> int:
         cfg.model.y_in_idx,
         dout=cfg.model.dout,
         loss_type=cfg.loss.type,
+        state_mse_weight=cfg.loss.state_mse_weight,
         state_huber_weight=cfg.loss.state_huber_weight,
         state_huber_delta=cfg.loss.state_huber_delta,
         delta_huber_weight=cfg.loss.delta_huber_weight,
@@ -514,6 +581,7 @@ def main() -> int:
         gyro_weight=cfg.loss.gyro_weight,
         vel_weight=cfg.loss.vel_weight,
     )
+    extra_val_metrics_fn = build_extra_val_metrics_fn(cfg.model.y_in_idx)
 
     # ------------------------------
     # Fit (pipeline-style): pass device/run_dir/amp
@@ -529,6 +597,7 @@ def main() -> int:
         amp=bool(cfg.run.amp),
         monitor_fn=monitor_fn,
         monitor_name=cfg.train.metric,
+        extra_val_metrics_fn=extra_val_metrics_fn,
     )
     _write_train_history_csv(run_dir / "train_history.csv", fit_result["history"])
     _write_train_summary_yaml(

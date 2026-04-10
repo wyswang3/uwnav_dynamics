@@ -18,9 +18,13 @@
   - `monitor_value`
   - `best_monitor`
   - `best_val_loss`
+  - `val_rmse_global_zspace`
+  - `val_mae_global_zspace`
 - 兼容历史字段时要注意：
   - `best_val` 仍保留为 legacy 字段
   - 当 `train.metric != val_loss` 时，`best_val` 表示“最佳 monitor 值”，不是“最小 val_loss”
+  - 训练期新增的 `val_rmse_global_zspace / val_mae_global_zspace` 只表示归一化训练空间中的通用误差基线，
+    不应与评估阶段物理量纲下的 `rmse_global / mae_global` 混用
 
 ## 2. 数据 split 规则
 

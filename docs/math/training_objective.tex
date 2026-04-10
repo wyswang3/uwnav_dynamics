@@ -53,12 +53,14 @@ In the current KF-proxy mainline, velocity-state supervision has already been de
 \subsection{Transition-Balance Objective}
 
 The current mainline optimization focus is not plain NLL minimization.
-Instead, the project uses a transition-oriented objective that emphasizes state-group balance, horizon-tail behavior, and increment consistency.
+Instead, the project uses a transition-oriented objective that keeps a generic state-regression term while emphasizing state-group balance, horizon-tail behavior, and increment consistency.
 
 In abstract form, the loss can be written as
 \begin{equation}
 \mathcal{L}_{\mathrm{tb}}
 =
+\lambda_{\mathrm{mse}}\mathcal{L}_{\mathrm{mse}}
++
 \lambda_{\mathrm{state}}\mathcal{L}_{\mathrm{state}}
 +
 \lambda_{\Delta}\mathcal{L}_{\Delta}
@@ -67,6 +69,7 @@ In abstract form, the loss can be written as
 \end{equation}
 where:
 \begin{itemize}
+  \item $\mathcal{L}_{\mathrm{mse}}$ is a generic rollout-state mean-squared error term,
   \item $\mathcal{L}_{\mathrm{state}}$ penalizes rolled-out state error,
   \item $\mathcal{L}_{\Delta}$ penalizes increment mismatch,
   \item $\mathcal{L}_{\mathrm{tail}}$ upweights later horizon steps to suppress long-rollout drift.
@@ -118,5 +121,8 @@ The current repository additionally tracks a validation metric oriented toward t
 \alpha_4 E_{\mathrm{growth}},
 \end{equation}
 where the individual terms summarize global rollout error, final-step error, tail-horizon error, and rollout growth.
+
+In addition, the training loop now records generic validation-space RMSE and MAE in normalized space,
+so that optimization can be audited not only through transition-specific terms but also through conventional regression error.
 
 This distinction matters because a model that attains low average loss may still be unsuitable as a transition solver if it exhibits unstable tail behavior.

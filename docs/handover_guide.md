@@ -186,6 +186,9 @@ python -m uwnav_dynamics.cli.train_matrix \
 
 - ckpt 选择和 early stopping 优先按 `train.metric`
 - 当前推荐值是 `val_transition_score`
+- `train_history.csv` / `train_summary.yaml` 还应并行保留
+  `val_rmse_global_zspace / val_mae_global_zspace`，
+  作为训练空间中的通用误差基线
 
 run 级筛选：
 

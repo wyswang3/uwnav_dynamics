@@ -10,8 +10,9 @@ early stopping 与 checkpoint 保存串起来。
 1. 支持 `(X, Y)` 与 `(X, Y, target_mask)` 两类 batch。
 2. 在训练与验证阶段统一调用外部注入的 `loss_fn`。
 3. 支持独立于 `val_loss` 的验证 monitor，用于 best ckpt、scheduler 与 early stopping。
-4. 管理设备迁移、AMP、梯度裁剪、scheduler 与 best/last checkpoint 落盘。
-5. 记录 epoch 级 train/val/lr/monitor 历史，供上层落盘 summary 与可视化。
+4. 支持并行收集附加验证指标（例如 z-space `RMSE / MAE`）。
+5. 管理设备迁移、AMP、梯度裁剪、scheduler 与 best/last checkpoint 落盘。
+6. 记录 epoch 级 train/val/lr/monitor/附加指标历史，供上层落盘 summary 与可视化。
 
 数据流：
 prepare_train_data() 产出的 DataLoader
@@ -43,6 +44,7 @@ from torch.utils.data import DataLoader
 
 
 ValidationMetricFn = Callable[[Any, torch.Tensor, torch.Tensor, torch.Tensor | None], torch.Tensor]
+ValidationStatsFn = Callable[[Any, torch.Tensor, torch.Tensor, torch.Tensor | None], Dict[str, torch.Tensor | float]]
 
 
 @dataclass(frozen=True)
@@ -161,7 +163,8 @@ def eval_one_epoch_with_monitor(
     device: torch.device,
     *,
     monitor_fn: ValidationMetricFn | None = None,
-) -> tuple[float, float]:
+    extra_val_metrics_fn: ValidationStatsFn | None = None,
+) -> tuple[float, float, Dict[str, float]]:
     """
     执行一个验证 epoch，同时返回：
       1. 训练损失空间下的 `val_loss`
@@ -169,12 +172,13 @@ def eval_one_epoch_with_monitor(
 
     说明：
     - 当 `monitor_fn is None` 时，监控值回退为 `val_loss`。
-    - 当 `monitor_fn` 独立存在时，会额外跑一次前向；这是当前最小改动下
-      为了把“长期状态误差”接入选模而接受的验证期开销。
+    - 当 `monitor_fn` 或 `extra_val_metrics_fn` 独立存在时，会额外跑前向；
+      这是当前最小改动下为保留监控解耦而接受的验证期开销。
     """
     model.eval()
     total_loss = 0.0
     total_monitor = 0.0
+    total_extra: dict[str, float] = {}
     n = 0
 
     for batch in loader:
@@ -187,13 +191,17 @@ def eval_one_epoch_with_monitor(
             monitor = loss
         else:
             monitor = monitor_fn(model, X, Y, target_mask)
+        extra_metrics = extra_val_metrics_fn(model, X, Y, target_mask) if extra_val_metrics_fn is not None else {}
 
         total_loss += float(loss.item()) * X.shape[0]
         total_monitor += float(monitor.item()) * X.shape[0]
+        for key, value in extra_metrics.items():
+            total_extra[str(key)] = total_extra.get(str(key), 0.0) + float(value) * X.shape[0]
         n += X.shape[0]
 
     denom = max(n, 1)
-    return total_loss / denom, total_monitor / denom
+    mean_extra = {key: value / denom for key, value in total_extra.items()}
+    return total_loss / denom, total_monitor / denom, mean_extra
 
 
 def _resolve_device(device: Optional[torch.device], cfg_device: str) -> torch.device:
@@ -252,6 +260,7 @@ def fit(
     optimizer: Optional[torch.optim.Optimizer] = None,
     monitor_fn: ValidationMetricFn | None = None,
     monitor_name: Optional[str] = None,
+    extra_val_metrics_fn: ValidationStatsFn | None = None,
 ) -> Dict[str, Any]:
     """
     执行完整训练循环，并返回供 pipeline/报告消费的训练摘要。
@@ -284,6 +293,8 @@ def fit(
     selected_val_loss = float("inf")
     best_val_loss = float("inf")
     best_val_loss_epoch = 0
+    best_extra_metrics: dict[str, float] = {}
+    selected_extra_metrics: dict[str, float] = {}
     stopped_early = False
     epochs_without_improve = 0
     eval_every = max(int(getattr(cfg, "eval_every", 1)), 1)
@@ -305,18 +316,23 @@ def fit(
         should_eval = (ep % eval_every == 0) or (ep == cfg.epochs)
         va = float("nan")
         monitor_value = float("nan")
+        extra_metrics: dict[str, float] = {}
         improved = False
         if should_eval:
-            va, monitor_value = eval_one_epoch_with_monitor(
+            va, monitor_value, extra_metrics = eval_one_epoch_with_monitor(
                 model,
                 val_loader,
                 loss_fn,
                 device,
                 monitor_fn=monitor_fn,
+                extra_val_metrics_fn=extra_val_metrics_fn,
             )
             if va < best_val_loss:
                 best_val_loss = va
                 best_val_loss_epoch = ep
+            for key, value in extra_metrics.items():
+                prev = best_extra_metrics.get(key)
+                best_extra_metrics[key] = value if prev is None else min(prev, value)
             if scheduler is not None:
                 scheduler.step(monitor_value)
 
@@ -325,20 +341,24 @@ def fit(
                 best_monitor = monitor_value
                 best_epoch = ep
                 selected_val_loss = va
+                selected_extra_metrics = dict(extra_metrics)
                 epochs_without_improve = 0
             else:
                 epochs_without_improve += 1
 
         lr_now = _current_lr(optimizer)
         val_disp = f"{va:.6f}" if should_eval else "SKIP"
+        extra_disp = ""
+        if should_eval and extra_metrics:
+            extra_disp = "".join(f"  {key}={value:.6f}" for key, value in extra_metrics.items())
         if should_eval and resolved_monitor_name != "val_loss":
             monitor_disp = f"{monitor_value:.6f}"
             print(
                 f"[EPOCH {ep:03d}] train_loss={tr:.6f}  val_loss={val_disp}  "
-                f"{resolved_monitor_name}={monitor_disp}  lr={lr_now:.6e}"
+                f"{resolved_monitor_name}={monitor_disp}{extra_disp}  lr={lr_now:.6e}"
             )
         else:
-            print(f"[EPOCH {ep:03d}] train_loss={tr:.6f}  val_loss={val_disp}  lr={lr_now:.6e}")
+            print(f"[EPOCH {ep:03d}] train_loss={tr:.6f}  val_loss={val_disp}{extra_disp}  lr={lr_now:.6e}")
 
         if getattr(cfg, "save_last", True):
             # last checkpoint 记录“最近训练状态”，用于排查中断或继续人工分析。
@@ -354,6 +374,7 @@ def fit(
                     "train_loss": tr,
                     "best_val": best_monitor,
                     "best_epoch": best_epoch,
+                    "extra_val_metrics": dict(extra_metrics),
                     "device": str(device),
                     "amp": amp_enabled,
                     "lr": lr_now,
@@ -362,7 +383,7 @@ def fit(
             )
 
         if getattr(cfg, "save_best", True) and improved:
-            # best checkpoint 只按验证损失更新，不受 train loss 或其他指标影响。
+            # best checkpoint 只按 monitor 更新；当 monitor!=val_loss 时，仍同步保留 val_loss 供审计。
             torch.save(
                 {
                     "epoch": ep,
@@ -375,6 +396,7 @@ def fit(
                     "train_loss": tr,
                     "best_val": best_monitor,
                     "best_epoch": best_epoch,
+                    "extra_val_metrics": dict(extra_metrics),
                     "device": str(device),
                     "amp": amp_enabled,
                     "lr": lr_now,
@@ -401,6 +423,7 @@ def fit(
                 "is_best": bool(improved),
             }
         )
+        history[-1].update({str(key): float(value) for key, value in extra_metrics.items()})
 
         if should_eval and early_patience > 0 and epochs_without_improve >= early_patience:
             stopped_early = True
@@ -429,6 +452,10 @@ def fit(
         "selected_val_loss": float(selected_val_loss),
         "best_val_loss": float(best_val_loss),
         "best_val_loss_epoch": int(best_val_loss_epoch),
+        "selected_val_rmse_global_zspace": selected_extra_metrics.get("val_rmse_global_zspace"),
+        "selected_val_mae_global_zspace": selected_extra_metrics.get("val_mae_global_zspace"),
+        "best_val_rmse_global_zspace": best_extra_metrics.get("val_rmse_global_zspace"),
+        "best_val_mae_global_zspace": best_extra_metrics.get("val_mae_global_zspace"),
         "best_path": str(best_path),
         "last_path": str(last_path),
         "device": str(device),

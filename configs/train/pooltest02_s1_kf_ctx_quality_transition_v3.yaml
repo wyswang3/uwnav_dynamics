@@ -73,6 +73,7 @@ rollout:
 loss:
   type: transition_balance
   logvar_clip: [-10.0, 6.0]
+  state_mse_weight: 0.25
   state_huber_weight: 1.0
   state_huber_delta: 1.0
   delta_huber_weight: 0.6

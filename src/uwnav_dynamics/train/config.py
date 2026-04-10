@@ -64,6 +64,7 @@ class LossConfig:
     type: str = "nll_diag"
     logvar_clip_min: float = -10.0
     logvar_clip_max: float = 6.0
+    state_mse_weight: float = 0.0
     state_huber_weight: float = 0.0
     state_huber_delta: float = 1.0
     delta_huber_weight: float = 0.0
@@ -525,6 +526,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         allowed=[
             "type",
             "logvar_clip",
+            "state_mse_weight",
             "state_huber_weight",
             "state_huber_delta",
             "delta_huber_weight",
@@ -551,6 +553,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
         raise TypeError("loss.logvar_clip must be a list/tuple of [min,max]")
 
+    state_mse_weight = _as_float(loss_d.get("state_mse_weight", 0.0), where="loss.state_mse_weight")
     state_huber_weight = _as_float(loss_d.get("state_huber_weight", 0.0), where="loss.state_huber_weight")
     state_huber_delta = _as_float(loss_d.get("state_huber_delta", 1.0), where="loss.state_huber_delta")
     delta_huber_weight = _as_float(loss_d.get("delta_huber_weight", 0.0), where="loss.delta_huber_weight")
@@ -562,6 +565,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     vel_weight = _as_float(loss_d.get("vel_weight", 1.0), where="loss.vel_weight")
     dvl_obs_weight = _as_float(loss_d.get("dvl_obs_weight", 0.0), where="loss.dvl_obs_weight")
     dvl_obs_delta = _as_float(loss_d.get("dvl_obs_delta", 1.0), where="loss.dvl_obs_delta")
+    if state_mse_weight < 0.0:
+        raise ValueError(f"loss.state_mse_weight must be >= 0, got {state_mse_weight}")
     if state_huber_weight < 0.0:
         raise ValueError(f"loss.state_huber_weight must be >= 0, got {state_huber_weight}")
     if state_huber_delta <= 0.0:
@@ -590,7 +595,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         )
     if loss_type == "nll_diag":
         if (
-            state_huber_weight != 0.0
+            state_mse_weight != 0.0
+            or state_huber_weight != 0.0
             or delta_huber_weight != 0.0
             or logvar_reg_weight != 0.0
             or tail_weight_power != 0.0
@@ -604,7 +610,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             )
     else:
         if (
-            state_huber_weight == 0.0
+            state_mse_weight == 0.0
+            and state_huber_weight == 0.0
             and delta_huber_weight == 0.0
             and logvar_reg_weight == 0.0
             and tail_weight_power == 0.0
@@ -620,6 +627,7 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         type=loss_type,
         logvar_clip_min=float(clip[0]),
         logvar_clip_max=float(clip[1]),
+        state_mse_weight=state_mse_weight,
         state_huber_weight=state_huber_weight,
         state_huber_delta=state_huber_delta,
         delta_huber_weight=delta_huber_weight,
