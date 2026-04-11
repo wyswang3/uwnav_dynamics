@@ -59,6 +59,7 @@ class EvalConfig:
 
     y0_source: str = "x_last_state"
     mode: str = "delta_cumsum"
+    long_horizon_fraction: float = 0.4
 
     save_samples: int = 256
 
@@ -104,6 +105,7 @@ def build_eval_config(
         y_scaler_path=layout.y_scaler_path,
         y0_source=str(cfg_train.rollout.y0_source),
         mode=str(cfg_train.rollout.mode),
+        long_horizon_fraction=float(cfg_train.loss.late_horizon_fraction),
         save_samples=int(save_samples),
     )
     return cfg_eval, cfg_train.model

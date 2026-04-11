@@ -14,6 +14,7 @@
 6. 在当前阶段支持面向状态转移的 composite loss，用于更强地约束 `acc / gyro / vel`。
 7. 支持训练期 `val_transition_score` monitor，用更偏长期 rollout 的信号选择 best ckpt。
 8. 在训练期并行记录 z-space `RMSE / MAE`，补充通用误差基线。
+9. 训练结束后自动从 `train_history.csv` 生成训练曲线与 dashboard 图。
 
 数据流：
 train yaml + CLI override
@@ -26,7 +27,7 @@ S1Predictor + rollout loss
     ↓
 fit()
     ↓
-best.pth / last.pth / train_summary.yaml / train_history.csv
+best.pth / last.pth / train_summary.yaml / train_history.csv / train_plots/*
 
 依赖模块：
 - uwnav_dynamics.train.config
@@ -36,6 +37,7 @@ best.pth / last.pth / train_summary.yaml / train_history.csv
 - uwnav_dynamics.models.utils.semantic_output_layout
 - uwnav_dynamics.models.losses.auxiliary
 - uwnav_dynamics.models.losses.state_transition
+- uwnav_dynamics.viz.train.plot_training_history
 
 备注：
 - 本模块只接入 execution layout contract，不负责语义分组解释。
@@ -68,6 +70,7 @@ from uwnav_dynamics.train.runtime import (
     set_global_seed,
 )
 from uwnav_dynamics.train.trainer import fit
+from uwnav_dynamics.viz.train.plot_training_history import plot_training_artifacts
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor
 from uwnav_dynamics.models.utils.execution_layout import extract_y0_from_x_last
 from uwnav_dynamics.models.utils.rollout import rollout_from_delta
@@ -82,6 +85,7 @@ from uwnav_dynamics.models.losses.state_transition import (
     masked_weighted_huber_loss,
     positive_logvar_penalty,
     reduce_weighted_mean,
+    resolve_late_horizon_start,
 )
 
 
@@ -160,6 +164,11 @@ def _write_train_summary_yaml(
             "source_train_yaml": relative_path_str(source_snapshot_path, base_dir=path_root),
             "resolved_train_yaml": relative_path_str(run_dir / "resolved_train.yaml", base_dir=path_root),
             "train_history_csv": relative_path_str(run_dir / "train_history.csv", base_dir=path_root),
+            "train_plots_dir": relative_path_str(run_dir / "train_plots", base_dir=path_root),
+            "training_dashboard_png": relative_path_str(run_dir / "train_plots" / "training_dashboard.png", base_dir=path_root),
+            "training_loss_png": relative_path_str(run_dir / "train_plots" / "training_loss_curve.png", base_dir=path_root),
+            "training_monitor_png": relative_path_str(run_dir / "train_plots" / "validation_monitor_curve.png", base_dir=path_root),
+            "training_lr_png": relative_path_str(run_dir / "train_plots" / "learning_rate_curve.png", base_dir=path_root),
             "best_ckpt": relative_path_str(Path(str(fit_result["best_path"])), base_dir=path_root),
             "last_ckpt": relative_path_str(Path(str(fit_result["last_path"])), base_dir=path_root),
             "split_indices": relative_path_str(run_dir / "split_indices.npz", base_dir=path_root),
@@ -203,6 +212,8 @@ def build_monitor_fn(
     state_huber_delta: float = 1.0,
     delta_huber_delta: float = 1.0,
     tail_weight_power: float = 0.0,
+    late_horizon_weight: float = 0.0,
+    late_horizon_fraction: float = 0.4,
     acc_weight: float = 1.0,
     gyro_weight: float = 1.0,
     vel_weight: float = 1.0,
@@ -275,7 +286,23 @@ def build_monitor_fn(
             horizon_weight=horizon_weight,
             delta=float(delta_huber_delta),
         )
-        return state_tail + 0.75 * final_step + 0.25 * delta_tail
+        total = state_tail + 0.75 * final_step + 0.25 * delta_tail
+        if float(late_horizon_weight) > 0.0:
+            late_start = resolve_late_horizon_start(
+                Y.shape[1],
+                late_horizon_fraction=float(late_horizon_fraction),
+            )
+            late_mask = target_mask[:, late_start:, :] if target_mask is not None else None
+            late_state = masked_weighted_huber_loss(
+                y_hat[:, late_start:, :],
+                Y[:, late_start:, :],
+                target_mask=late_mask,
+                component_weight=component_weight,
+                horizon_weight=None,
+                delta=float(state_huber_delta),
+            )
+            total = total + float(late_horizon_weight) * late_state
+        return total
 
     return _monitor
 
@@ -315,6 +342,9 @@ def build_loss_fn(
     state_mse_weight: float = 0.0,
     state_huber_weight: float = 0.0,
     state_huber_delta: float = 1.0,
+    state_final_weight: float = 0.0,
+    late_horizon_weight: float = 0.0,
+    late_horizon_fraction: float = 0.4,
     delta_huber_weight: float = 0.0,
     delta_huber_delta: float = 1.0,
     logvar_reg_weight: float = 0.0,
@@ -398,6 +428,30 @@ def build_loss_fn(
                     target_mask=target_mask,
                     component_weight=component_weight,
                     horizon_weight=horizon_weight,
+                    delta=float(state_huber_delta),
+                )
+            if float(state_final_weight) > 0.0:
+                final_mask = target_mask[:, -1:, :] if target_mask is not None else None
+                total = total + float(state_final_weight) * masked_weighted_huber_loss(
+                    y_hat[:, -1:, :],
+                    Y[:, -1:, :],
+                    target_mask=final_mask,
+                    component_weight=component_weight,
+                    horizon_weight=None,
+                    delta=float(state_huber_delta),
+                )
+            if float(late_horizon_weight) > 0.0:
+                late_start = resolve_late_horizon_start(
+                    Y.shape[1],
+                    late_horizon_fraction=float(late_horizon_fraction),
+                )
+                late_mask = target_mask[:, late_start:, :] if target_mask is not None else None
+                total = total + float(late_horizon_weight) * masked_weighted_huber_loss(
+                    y_hat[:, late_start:, :],
+                    Y[:, late_start:, :],
+                    target_mask=late_mask,
+                    component_weight=component_weight,
+                    horizon_weight=None,
                     delta=float(state_huber_delta),
                 )
             if float(delta_huber_weight) > 0.0:
@@ -560,6 +614,9 @@ def main() -> int:
         state_mse_weight=cfg.loss.state_mse_weight,
         state_huber_weight=cfg.loss.state_huber_weight,
         state_huber_delta=cfg.loss.state_huber_delta,
+        state_final_weight=cfg.loss.state_final_weight,
+        late_horizon_weight=cfg.loss.late_horizon_weight,
+        late_horizon_fraction=cfg.loss.late_horizon_fraction,
         delta_huber_weight=cfg.loss.delta_huber_weight,
         delta_huber_delta=cfg.loss.delta_huber_delta,
         logvar_reg_weight=cfg.loss.logvar_reg_weight,
@@ -577,6 +634,8 @@ def main() -> int:
         state_huber_delta=cfg.loss.state_huber_delta,
         delta_huber_delta=cfg.loss.delta_huber_delta,
         tail_weight_power=cfg.loss.tail_weight_power,
+        late_horizon_weight=cfg.loss.late_horizon_weight,
+        late_horizon_fraction=cfg.loss.late_horizon_fraction,
         acc_weight=cfg.loss.acc_weight,
         gyro_weight=cfg.loss.gyro_weight,
         vel_weight=cfg.loss.vel_weight,
@@ -607,6 +666,11 @@ def main() -> int:
         run_dir=run_dir,
         source_snapshot_path=source_snapshot_path,
         path_root=Path.cwd(),
+    )
+    plot_training_artifacts(
+        history_csv=run_dir / "train_history.csv",
+        out_dir=run_dir / "train_plots",
+        summary_yaml=run_dir / "train_summary.yaml",
     )
     return 0
 

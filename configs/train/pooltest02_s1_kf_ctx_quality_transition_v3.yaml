@@ -76,6 +76,9 @@ loss:
   state_mse_weight: 0.25
   state_huber_weight: 1.0
   state_huber_delta: 1.0
+  state_final_weight: 0.75
+  late_horizon_weight: 0.35
+  late_horizon_fraction: 0.4
   delta_huber_weight: 0.6
   delta_huber_delta: 1.0
   logvar_reg_weight: 0.02

@@ -67,6 +67,9 @@ class LossConfig:
     state_mse_weight: float = 0.0
     state_huber_weight: float = 0.0
     state_huber_delta: float = 1.0
+    state_final_weight: float = 0.0
+    late_horizon_weight: float = 0.0
+    late_horizon_fraction: float = 0.4
     delta_huber_weight: float = 0.0
     delta_huber_delta: float = 1.0
     logvar_reg_weight: float = 0.0
@@ -529,6 +532,9 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             "state_mse_weight",
             "state_huber_weight",
             "state_huber_delta",
+            "state_final_weight",
+            "late_horizon_weight",
+            "late_horizon_fraction",
             "delta_huber_weight",
             "delta_huber_delta",
             "logvar_reg_weight",
@@ -556,6 +562,9 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     state_mse_weight = _as_float(loss_d.get("state_mse_weight", 0.0), where="loss.state_mse_weight")
     state_huber_weight = _as_float(loss_d.get("state_huber_weight", 0.0), where="loss.state_huber_weight")
     state_huber_delta = _as_float(loss_d.get("state_huber_delta", 1.0), where="loss.state_huber_delta")
+    state_final_weight = _as_float(loss_d.get("state_final_weight", 0.0), where="loss.state_final_weight")
+    late_horizon_weight = _as_float(loss_d.get("late_horizon_weight", 0.0), where="loss.late_horizon_weight")
+    late_horizon_fraction = _as_float(loss_d.get("late_horizon_fraction", 0.4), where="loss.late_horizon_fraction")
     delta_huber_weight = _as_float(loss_d.get("delta_huber_weight", 0.0), where="loss.delta_huber_weight")
     delta_huber_delta = _as_float(loss_d.get("delta_huber_delta", 1.0), where="loss.delta_huber_delta")
     logvar_reg_weight = _as_float(loss_d.get("logvar_reg_weight", 0.0), where="loss.logvar_reg_weight")
@@ -571,6 +580,15 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         raise ValueError(f"loss.state_huber_weight must be >= 0, got {state_huber_weight}")
     if state_huber_delta <= 0.0:
         raise ValueError(f"loss.state_huber_delta must be > 0, got {state_huber_delta}")
+    if state_final_weight < 0.0:
+        raise ValueError(f"loss.state_final_weight must be >= 0, got {state_final_weight}")
+    if late_horizon_weight < 0.0:
+        raise ValueError(f"loss.late_horizon_weight must be >= 0, got {late_horizon_weight}")
+    if late_horizon_fraction <= 0.0 or late_horizon_fraction > 1.0:
+        raise ValueError(
+            "loss.late_horizon_fraction must be in (0,1], "
+            f"got {late_horizon_fraction}"
+        )
     if delta_huber_weight < 0.0:
         raise ValueError(f"loss.delta_huber_weight must be >= 0, got {delta_huber_weight}")
     if delta_huber_delta <= 0.0:
@@ -597,6 +615,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         if (
             state_mse_weight != 0.0
             or state_huber_weight != 0.0
+            or state_final_weight != 0.0
+            or late_horizon_weight != 0.0
             or delta_huber_weight != 0.0
             or logvar_reg_weight != 0.0
             or tail_weight_power != 0.0
@@ -612,6 +632,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         if (
             state_mse_weight == 0.0
             and state_huber_weight == 0.0
+            and state_final_weight == 0.0
+            and late_horizon_weight == 0.0
             and delta_huber_weight == 0.0
             and logvar_reg_weight == 0.0
             and tail_weight_power == 0.0
@@ -630,6 +652,9 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         state_mse_weight=state_mse_weight,
         state_huber_weight=state_huber_weight,
         state_huber_delta=state_huber_delta,
+        state_final_weight=state_final_weight,
+        late_horizon_weight=late_horizon_weight,
+        late_horizon_fraction=late_horizon_fraction,
         delta_huber_weight=delta_huber_weight,
         delta_huber_delta=delta_huber_delta,
         logvar_reg_weight=logvar_reg_weight,

@@ -83,6 +83,18 @@ EVAL_SUMMARY_FIELDS = [
     "tail_abs_p95_masked",
     "tail_abs_p99_masked",
     "tail_final_step_abs_p95_masked",
+    "long_horizon_rmse_auc_dense",
+    "long_horizon_mae_auc_dense",
+    "long_horizon_late_rmse_dense",
+    "long_horizon_late_mae_dense",
+    "long_horizon_rmse_slope_dense",
+    "long_horizon_mae_slope_dense",
+    "long_horizon_rmse_auc_masked",
+    "long_horizon_mae_auc_masked",
+    "long_horizon_late_rmse_masked",
+    "long_horizon_late_mae_masked",
+    "long_horizon_rmse_slope_masked",
+    "long_horizon_mae_slope_masked",
     "rmse_growth_dense",
     "mae_growth_dense",
     "rmse_growth_masked",
@@ -132,6 +144,9 @@ def flatten_eval_metrics(metrics: Mapping[str, Any] | None) -> dict[str, Any]:
 
     dense = _nested_get(metrics, "control_readiness", "physical", "dense", default={})
     masked = _nested_get(metrics, "control_readiness", "physical", "masked", default={})
+    long_horizon = _nested_get(metrics, "long_horizon_fit", "physical", default={})
+    long_dense = _nested_get(long_horizon, "dense", default={})
+    long_masked = _nested_get(long_horizon, "masked", default={})
 
     dense_final = _nested_get(dense, "final_step", default={})
     dense_tail = _nested_get(dense, "tail_error", default={})
@@ -180,6 +195,18 @@ def flatten_eval_metrics(metrics: Mapping[str, Any] | None) -> dict[str, Any]:
         "tail_abs_p95_masked": _nested_get(masked_tail, "abs_p95_global"),
         "tail_abs_p99_masked": _nested_get(masked_tail, "abs_p99_global"),
         "tail_final_step_abs_p95_masked": _nested_get(masked_tail, "final_step_abs_p95_global"),
+        "long_horizon_rmse_auc_dense": _nested_get(long_dense, "rmse_auc_global"),
+        "long_horizon_mae_auc_dense": _nested_get(long_dense, "mae_auc_global"),
+        "long_horizon_late_rmse_dense": _nested_get(long_dense, "late_horizon_rmse_global_mean"),
+        "long_horizon_late_mae_dense": _nested_get(long_dense, "late_horizon_mae_global_mean"),
+        "long_horizon_rmse_slope_dense": _nested_get(long_dense, "rmse_step_slope"),
+        "long_horizon_mae_slope_dense": _nested_get(long_dense, "mae_step_slope"),
+        "long_horizon_rmse_auc_masked": _nested_get(long_masked, "rmse_auc_global"),
+        "long_horizon_mae_auc_masked": _nested_get(long_masked, "mae_auc_global"),
+        "long_horizon_late_rmse_masked": _nested_get(long_masked, "late_horizon_rmse_global_mean"),
+        "long_horizon_late_mae_masked": _nested_get(long_masked, "late_horizon_mae_global_mean"),
+        "long_horizon_rmse_slope_masked": _nested_get(long_masked, "rmse_step_slope"),
+        "long_horizon_mae_slope_masked": _nested_get(long_masked, "mae_step_slope"),
         "rmse_growth_dense": _nested_get(dense_growth, "rmse_last_over_first"),
         "mae_growth_dense": _nested_get(dense_growth, "mae_last_over_first"),
         "rmse_growth_masked": _nested_get(masked_growth, "rmse_last_over_first"),

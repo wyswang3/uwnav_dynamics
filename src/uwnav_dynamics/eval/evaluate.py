@@ -14,6 +14,7 @@
    供 component/residual 可视化与论文图表复用。
 5. 在 `metrics.yaml` 中写出控制前诊断摘要，用于筛查长时漂移、尾部误差与系统偏差。
 6. 对经过 scaler 后仍残留在输入 `X` 中的非有限值做最小清洗，与训练消费端保持一致。
+7. 额外写出 `long_horizon_fit` 摘要，固化长期 rollout 拟合能力证据。
 
 数据流：
 train yaml + checkpoint + run_dir artifacts
@@ -25,6 +26,7 @@ EvalConfig / S1PredictorConfig
 model rollout(z-space) + inverse_transform(physical) + target_mask-aware metric aggregation
     ↓
 metrics.yaml(metric_space + layout + supervision + control_readiness) +
+long_horizon_fit +
 rmse/mae_by_horizon*.csv +
 component_metrics*.csv +
 pred_samples.npz + pred_samples_zspace.npz + pred_context.npz + pred_sample_manifest.csv
@@ -36,6 +38,7 @@ cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 - uwnav_dynamics.dataset.normalize
 - uwnav_dynamics.dataset.split
 - uwnav_dynamics.models.nets.s1_predictor
+- uwnav_dynamics.models.losses.state_transition
 
 备注：
 - 本模块只负责数值评估与 artifact 落盘。
@@ -74,6 +77,7 @@ from uwnav_dynamics.models.utils.execution_layout import (
     extract_y0_from_x_last,
 )
 from uwnav_dynamics.models.utils.rollout import rollout_from_delta
+from uwnav_dynamics.models.losses.state_transition import resolve_late_horizon_start
 from uwnav_dynamics.models.utils.semantic_output_layout import (
     SEMANTIC_LAYOUT_SCHEMA_VERSION,
     SemanticOutputLayout,
@@ -85,6 +89,7 @@ from uwnav_dynamics.supervision_mask import build_dense_target_mask, build_targe
 
 SUPERVISION_SCHEMA_VERSION = "supervision_v1"
 CONTROL_READINESS_SCHEMA_VERSION = "control_readiness_v1"
+LONG_HORIZON_FIT_SCHEMA_VERSION = "long_horizon_fit_v1"
 PRIMARY_METRIC_SPACE = "physical"
 SECONDARY_METRIC_SPACE = "zspace"
 
@@ -231,6 +236,43 @@ def _aggregate_group_curve(metric_hd: np.ndarray, groups: Dict[str, Sequence[int
             curve[valid] = np.nansum(group_vals[valid], axis=1) / valid_count[valid]
         out[key] = curve.tolist()
     return out
+
+
+def _global_curve_from_hd(metric_hd: np.ndarray) -> np.ndarray:
+    valid_count = np.sum(~np.isnan(metric_hd), axis=1)
+    curve = np.full(metric_hd.shape[0], np.nan, dtype=np.float64)
+    valid = valid_count > 0
+    if np.any(valid):
+        curve[valid] = np.nansum(metric_hd[valid], axis=1) / valid_count[valid]
+    return curve
+
+
+def _curve_auc(curve: Sequence[float]) -> float:
+    arr = np.asarray(curve, dtype=np.float64)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return float("nan")
+    return float(np.mean(finite))
+
+
+def _curve_late_mean(curve: Sequence[float], *, start_idx: int) -> float:
+    arr = np.asarray(curve, dtype=np.float64)
+    start = max(0, min(int(start_idx), max(int(arr.shape[0]) - 1, 0)))
+    finite = arr[start:][np.isfinite(arr[start:])]
+    if finite.size == 0:
+        return float("nan")
+    return float(np.mean(finite))
+
+
+def _curve_slope(curve: Sequence[float]) -> float:
+    arr = np.asarray(curve, dtype=np.float64)
+    finite_idx = np.flatnonzero(np.isfinite(arr))
+    if finite_idx.size < 2:
+        return float("nan")
+    x = finite_idx.astype(np.float64)
+    y = arr[finite_idx]
+    slope, _ = np.polyfit(x, y, deg=1)
+    return float(slope)
 
 
 def _write_csv_hd(path: Path, hd: np.ndarray, col_prefix: str = "d") -> None:
@@ -531,6 +573,36 @@ def _build_control_readiness_summary(
     }
 
 
+def _build_long_horizon_fit_summary(
+    *,
+    rmse_hd: np.ndarray,
+    mae_hd: np.ndarray,
+    final_step: Mapping[str, Any],
+    rollout_growth: Mapping[str, Any],
+    late_horizon_fraction: float,
+) -> dict[str, Any]:
+    rmse_curve = _global_curve_from_hd(rmse_hd)
+    mae_curve = _global_curve_from_hd(mae_hd)
+    late_start = resolve_late_horizon_start(
+        rmse_hd.shape[0],
+        late_horizon_fraction=float(late_horizon_fraction),
+    )
+    return {
+        "late_horizon_fraction": float(late_horizon_fraction),
+        "late_horizon_start_step": int(late_start + 1),
+        "rmse_auc_global": _curve_auc(rmse_curve),
+        "mae_auc_global": _curve_auc(mae_curve),
+        "late_horizon_rmse_global_mean": _curve_late_mean(rmse_curve, start_idx=late_start),
+        "late_horizon_mae_global_mean": _curve_late_mean(mae_curve, start_idx=late_start),
+        "rmse_step_slope": _curve_slope(rmse_curve),
+        "mae_step_slope": _curve_slope(mae_curve),
+        "final_step_rmse_global": float(final_step.get("rmse_global", float("nan"))),
+        "final_step_mae_global": float(final_step.get("mae_global", float("nan"))),
+        "rmse_last_over_first": float(rollout_growth.get("rmse_last_over_first", float("nan"))),
+        "mae_last_over_first": float(rollout_growth.get("mae_last_over_first", float("nan"))),
+    }
+
+
 def _component_metadata(semantic_layout: SemanticOutputLayout) -> tuple[list[str], list[str], list[str]]:
     display_labels: list[str] = []
     unit_labels: list[str] = []
@@ -667,6 +739,7 @@ def summarize_eval_predictions(
     y_true_z_np: np.ndarray,
     logvar_z_np: np.ndarray,
     save_samples: int,
+    late_horizon_fraction: float,
 ) -> Dict[str, Any]:
     """把 z-space 预测结果统一汇总成指标、CSV/NPZ 所需 artifact 内容。"""
     if y_hat_z_np.shape != y_true_z_np.shape or y_hat_z_np.shape != logvar_z_np.shape:
@@ -755,6 +828,20 @@ def summarize_eval_predictions(
         component_metrics=component_metrics_masked,
         target_mask=target_mask_np_eval,
     )
+    long_horizon_dense = _build_long_horizon_fit_summary(
+        rmse_hd=rmse_hd,
+        mae_hd=mae_hd,
+        final_step=control_readiness_dense["final_step"],
+        rollout_growth=control_readiness_dense["rollout_growth"],
+        late_horizon_fraction=float(late_horizon_fraction),
+    )
+    long_horizon_masked = _build_long_horizon_fit_summary(
+        rmse_hd=rmse_hd_masked,
+        mae_hd=mae_hd_masked,
+        final_step=control_readiness_masked["final_step"],
+        rollout_growth=control_readiness_masked["rollout_growth"],
+        late_horizon_fraction=float(late_horizon_fraction),
+    )
 
     sample_metric_rows = _build_sample_metric_rows(
         y_hat=y_hat_phys_np,
@@ -821,6 +908,8 @@ def summarize_eval_predictions(
         "component_metrics_masked_zspace": component_metrics_masked_z,
         "control_readiness_dense": control_readiness_dense,
         "control_readiness_masked": control_readiness_masked,
+        "long_horizon_fit_dense": long_horizon_dense,
+        "long_horizon_fit_masked": long_horizon_masked,
         "semantic_layout": split_artifacts.semantic_layout,
         "raw_mask_source": split_artifacts.raw_mask_source,
         "samples": samp,
@@ -905,6 +994,15 @@ def write_eval_outputs(
                 "masked": res["control_readiness_masked"],
             },
         },
+        "long_horizon_fit": {
+            "schema_version": LONG_HORIZON_FIT_SCHEMA_VERSION,
+            "intended_use": "offline_long_horizon_rollout_audit",
+            "closed_loop_proof": False,
+            "physical": {
+                "dense": res["long_horizon_fit_dense"],
+                "masked": res["long_horizon_fit_masked"],
+            },
+        },
         "artifacts": {
             "primary_samples": "pred_samples.npz",
             "auxiliary_samples_zspace": "pred_samples_zspace.npz",
@@ -918,6 +1016,7 @@ def write_eval_outputs(
             "mae_horizon_zspace_csv": "mae_by_horizon_zspace.csv",
             "rmse_horizon_masked_zspace_csv": "rmse_by_horizon_masked_zspace.csv",
             "mae_horizon_masked_zspace_csv": "mae_by_horizon_masked_zspace.csv",
+            "long_horizon_plot": "plots/long_horizon_fit_summary.png",
             "resolved_eval_yaml": "resolved_eval.yaml",
         },
         "cfg": to_snapshot_value(dict(cfg_snapshot), base_dir=path_root),
@@ -1030,6 +1129,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         y_true_z_np=y_true_z_np,
         logvar_z_np=logvar_z_np,
         save_samples=int(cfg_eval.save_samples),
+        late_horizon_fraction=float(cfg_eval.long_horizon_fraction),
     )
 
 
@@ -1089,6 +1189,7 @@ def main() -> int:
             "y_scaler": cfg_eval.y_scaler_path,
             "y0_source": cfg_eval.y0_source,
             "mode": cfg_eval.mode,
+            "long_horizon_fraction": cfg_eval.long_horizon_fraction,
             "predictor": {
                 "type": "neural",
                 "kind": "s1_predictor",

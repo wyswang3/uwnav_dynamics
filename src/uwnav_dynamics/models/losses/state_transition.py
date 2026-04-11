@@ -80,6 +80,24 @@ def build_horizon_weight_vector(
     return weights / torch.clamp(weights.mean(), min=torch.finfo(weights.dtype).eps)
 
 
+def resolve_late_horizon_start(
+    horizon: int,
+    *,
+    late_horizon_fraction: float,
+) -> int:
+    """把 late-horizon 比例转换为稳定的起始 step 索引。"""
+    horizon_i = int(horizon)
+    if horizon_i <= 0:
+        raise ValueError(f"horizon must be > 0, got {horizon}")
+    fraction = float(late_horizon_fraction)
+    if fraction <= 0.0 or fraction > 1.0:
+        raise ValueError(
+            f"late_horizon_fraction must be in (0, 1], got {late_horizon_fraction}"
+        )
+    span = max(1, int(round(horizon_i * fraction)))
+    return max(0, horizon_i - span)
+
+
 def build_delta_targets(y0: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
     """由未来状态序列反推真实状态转移增量。"""
     if y0.ndim != 2:

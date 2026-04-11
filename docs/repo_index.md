@@ -17,7 +17,8 @@
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
 | `src/uwnav_dynamics/cli/train.py` | 训练 CLI 包装器，解析命令行并转发到 `uwnav_dynamics.train.run_train`。 | 输入：`--yaml` 与可选覆盖参数（device/epochs/batch_size/data_dir）；输出：触发训练进程、终端打印预期 run 目录。 |
-| `src/uwnav_dynamics/train/run_train.py` | 训练主入口：加载 YAML 配置、构建数据加载器/模型/损失并调用 `fit`。 | 输入：train YAML、`features.npz/labels.npz`；输出：`best.pth`、`last.pth`、`train_summary.yaml`、`train_history.csv`。 |
+| `src/uwnav_dynamics/train/run_train.py` | 训练主入口：加载 YAML 配置、构建数据加载器/模型/损失并调用 `fit`。 | 输入：train YAML、`features.npz/labels.npz`；输出：`best.pth`、`last.pth`、`train_summary.yaml`、`train_history.csv`、`train_plots/*`。 |
+| `src/uwnav_dynamics/viz/train/plot_training_history.py` | 训练历史绘图模块：读取 `train_history.csv` 并导出训练曲线与 dashboard。 | 输入：`train_history.csv`、可选 `train_summary.yaml`；输出：`train_plots/training_dashboard.png`、`training_loss_curve.png` 等。 |
 | `src/uwnav_dynamics/cli/pipeline.py` | 一键流水线入口，串联“训练 -> 选 ckpt -> 评估（可选画图）”。 | 输入：train YAML 与训练/评估参数；输出：训练 ckpt + 评估产物目录（含 metrics/plots）。 |
 
 ## 2) 评估入口脚本
@@ -105,6 +106,7 @@
 | `src/uwnav_dynamics/supervision_mask.py` | supervision mask helper。 | 输入：`dvl_mask` 与 semantic layout；输出：`target_mask`。 |
 | `src/uwnav_dynamics/models/utils/rollout.py` | rollout 纯数值辅助函数集合。 | 输入：`dY` 与初值；输出：未来状态序列。 |
 | `src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py` | 画 RMSE/MAE 随预测步长变化曲线。 | 输入：评估目录；输出：dense 图与可选 `*_masked.png/pdf`。 |
+| `src/uwnav_dynamics/viz/eval/plot_long_horizon_summary.py` | 画长期 rollout 拟合摘要图。 | 输入：`metrics.yaml["long_horizon_fit"]`；输出：`long_horizon_fit_summary.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_control_readiness.py` | 画离线控制前诊断 summary / compare 图。 | 输入：`metrics.yaml["control_readiness"]`；输出：`control_readiness_summary*.png/pdf` 或 `control_readiness_compare*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_rollout_samples.py` | 画 rollout 样例时域对比图，并可标出 masked-out 目标位置。 | 输入：`pred_samples.npz` 与可选 `pred_context.npz["target_mask"]`；输出：`rollout_sample_*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_model_compare.py` | 画多模型 horizon 比较图。 | 输入：多个评估目录；输出：dense compare 图与可选 `*_masked.png/pdf`。 |

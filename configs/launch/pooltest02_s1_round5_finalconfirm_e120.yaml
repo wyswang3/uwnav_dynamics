@@ -14,7 +14,7 @@ launcher:
   eval_split: test
   eval_device: cuda
   eval_batch_size: 1024
-  plots: false
+  plots: true
   plot_fmt: png
   dt: 0.01
   x_axis: sec
@@ -33,8 +33,24 @@ common_overrides:
     batch_size: 512
     num_workers: 4
     pin_memory: true
+  loss:
+    type: transition_balance
+    state_mse_weight: 0.2
+    state_huber_weight: 0.9
+    state_huber_delta: 1.0
+    state_final_weight: 0.7
+    late_horizon_weight: 0.3
+    late_horizon_fraction: 0.4
+    delta_huber_weight: 0.45
+    delta_huber_delta: 1.0
+    logvar_reg_weight: 0.02
+    tail_weight_power: 1.2
+    acc_weight: 2.5
+    gyro_weight: 1.6
+    vel_weight: 1.8
   train:
     epochs: 120
+    metric: val_transition_score
 
 runs:
   - name: u1_seed6

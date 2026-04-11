@@ -239,9 +239,17 @@
 
 命名必须稳定，优先使用以下约定：
 
+- training：
+  - `training_dashboard.png`
+  - `training_loss_curve.png`
+  - `validation_monitor_curve.png`
+  - `validation_error_curve.png`
+  - `learning_rate_curve.png`
 - horizon 单模型：
   - `rmse_horizon_groups.png`
   - `mae_horizon_groups.png`
+- long-horizon summary：
+  - `long_horizon_fit_summary.png`
 - horizon 多模型比较：
   - `rmse_horizon_compare.png`
   - `mae_horizon_compare.png`
@@ -268,6 +276,7 @@
 当前评估主流程稳定产物定义见 `docs/evaluation_protocol.md`：
 
 - `metrics.yaml`
+- `metrics.yaml["long_horizon_fit"]`
 - `rmse_by_horizon.csv`
 - `mae_by_horizon.csv`
 - `pred_samples.npz`

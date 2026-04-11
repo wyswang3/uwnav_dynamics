@@ -23,8 +23,10 @@
 - 兼容历史字段时要注意：
   - `best_val` 仍保留为 legacy 字段
   - 当 `train.metric != val_loss` 时，`best_val` 表示“最佳 monitor 值”，不是“最小 val_loss”
-  - 训练期新增的 `val_rmse_global_zspace / val_mae_global_zspace` 只表示归一化训练空间中的通用误差基线，
+- 训练期新增的 `val_rmse_global_zspace / val_mae_global_zspace` 只表示归一化训练空间中的通用误差基线，
     不应与评估阶段物理量纲下的 `rmse_global / mae_global` 混用
+- 自 2026-04-11 起，训练主流程还应自动导出 `train_plots/*`，
+  至少包含 loss、monitor、validation error、learning-rate 与 dashboard 图
 
 ## 2. 数据 split 规则
 
@@ -88,6 +90,8 @@ PR5 第一阶段后，若启用 mask-aware 评估，同一评估目录还应并�
 - `pred_context.npz` 用于给 viz 层补充 `target_mask / sample_index / component metadata`。
 - `metrics.yaml["control_readiness"]` 用于记录控制前离线筛查诊断，
   但不应被误解为闭环可用性的最终证明。
+- `metrics.yaml["long_horizon_fit"]` 用于记录长期 rollout 拟合能力摘要，
+  作为长期数据拟合审计与论文表图复用入口。
 
 这些文件都应由 `src/uwnav_dynamics/eval/evaluate.py` 直接负责生成。
 
@@ -268,6 +272,46 @@ control_readiness:
 - 它不能替代 controller-in-the-loop 或闭环仿真验证
 - 是否进入后续控制实验，仍需结合任务目标、控制频率与闭环稳定性判断
 
+## 4.5 long_horizon_fit 长期拟合摘要
+
+为避免只盯住一个全局 `RMSE/MAE` 标量，
+当前 `metrics.yaml` 还应额外记录 `long_horizon_fit`，
+用于固化长期 rollout 的误差面积、尾段均值与增长斜率。
+
+推荐最小结构如下：
+
+```yaml
+long_horizon_fit:
+  schema_version: long_horizon_fit_v1
+  intended_use: offline_long_horizon_rollout_audit
+  closed_loop_proof: false
+  physical:
+    dense:
+      late_horizon_fraction: 0.4
+      late_horizon_start_step: 7
+      rmse_auc_global: 0.0
+      mae_auc_global: 0.0
+      late_horizon_rmse_global_mean: 0.0
+      late_horizon_mae_global_mean: 0.0
+      rmse_step_slope: 0.0
+      mae_step_slope: 0.0
+      final_step_rmse_global: 0.0
+      final_step_mae_global: 0.0
+    masked:
+      ...
+```
+
+这里的使用边界必须写清楚：
+
+- `rmse_auc_global / mae_auc_global`
+  - 用于表达整个 horizon 上的平均误差面积
+- `late_horizon_*_mean`
+  - 用于表达预测尾段而不是开头几步的平均误差
+- `*_step_slope`
+  - 用于表达误差是否随 horizon 持续上升
+- `long_horizon_fit`
+  - 属于长期离线拟合审计，不是闭环最终证明
+
 ## 4.2 legacy artifact fallback
 
 对于 PR4 之前生成、缺少 `layout.semantic` 的旧评估产物，
@@ -311,6 +355,12 @@ viz 层采用统一 fallback 规则：
 
 ```text
 out/ckpts/pooltest02_s1_lstm/B0/
+├── train_plots/
+│   ├── training_dashboard.png
+│   ├── training_loss_curve.png
+│   ├── validation_monitor_curve.png
+│   ├── validation_error_curve.png
+│   └── learning_rate_curve.png
 └── eval_test/
     ├── metrics.yaml
     ├── rmse_by_horizon.csv
@@ -322,6 +372,7 @@ out/ckpts/pooltest02_s1_lstm/B0/
     └── plots/
         ├── rmse_horizon_groups.png
         ├── mae_horizon_groups.png
+        ├── long_horizon_fit_summary.png
         ├── control_readiness_summary.png
         ├── rollout_sample_000.png
         ├── pred_vs_observed_component_000.png

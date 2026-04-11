@@ -13,7 +13,7 @@ launcher:
   eval_split: test
   eval_device: cuda
   eval_batch_size: 1024
-  plots: false
+  plots: true
   plot_fmt: png
   dt: 0.01
   x_axis: sec
