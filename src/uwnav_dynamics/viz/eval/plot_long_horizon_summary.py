@@ -10,6 +10,7 @@
 2. 展示 late-horizon 区间的 RMSE / MAE 均值。
 3. 展示随 horizon 增长的误差斜率。
 4. 展示 final-step 误差，帮助与全局均值区分。
+5. 支持多评估目录长期拟合 compare 图，比较不同方案的长时 rollout 质量。
 
 数据流：
 eval_dir/metrics.yaml
@@ -25,6 +26,7 @@ plots/long_horizon_fit_summary.png|pdf
 - numpy
 - yaml
 - uwnav_dynamics.viz.style.sci_style
+- uwnav_dynamics.viz.eval.plot_horizon_metrics
 
 备注：
 - 本图只消费评估阶段已写出的摘要字段，不重新回放模型或重算数值评估。
@@ -34,14 +36,30 @@ plots/long_horizon_fit_summary.png|pdf
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-from uwnav_dynamics.viz.style.sci_style import apply_axes_style, get_figure_size, save_figure, setup_mpl
+from uwnav_dynamics.viz.eval.plot_horizon_metrics import _load_csv_hd, _metric_csv_name
+from uwnav_dynamics.viz.style.sci_style import (
+    apply_axes_style,
+    get_figure_size,
+    get_model_role_styles,
+    infer_model_role,
+    normalize_model_label,
+    save_figure,
+    setup_mpl,
+)
+
+
+@dataclass(frozen=True)
+class LongHorizonCompareCfg:
+    """长期拟合 compare 图配置。"""
+    fmt: str = "png"
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
