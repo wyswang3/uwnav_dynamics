@@ -154,18 +154,19 @@ raw IMU
 
 - 训练单个 run
 - 按统一指标生成评估产物
-- 在 8 卡服务器上并行运行实验矩阵
+- 在多卡服务器上并行运行实验矩阵
 
-当前推荐 8 卡策略不是对小模型强上 DDP，而是：
+当前推荐 7 卡策略不是对小模型强上 DDP，而是：
 
 - 每张卡独占一个单卡实验
-- 同时跑满 8 个候选变体
+- 使用第 1 到第 7 张 GPU 卡
+- 候选数大于 7 时由 launcher 自动排队
 - 用统一评估口径完成横向比较
 
 对应矩阵入口：
 
-- `configs/launch/pooltest02_s1_kf_quality_8gpu_v1.yaml`
-- `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml`
+- `configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml`
+- `configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml`
 
 ### 第 7 层：状态求解器与 Replay 验证层
 

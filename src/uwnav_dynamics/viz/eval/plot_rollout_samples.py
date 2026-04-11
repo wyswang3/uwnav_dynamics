@@ -2,7 +2,7 @@
 模块名称：rollout 样例绘图
 
 模块职责：
-从评估阶段落盘的 `pred_samples.npz` 与可选 `pred_context.npz` 中读取模型预测、
+从评估阶段落盘的 `pred_samples.npz` 与可选 `pred_context.npz` 中读取代表性模型预测、
 监督目标与监督有效性，
 生成论文友好的 rollout 样例图，用于快速检查时域拟合质量。
 
@@ -30,8 +30,9 @@ plots/rollout_sample_000.png|pdf
 - 当前图中的 “observed/true” 来自评估监督目标 `y_true`，不等同于未经处理的原始传感器输出。
 - `logvar` 当前只保留供未来不确定度带扩展，不改变本次最小 patch 的默认显示。
 - 若旧 artifact 缺少 layout metadata，则统一 warning 并回退到 canonical `acc/gyro/vel` 分组。
-- `pred_samples.npz` 主三键 schema 保持不变；sample-level masked visualization 通过独立的
-  `pred_context.npz["target_mask"]` 扩展，不反向修改数值评估主 artifact。
+- `pred_samples.npz` 主三键 schema 保持不变；当前默认保存“代表性样例”而非“前 N 个样例”。
+- sample-level masked visualization 与代表性标签通过独立的 `pred_context.npz` 扩展，
+  不反向修改数值评估主 artifact。
 """
 
 from __future__ import annotations
@@ -107,6 +108,19 @@ def _load_target_mask(pred_npz: Path, *, shape: tuple[int, int, int]) -> np.ndar
     if target_mask.shape != shape:
         raise ValueError(f"pred_context target_mask shape mismatch: {target_mask.shape} vs {shape}")
     return target_mask
+
+
+def _load_sample_tags(pred_npz: Path, *, n_samples: int) -> list[str] | None:
+    context_npz = pred_npz.parent / "pred_context.npz"
+    if not context_npz.exists():
+        return None
+    with np.load(context_npz, allow_pickle=False) as z:
+        if "sample_tag" not in z:
+            return None
+        tags = [str(v) for v in np.asarray(z["sample_tag"]).tolist()]
+    if len(tags) != int(n_samples):
+        raise ValueError(f"pred_context sample_tag length mismatch: {len(tags)} vs {n_samples}")
+    return tags
 
 
 def _group_specs(semantic_layout: SemanticOutputLayout) -> tuple[tuple[str, tuple[int, ...], str], ...]:
@@ -216,6 +230,7 @@ def plot_rollout_samples_from_npz(
     y_hat, y_true, _ = _load_pred_npz(pred_npz)
     semantic_layout = load_semantic_layout_from_metrics_path(pred_npz.parent / "metrics.yaml", dout=y_hat.shape[-1])
     target_mask_all = _load_target_mask(pred_npz, shape=y_hat.shape)
+    sample_tags = _load_sample_tags(pred_npz, n_samples=int(y_hat.shape[0]))
     N = y_hat.shape[0]
     nplot = min(int(n), int(N))
 
@@ -227,7 +242,10 @@ def plot_rollout_samples_from_npz(
             semantic_layout=semantic_layout,
             target_mask=None if target_mask_all is None else target_mask_all[i],
         )
-        save_figure(fig, out_dir / f"rollout_sample_{i:03d}", fmt=fmt)
+        suffix = ""
+        if sample_tags is not None:
+            suffix = f"_{sample_tags[i]}"
+        save_figure(fig, out_dir / f"rollout_sample_{i:03d}{suffix}", fmt=fmt)
         plt.close(fig)
 
 

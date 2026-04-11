@@ -2,8 +2,8 @@
 模块名称：服务器全流程编排入口
 
 模块职责：
-面向 8 卡服务器上的正式实验，
-把“融合预处理 -> 数据集构建 -> 单卡 smoke -> 8 卡矩阵训练 -> replay 方案评估”
+面向多 GPU 服务器上的正式实验，
+把“融合预处理 -> 数据集构建 -> 单卡 smoke -> 多卡矩阵训练 -> replay 方案评估”
 收口为一次配置驱动的全流程编排。
 
 主要功能：
@@ -11,6 +11,8 @@
 2. 顺序调度 fusion、dataset、smoke、train_matrix 与 replay_matrix 五类阶段。
 3. 从 train_matrix 的 `summary.csv` 自动生成 replay matrix 配置，避免人工手改候选列表。
 4. 统一写出 `manifest.yaml`、`phase_status.csv` 与生成的 replay matrix yaml，便于复现与交接。
+5. 在 replay 结束后合并 `summary.csv + ranking.csv`，输出 `final_selection.csv`
+   与 `paper_artifact_manifest.yaml` 作为最终选模与论文图表入口。
 
 数据流：
 server pipeline yaml
@@ -31,6 +33,7 @@ server work_dir/manifest.yaml + phase_status.csv + final result dirs
 备注：
 - 本模块只做 orchestration，不改写 train/eval/replay 的业务逻辑。
 - replay 阶段默认从 train_matrix 的 `summary.csv` 中选取 `status=ok` 的候选。
+- 当前常见用法是 7 GPU 或 8 GPU 的单卡并发矩阵；具体卡数由下游 matrix yaml 决定。
 """
 
 from __future__ import annotations
@@ -46,6 +49,11 @@ from typing import Any, Mapping, Sequence
 
 import yaml
 
+from uwnav_dynamics.experiment.final_selection import (
+    build_final_selection_rows,
+    write_final_selection_csv,
+    write_paper_artifact_manifest,
+)
 from uwnav_dynamics.experiment.layout import load_yaml_dict
 from uwnav_dynamics.experiment.paths import relative_path_str, to_snapshot_value
 
@@ -474,7 +482,41 @@ def run_server_pipeline(cfg: ServerPipelineConfig, *, repo_root: Path) -> Path:
             _write_phase_status(rows=phase_rows, path=work_dir / "phase_status.csv")
             return work_dir / "phase_status.csv"
 
+    final_selection_rows: list[dict[str, Any]] = []
+    train_summary_paths: list[Path] = []
+    replay_ranking_paths: list[Path] = []
+    for item in cfg.replay_jobs:
+        train_summary_csv = _resolve_repo_path(repo_root, item.source_summary_csv)
+        replay_ranking_csv = _resolve_repo_path(repo_root, item.work_dir) / "ranking.csv"
+        if not train_summary_csv.exists() or not replay_ranking_csv.exists():
+            continue
+        train_summary_paths.append(train_summary_csv)
+        replay_ranking_paths.append(replay_ranking_csv)
+        final_selection_rows.extend(
+            build_final_selection_rows(
+                selection_scope=item.name,
+                train_summary_csv=train_summary_csv,
+                replay_ranking_csv=replay_ranking_csv,
+                base_dir=work_dir,
+            )
+        )
+
     _write_phase_status(rows=phase_rows, path=work_dir / "phase_status.csv")
+
+    if final_selection_rows:
+        final_selection_csv = work_dir / "final_selection.csv"
+        unique_train_summaries = list(dict.fromkeys(train_summary_paths))
+        unique_replay_rankings = list(dict.fromkeys(replay_ranking_paths))
+        write_final_selection_csv(rows=final_selection_rows, path=final_selection_csv)
+        write_paper_artifact_manifest(
+            path=work_dir / "paper_artifact_manifest.yaml",
+            work_dir=work_dir,
+            phase_status_csv=work_dir / "phase_status.csv",
+            final_selection_csv=final_selection_csv,
+            train_matrix_summary_paths=unique_train_summaries,
+            replay_ranking_paths=unique_replay_rankings,
+            final_selection_rows=final_selection_rows,
+        )
     return work_dir / "phase_status.csv"
 
 

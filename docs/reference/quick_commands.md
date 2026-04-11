@@ -234,52 +234,55 @@ tail_error.abs_p99_global
 bias.worst_abs_bias
 ```
 
-## 9. 8 卡服务器重训
+## 9. 7 卡服务器重训
 
 说明：
 
-- 当前推荐策略不是单模型 DDP，而是每张卡独占一个单卡实验并行跑满 8 个变体。
+- 当前推荐策略不是单模型 DDP，而是只使用第 1 到第 7 张 GPU 卡做单卡实验并发。
+- 若服务器按 0-based CUDA 编号，则对应 `launcher.gpus: [0,1,2,3,4,5,6]`。
 - `pred_len=10` 与 `pred_len=1` 分开跑，避免混入同一个 compare 链。
 
 ### 9.0 一键服务器全流程
 
-如果需要在 8 卡服务器上从预处理一直跑到最终方案评估，直接执行：
+如果需要在 7 卡服务器资源约束下从预处理一直跑到最终方案评估，直接执行：
 
 ```bash
 PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
-  -c configs/launch/pooltest02_server_full_pipeline_v1.yaml
+  -c configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml
 ```
 
 总控产物：
 
 ```text
-out/server_pipeline/pooltest02_kf_full_v1/manifest.yaml
-out/server_pipeline/pooltest02_kf_full_v1/phase_status.csv
-out/server_pipeline/pooltest02_kf_full_v1/generated_replay_matrix/
-out/server_pipeline/pooltest02_kf_full_v1/logs/
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/manifest.yaml
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/phase_status.csv
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/generated_replay_matrix/
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/
 ```
 
 最终重点查看：
 
 ```text
-out/train_matrix/pooltest02_s1_kf_quality_8gpu_v1/summary.csv
-out/train_matrix/pooltest02_s1_kf_quality_step_8gpu_v1/summary.csv
-out/replay_matrix/pooltest02_s1_kf_quality_8gpu_v1/ranking.csv
-out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v1/ranking.csv
+out/train_matrix/pooltest02_s1_kf_quality_7gpu_v2/summary.csv
+out/train_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/summary.csv
+out/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2/ranking.csv
+out/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/ranking.csv
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/final_selection.csv
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/paper_artifact_manifest.yaml
 ```
 
-### 9.1 多步主线 8 卡矩阵
+### 9.1 多步主线 7 卡矩阵
 
 ```bash
 PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
 ```
 
-### 9.2 单步实验线 8 卡矩阵
+### 9.2 单步实验线 7 卡矩阵
 
 ```bash
 PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
 ```
 
 矩阵后重点检查：
@@ -289,6 +292,10 @@ out/train_matrix/<matrix_variant>/summary.csv
 out/train_matrix/<matrix_variant>/logs/
 run.out_dir/run.variant/eval_test/metrics.yaml
 ```
+
+补充：
+
+- `eval_test/pred_sample_manifest.csv` 与 `replay_test/pred_sample_manifest.csv` 现在保存的是代表性样例，不再是“前 N 个”。
 
 ## 10. 最短推荐顺序
 
@@ -300,8 +307,8 @@ run.out_dir/run.variant/eval_test/metrics.yaml
 4. 构建 `quality_v3` 与 `quality_step_v1` 数据集
 5. 本地只做单卡 smoke
 6. 单次评估确认 `metrics.yaml` 与图包正常
-7. 服务器先跑 `pooltest02_s1_kf_quality_8gpu_v1`
-8. 再跑 `pooltest02_s1_kf_quality_step_8gpu_v1`
+7. 服务器先跑 `pooltest02_s1_kf_quality_7gpu_v2`
+8. 再跑 `pooltest02_s1_kf_quality_step_7gpu_v2`
 9. 对各批次 top2 做正式评估与图包
 
 如果要从原始传感器开始重建，则把第 `3` 节先跑完，再进入上述顺序。

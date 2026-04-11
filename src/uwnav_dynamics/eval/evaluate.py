@@ -9,8 +9,9 @@
 主要功能：
 1. 复用训练阶段的 split / scaler artifact，执行确定性的离线评估。
 2. 计算全局、group 与 horizon 级 RMSE / MAE 指标，并并行写出 dense / masked artifact。
-3. 以物理量纲写出主 `pred_samples.npz`，同时保留 `pred_samples_zspace.npz` 供调参与排障。
-4. 额外导出 `pred_context.npz` 与 `component_metrics*.csv`，供 component/residual 可视化复用。
+3. 以物理量纲写出代表性 `pred_samples.npz`，同时保留 `pred_samples_zspace.npz` 供调参与排障。
+4. 额外导出 `pred_context.npz`、`pred_sample_manifest.csv` 与 `component_metrics*.csv`，
+   供 component/residual 可视化与论文图表复用。
 5. 在 `metrics.yaml` 中写出控制前诊断摘要，用于筛查长时漂移、尾部误差与系统偏差。
 6. 对经过 scaler 后仍残留在输入 `X` 中的非有限值做最小清洗，与训练消费端保持一致。
 
@@ -26,7 +27,7 @@ model rollout(z-space) + inverse_transform(physical) + target_mask-aware metric 
 metrics.yaml(metric_space + layout + supervision + control_readiness) +
 rmse/mae_by_horizon*.csv +
 component_metrics*.csv +
-pred_samples.npz + pred_samples_zspace.npz + pred_context.npz
+pred_samples.npz + pred_samples_zspace.npz + pred_context.npz + pred_sample_manifest.csv
     ↓
 cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 
@@ -40,6 +41,7 @@ cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 - 本模块只负责数值评估与 artifact 落盘。
 - 正式用户入口为 `cli/eval.py` 与 `cli/pipeline.py`；`evaluate.py` 不直接编排绘图。
 - 主指标与主样例产物使用物理量纲；z-space 指标只作为并行辅助信息保留。
+- 当前样例产物默认保存代表性窗口，而不是简单截取前 N 个样本。
 - `control_readiness` 只提供“是否值得进入后续控制验证”的离线筛查信息，
   不能替代真正的闭环控制验证。
 - runtime mask 的唯一执行真源是评估 batch 中的 `target_mask`。
@@ -64,6 +66,7 @@ import yaml
 from uwnav_dynamics.dataset.normalize import inverse_transform, load_scaler, transform
 from uwnav_dynamics.dataset.split import load_split_indices
 from uwnav_dynamics.eval.config import EvalConfig, build_eval_config
+from uwnav_dynamics.experiment.representative import RepresentativeRule, select_representative_rows
 from uwnav_dynamics.experiment.paths import relative_path_str, to_snapshot_value
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor, S1PredictorConfig
 from uwnav_dynamics.models.utils.execution_layout import (
@@ -309,6 +312,34 @@ def _write_component_metric_csv(path: Path, rows: Sequence[dict[str, Any]]) -> N
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_sample_manifest_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    header = (
+        "sample_slot,dataset_sample_index,representative_tag,representative_metric,representative_mode,"
+        "representative_value,valid_value_count,rmse_global,mae_global,final_step_rmse,final_step_mae,tail_abs_p95"
+    )
+    lines = [header]
+    for row in rows:
+        lines.append(
+            ",".join(
+                [
+                    str(int(row["sample_slot"])),
+                    str(int(row["dataset_sample_index"])),
+                    str(row["representative_tag"]),
+                    str(row["representative_metric"]),
+                    str(row["representative_mode"]),
+                    f"{float(row['representative_value']):.8f}",
+                    str(int(row["valid_value_count"])),
+                    f"{float(row['rmse_global']):.8f}",
+                    f"{float(row['mae_global']):.8f}",
+                    f"{float(row['final_step_rmse']):.8f}",
+                    f"{float(row['final_step_mae']):.8f}",
+                    f"{float(row['tail_abs_p95']):.8f}",
+                ]
+            )
+        )
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _global_rmse_mae_np(
     y_hat: np.ndarray,
     y_true: np.ndarray,
@@ -327,6 +358,60 @@ def _global_rmse_mae_np(
     if vals.size == 0:
         return float("nan"), float("nan")
     return float(np.sqrt(np.mean(vals * vals))), float(np.mean(np.abs(vals)))
+
+
+def _build_sample_metric_rows(
+    *,
+    y_hat: np.ndarray,
+    y_true: np.ndarray,
+    target_mask: np.ndarray,
+    dataset_sample_index: np.ndarray,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    n_samples = int(y_hat.shape[0])
+    for sample_slot in range(n_samples):
+        y_hat_i = np.asarray(y_hat[sample_slot:sample_slot + 1], dtype=np.float64)
+        y_true_i = np.asarray(y_true[sample_slot:sample_slot + 1], dtype=np.float64)
+        mask_i = np.asarray(target_mask[sample_slot:sample_slot + 1], dtype=bool)
+        rmse_i, mae_i = _global_rmse_mae_np(y_hat_i, y_true_i, target_mask=mask_i)
+        final_rmse_i, final_mae_i = _global_rmse_mae_np(
+            y_hat_i[:, -1:, :],
+            y_true_i[:, -1:, :],
+            target_mask=mask_i[:, -1:, :],
+        )
+        tail_i = _abs_error_percentiles(y_hat_i, y_true_i, target_mask=mask_i, percentiles=(95.0,))
+        rows.append(
+            {
+                "sample_slot": int(sample_slot),
+                "dataset_sample_index": int(dataset_sample_index[sample_slot]),
+                "valid_value_count": int(np.count_nonzero(mask_i)),
+                "rmse_global": float(rmse_i),
+                "mae_global": float(mae_i),
+                "final_step_rmse": float(final_rmse_i),
+                "final_step_mae": float(final_mae_i),
+                "tail_abs_p95": float(tail_i["p95"]),
+            }
+        )
+    return rows
+
+
+def _select_representative_sample_rows(
+    *,
+    rows: Sequence[dict[str, Any]],
+    max_items: int,
+) -> list[dict[str, Any]]:
+    return select_representative_rows(
+        rows,
+        id_key="sample_slot",
+        max_items=max_items,
+        rules=(
+            RepresentativeRule(tag="best_rmse", metric="rmse_global", mode="min"),
+            RepresentativeRule(tag="median_rmse", metric="rmse_global", mode="median"),
+            RepresentativeRule(tag="worst_rmse", metric="rmse_global", mode="max"),
+            RepresentativeRule(tag="worst_final_step", metric="final_step_rmse", mode="max"),
+            RepresentativeRule(tag="worst_tail_p95", metric="tail_abs_p95", mode="max"),
+        ),
+    )
 
 
 def _abs_error_percentiles(
@@ -671,23 +756,35 @@ def summarize_eval_predictions(
         target_mask=target_mask_np_eval,
     )
 
-    n_samp = int(min(save_samples, y_hat_z_np.shape[0]))
+    sample_metric_rows = _build_sample_metric_rows(
+        y_hat=y_hat_phys_np,
+        y_true=y_true_phys_np,
+        target_mask=target_mask_np_eval,
+        dataset_sample_index=np.asarray(split_artifacts.sample_index, dtype=np.int64),
+    )
+    representative_rows = _select_representative_sample_rows(
+        rows=sample_metric_rows,
+        max_items=int(min(save_samples, y_hat_z_np.shape[0])),
+    )
+    selected_slots = np.asarray([int(row["sample_slot"]) for row in representative_rows], dtype=np.int64)
+    n_samp = int(selected_slots.shape[0])
     samp = {
-        "y_hat": y_hat_phys_np[:n_samp],
-        "y_true": y_true_phys_np[:n_samp],
-        "logvar": logvar_phys_np[:n_samp],
+        "y_hat": y_hat_phys_np[selected_slots],
+        "y_true": y_true_phys_np[selected_slots],
+        "logvar": logvar_phys_np[selected_slots],
     }
     samp_z = {
-        "y_hat": y_hat_z_np[:n_samp],
-        "y_true": y_true_z_np[:n_samp],
-        "logvar": logvar_z_np[:n_samp],
+        "y_hat": y_hat_z_np[selected_slots],
+        "y_true": y_true_z_np[selected_slots],
+        "logvar": logvar_z_np[selected_slots],
     }
     pred_context = {
-        "target_mask": target_mask_np_eval[:n_samp].astype(bool, copy=False),
-        "sample_index": np.asarray(split_artifacts.sample_index[:n_samp], dtype=np.int64),
+        "target_mask": target_mask_np_eval[selected_slots].astype(bool, copy=False),
+        "sample_index": np.asarray(split_artifacts.sample_index[selected_slots], dtype=np.int64),
         "component_labels": np.asarray(component_labels, dtype=str),
         "component_display_labels": np.asarray(component_display_labels, dtype=str),
         "component_units": np.asarray(component_units, dtype=str),
+        "sample_tag": np.asarray([str(row["representative_tag"]) for row in representative_rows], dtype=str),
     }
 
     return {
@@ -729,6 +826,7 @@ def summarize_eval_predictions(
         "samples": samp,
         "samples_zspace": samp_z,
         "pred_context": pred_context,
+        "sample_manifest_rows": representative_rows,
     }
 
 
@@ -811,6 +909,7 @@ def write_eval_outputs(
             "primary_samples": "pred_samples.npz",
             "auxiliary_samples_zspace": "pred_samples_zspace.npz",
             "sample_context": "pred_context.npz",
+            "sample_manifest_csv": "pred_sample_manifest.csv",
             "component_metrics_csv": "component_metrics.csv",
             "component_metrics_masked_csv": "component_metrics_masked.csv",
             "component_metrics_zspace_csv": "component_metrics_zspace.csv",
@@ -869,7 +968,9 @@ def write_eval_outputs(
         component_labels=res["pred_context"]["component_labels"],
         component_display_labels=res["pred_context"]["component_display_labels"],
         component_units=res["pred_context"]["component_units"],
+        sample_tag=res["pred_context"]["sample_tag"],
     )
+    _write_sample_manifest_csv(out_dir / "pred_sample_manifest.csv", res["sample_manifest_rows"])
 
 
 # =============================================================================

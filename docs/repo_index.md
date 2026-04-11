@@ -25,10 +25,12 @@
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
 | `src/uwnav_dynamics/cli/eval.py` | 正式评估 CLI 入口，自动选择 checkpoint，并按需编排“数值评估 -> viz 出图”。 | 输入：train YAML、可选 ckpt/split/device/plot 参数；输出：评估目录与可选 `plots/*`。 |
-| `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计 dense/masked 指标并写出控制前诊断摘要。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`（含 layout/supervision/control_readiness metadata）、`rmse_by_horizon.csv`、`mae_by_horizon.csv`、`rmse_by_horizon_masked.csv`、`mae_by_horizon_masked.csv`、`pred_samples.npz`。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计 dense/masked 指标并写出控制前诊断摘要。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`、`rmse/mae_by_horizon*.csv`、`component_metrics*.csv`、代表性 `pred_samples.npz` 与 `pred_sample_manifest.csv`。 |
 | `src/uwnav_dynamics/cli/transition_replay.py` | 状态求解器 replay CLI 入口，执行长序列 autoregressive 重放验证。 | 输入：train YAML + ckpt + split；输出：`replay_<split>/metrics.yaml`、`segment_metrics.csv`、`pred_samples.npz`。 |
 | `src/uwnav_dynamics/cli/transition_replay_matrix.py` | 多候选 replay 批量评估入口，统一写 `manifest.yaml / summary.csv / ranking.csv`。 | 输入：replay matrix YAML；输出：多方案 replay 汇总表、排行表和各候选独立 replay 目录。 |
-| `src/uwnav_dynamics/cli/server_pipeline.py` | 服务器全流程总控入口，串联 preprocess、smoke、8 卡矩阵训练与 replay 排名。 | 输入：server pipeline YAML；输出：`manifest.yaml`、`phase_status.csv`、阶段日志与最终结果目录。 |
+| `src/uwnav_dynamics/cli/server_pipeline.py` | 服务器全流程总控入口，串联 preprocess、smoke、多卡矩阵训练与 replay 排名。 | 输入：server pipeline YAML；输出：`manifest.yaml`、`phase_status.csv`、阶段日志与最终结果目录。 |
+| `src/uwnav_dynamics/experiment/final_selection.py` | 合并训练矩阵与 replay 排名，输出最终选模表与论文产物清单。 | 输入：`summary.csv + ranking.csv`；输出：`final_selection.csv`、`paper_artifact_manifest.yaml`。 |
+| `src/uwnav_dynamics/experiment/representative.py` | 代表性样例选择工具，供 eval 与 replay 统一挑选 best/median/worst 样例。 | 输入：样例级指标 rows；输出：带 `representative_*` 元信息的 rows。 |
 
 ## 3) 数据预处理入口（pipeline / align / build_dataset）
 
@@ -70,7 +72,7 @@
 | `configs/train/pooltest02_s1_lstm_v0.yaml` | 历史训练总配置（run/data/model/rollout/loss/optim/train）。 | 输入：被 `train/config.py` 读取；输出：驱动历史 baseline 路线。 |
 | `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml` | 当前 KF 主线训练配置，启用 grouped head、transition_balance 与 `val_transition_score`。 | 输入：被 `train/config.py` 读取；输出：驱动当前长期拟合训练主线。 |
 | `configs/launch/replay_matrix_example.yaml` | replay 批量评估示例配置，演示如何比较 step 与 horizon 两类候选。 | 输入：被 `cli.transition_replay_matrix` 读取；输出：驱动 `summary.csv / ranking.csv` 生成。 |
-| `configs/launch/pooltest02_server_full_pipeline_v1.yaml` | 8 卡服务器全流程示例配置，串联 fusion、dataset、smoke、train_matrix 与 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
+| `configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml` | 当前推荐的 7 GPU 服务器全流程配置，串联 fusion、dataset、smoke、train_matrix 与 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
 | `configs/dataset/pooltest02.yaml` | 原始数据集规格（传感器文件选择、pwm_timebase、valid_window）。 | 输入：被 `DatasetSpec.load` 读取；输出：解析后的传感器路径与 reader kwargs。 |
 | `configs/dataset/pooltest02_s1.yaml` | 数据集构建配置（base_table + sliding_window + output）。 | 输入：被 `build_dataset.py` 读取；输出：决定 `features/labels/meta` 生成方式。 |
 | `configs/dataset/pooltest02_s1_kf_ctx_v2.yaml` | KF 融合状态代理量数据集配置（29 维输入、9 维 KF target）。 | 输入：被 `build_dataset.py` 读取；输出：`data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2`。 |
@@ -97,7 +99,7 @@
 
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
-| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：dense/masked metrics、CSV、`pred_samples.npz` 与 layout/supervision/control_readiness metadata；对 KF dense target 数据集，masked 结果可能与 dense 高度接近。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：dense/masked metrics、CSV、代表性 `pred_samples.npz`、`pred_sample_manifest.csv` 与 layout/supervision/control_readiness metadata；对 KF dense target 数据集，masked 结果可能与 dense 高度接近。 |
 | `src/uwnav_dynamics/models/utils/execution_layout.py` | rollout 执行索引 helper。 | 输入：`cfg_model.y_in_idx` 与 `X`；输出：`y0`。 |
 | `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | rollout 输出语义 helper。 | 输入：`metrics.yaml` 或 `target_cols`；输出：分组解释与 fallback 结果。 |
 | `src/uwnav_dynamics/supervision_mask.py` | supervision mask helper。 | 输入：`dvl_mask` 与 semantic layout；输出：`target_mask`。 |

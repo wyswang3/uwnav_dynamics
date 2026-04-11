@@ -1,6 +1,6 @@
 # 项目交接指南
 
-更新时间：2026-04-10
+更新时间：2026-04-11
 
 ## 1. 当前接手时先知道什么
 
@@ -152,11 +152,20 @@ python -m uwnav_dynamics.cli.train \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
 ```
 
-5. 8 卡训练矩阵
+5. 7 卡训练矩阵
+
+说明：
+
+- 当前默认只占用第 1 到第 7 张 GPU 卡；
+- 若服务器按 0-based CUDA 编号，则对应 `gpus: [0,1,2,3,4,5,6]`；
+- 第 8 张物理卡对应 CUDA id `7`，当前留给其他任务。
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_ctx_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
+
+python -m uwnav_dynamics.cli.train_matrix \
+  -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
 ```
 
 ## 5. 当前最该盯的产物
@@ -214,7 +223,7 @@ run 级筛选：
 1. 用 Phase 1 修复后的代码重建融合基础表与数据集
 2. 先对比 v2、quality v3 与 quality step v1 的单卡 smoke
 3. 评估是否把一步状态转移分支转正为主线
-4. 之后再重开 8 卡矩阵与 top2 图包
+4. 之后再重开 7 卡矩阵与 top2 图包
 
 如果后续要继续扩展，应优先扩训练与评估链、求解器接口与最小 replay 验证，
 而不是重新打开旧阶段的大型验证壳层。

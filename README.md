@@ -118,11 +118,11 @@ Raw Logs
 - 共享状态维 `X/Y` scaler 已收口到单一统计量，避免 delta-cumsum rollout 语义失真。
 - `quality_v3` 质量上下文配置已经加入输入链。
 - `quality_step_v1` 单步状态转移实验分支已经建立。
-- 8 卡服务器矩阵已经拆成：
+- 当前服务器矩阵已经拆成：
   - `H=10` quality-context 主线矩阵
   - `H=1` single-step transition 矩阵
 
-因此，当前项目已经具备“重建数据集 -> 单卡 smoke -> 8 卡矩阵 -> 离线评估”的完整实验骨架。
+因此，当前项目已经具备“重建数据集 -> 单卡 smoke -> 7 卡矩阵 -> 离线评估”的完整实验骨架。
 
 ## 当前阶段边界
 
@@ -196,20 +196,26 @@ python -m uwnav_dynamics.cli.train \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
 ```
 
-4. 8 卡矩阵
+4. 7 卡矩阵
+
+说明：
+
+- 当前默认只使用第 1 到第 7 张 GPU 卡；
+- 若服务器按 0-based CUDA 编号暴露设备，则对应 `launcher.gpus: [0,1,2,3,4,5,6]`；
+- 第 8 张物理卡对应 CUDA id `7`，当前方案不占用。
 
 `H=10` quality-context 主线：
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
 ```
 
 `H=1` single-step 实验线：
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
 ```
 
 ## 评估口径
@@ -254,12 +260,13 @@ python -m uwnav_dynamics.cli.transition_replay_matrix \
   -c configs/launch/replay_matrix_example.yaml
 
 python -m uwnav_dynamics.cli.server_pipeline \
-  -c configs/launch/pooltest02_server_full_pipeline_v1.yaml
+  -c configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml
 ```
 
 详细升级路线见：
 
 - `docs/design/transition_solver_phase2_replay_upgrade.md`
+- `docs/design/transition_solver_full_pipeline_7gpu_v2.md`
 
 ## 文档入口
 
@@ -273,6 +280,8 @@ python -m uwnav_dynamics.cli.server_pipeline \
 - 建模路线：`docs/modeling_roadmap.md`
 - 设计说明：`docs/design/transition_solver_phase1_upgrade.md`
 - 状态求解器升级：`docs/design/transition_solver_phase2_replay_upgrade.md`
+- 当前 7 GPU 全流程：`docs/design/transition_solver_full_pipeline_7gpu_v2.md`
+- 最终选模与论文产物契约：`docs/design/final_selection_artifact_contract_v1.md`
 - 数学原理：`docs/math/main.tex`
 - 评估规范：`docs/evaluation_protocol.md`
 - 文件索引：`docs/repo_index.md`
@@ -282,7 +291,7 @@ python -m uwnav_dynamics.cli.server_pipeline \
 - 修改训练、预处理、评估或接口契约后，必须同步更新文档。
 - 新增代码文件必须包含中文模块说明。
 - 当前阶段优先做最小闭环验证，不扩大成完整系统重做。
-- 本地默认只做轻量测试；正式训练与评估以 8 卡服务器为主。
+- 本地默认只做轻量测试；正式训练与评估以当前 7 卡方案为主。
 
 推荐最小自检：
 

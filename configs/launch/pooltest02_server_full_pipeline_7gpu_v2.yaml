@@ -1,0 +1,46 @@
+launcher:
+  work_dir: out/server_pipeline/pooltest02_kf_full_7gpu_v2
+  fail_fast: false
+
+preprocess:
+  fusion_yamls:
+    - configs/fusion/pooltest02_kf_eskf_v2.yaml
+  dataset_yamls:
+    - configs/dataset/pooltest02_s1_kf_ctx_quality_v3.yaml
+    - configs/dataset/pooltest02_s1_kf_ctx_quality_step_v1.yaml
+
+smoke:
+  - name: quality_v3_smoke
+    yaml: configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml
+    device: cuda:0
+    epochs: 2
+    batch_size: 512
+
+  - name: quality_step_v1_smoke
+    yaml: configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+    device: cuda:0
+    epochs: 2
+    batch_size: 1024
+
+train_matrix:
+  - configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
+  - configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
+
+replay:
+  - name: quality_v3_replay
+    source_summary_csv: out/train_matrix/pooltest02_s1_kf_quality_7gpu_v2/summary.csv
+    work_dir: out/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2
+    split: test
+    device: cuda
+    min_steps: 50
+    save_samples: 8
+    include_statuses: [ok]
+
+  - name: quality_step_v1_replay
+    source_summary_csv: out/train_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/summary.csv
+    work_dir: out/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2
+    split: test
+    device: cuda
+    min_steps: 50
+    save_samples: 8
+    include_statuses: [ok]

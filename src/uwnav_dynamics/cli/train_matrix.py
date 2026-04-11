@@ -17,7 +17,7 @@ matrix yaml + base train yaml
     ↓
 deep merge / generated train yamls
     ↓
-GPU scheduler（每个变体独占一张卡）
+GPU scheduler（每个变体独占一张卡，按可用卡数排队）
     ↓
 train.run_train
     ↓
@@ -31,8 +31,8 @@ summary.csv + horizon/control_readiness compare plots
 - uwnav_dynamics.viz.eval.plot_model_compare
 
 备注：
-- 当前实现是“8 卡并发实验矩阵”，不是单模型 DDP。
-- 这样做的原因是当前 baseline 只有约 1M 参数，更适合并发比较多种思路。
+- 当前实现是“多卡并发实验矩阵”，不是单模型 DDP。
+- 当前 baseline 只有约 1M 参数，更适合并发比较多种思路；7 卡或 8 卡都由 launcher.gpus 决定。
 - 生成的 train yaml 会作为本次实验的显式审计产物保留在 `configs/train/generated/<work_dir_name>/`，
   避免在 `out/` 等运行目录中混入新的训练配置文件。
 """

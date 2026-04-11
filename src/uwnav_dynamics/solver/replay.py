@@ -19,7 +19,8 @@ replay segments on raw timeline
     ↓
 transition solver autoregressive rollout
     ↓
-replay metrics / segment_metrics.csv / step_metrics.csv / pred_samples.npz
+    replay metrics / segment_metrics.csv / step_metrics.csv /
+    representative pred_samples.npz / pred_context.npz / pred_sample_manifest.csv
 
 依赖模块：
 - numpy
@@ -36,6 +37,7 @@ replay metrics / segment_metrics.csv / step_metrics.csv / pred_samples.npz
   统一映射到 `base_csv` 中同一组观测列上再比较。
 - 这一步用于验证“经验型状态求解器”的长序列可行性，
   不是闭环控制最终证明。
+- 当前样例产物默认保存代表性 segment，而不是简单截取前 N 个片段。
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ import pandas as pd
 import yaml
 
 from uwnav_dynamics.dataset.split import load_split_indices
+from uwnav_dynamics.experiment.representative import RepresentativeRule, select_representative_rows
 from uwnav_dynamics.experiment.paths import relative_path_str, to_snapshot_value
 from uwnav_dynamics.solver.transition_solver import TrainedTransitionSolver
 
@@ -120,6 +123,8 @@ class ReplayResult:
     sample_pred_y_hat: np.ndarray
     sample_pred_y_true: np.ndarray
     sample_pred_mask: np.ndarray
+    sample_context: dict[str, np.ndarray]
+    sample_manifest_rows: list[dict[str, Any]]
 
 
 def load_replay_dataset(data_dir: str | Path) -> ReplayDataset:
@@ -552,6 +557,25 @@ def _resolve_eval_arrays(
     )
 
 
+def _select_representative_segment_rows(
+    *,
+    rows: Sequence[dict[str, Any]],
+    max_items: int,
+) -> list[dict[str, Any]]:
+    return select_representative_rows(
+        rows,
+        id_key="segment_id",
+        max_items=max_items,
+        rules=(
+            RepresentativeRule(tag="best_rmse", metric="rmse_global", mode="min"),
+            RepresentativeRule(tag="median_rmse", metric="rmse_global", mode="median"),
+            RepresentativeRule(tag="worst_rmse", metric="rmse_global", mode="max"),
+            RepresentativeRule(tag="worst_final_step", metric="final_step_rmse", mode="max"),
+            RepresentativeRule(tag="worst_growth", metric="rmse_last_over_first", mode="max"),
+        ),
+    )
+
+
 def run_transition_replay(
     *,
     replay_dataset: ReplayDataset,
@@ -591,7 +615,7 @@ def run_transition_replay(
     all_masks: list[np.ndarray] = []
     segment_rows: list[dict[str, Any]] = []
     segment_curves: list[dict[str, Any]] = []
-    sample_segments: list[dict[str, Any]] = []
+    segment_payloads: list[dict[str, Any]] = []
     nonfinite_trigger_count = 0
     eval_meta: dict[str, Any] | None = None
     component_labels: tuple[str, ...] = replay_dataset.target_cols
@@ -715,16 +739,16 @@ def run_transition_replay(
                 "abs_breach_step": abs_breach_step,
             }
         )
-        if len(sample_segments) < int(save_samples):
-            sample_segments.append(
-                {
-                    "segment_id": int(segment.segment_id),
-                    "start_idx0": int(segment.start_idx0),
-                    "n_steps": int(segment.n_steps),
-                    "y_hat": y_hat,
-                    "y_true": y_true_eval,
-                }
-            )
+        segment_payloads.append(
+            {
+                "segment_id": int(segment.segment_id),
+                "start_idx0": int(segment.start_idx0),
+                "n_steps": int(segment.n_steps),
+                "y_hat": y_hat,
+                "y_true": y_true_eval,
+                "valid_mask": _expand_eval_mask(eval_mask, shape=y_hat.shape),
+            }
+        )
 
     y_hat_all = np.concatenate(all_hat, axis=0)
     y_true_all = np.concatenate(all_true, axis=0)
@@ -768,7 +792,27 @@ def run_transition_replay(
         [float(curve["abs_breach_step"]) if curve["abs_breach_step"] is not None else float("nan") for curve in segment_curves],
         dtype=np.float64,
     )
-    sample_y_hat, sample_y_true, sample_mask = _pad_sample_segments(sample_segments, dout=int(y_hat_all.shape[1]))
+    representative_segment_rows = _select_representative_segment_rows(
+        rows=segment_rows,
+        max_items=int(min(save_samples, len(segment_rows))),
+    )
+    payload_by_segment_id = {int(item["segment_id"]): item for item in segment_payloads}
+    representative_payloads = [
+        payload_by_segment_id[int(row["segment_id"])]
+        for row in representative_segment_rows
+        if int(row["segment_id"]) in payload_by_segment_id
+    ]
+    sample_y_hat, sample_y_true, sample_mask = _pad_sample_segments(
+        representative_payloads,
+        dout=int(y_hat_all.shape[1]),
+    )
+    sample_context = {
+        "segment_id": np.asarray([int(row["segment_id"]) for row in representative_segment_rows], dtype=np.int64),
+        "start_idx0": np.asarray([int(row["start_idx0"]) for row in representative_segment_rows], dtype=np.int64),
+        "n_steps": np.asarray([int(row["n_steps"]) for row in representative_segment_rows], dtype=np.int64),
+        "sample_tag": np.asarray([str(row["representative_tag"]) for row in representative_segment_rows], dtype=str),
+        "component_labels": np.asarray(component_labels, dtype=str),
+    }
     segment_lengths = np.asarray([int(row["n_steps"]) for row in segment_rows], dtype=np.float64)
     eval_steps = int(valid_mask_all.any(axis=1).sum())
     eval_values = int(valid_mask_all.sum())
@@ -857,6 +901,8 @@ def run_transition_replay(
         sample_pred_y_hat=sample_y_hat,
         sample_pred_y_true=sample_y_true,
         sample_pred_mask=sample_mask,
+        sample_context=sample_context,
+        sample_manifest_rows=representative_segment_rows,
     )
 
 
@@ -933,6 +979,35 @@ def _write_step_metric_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_sample_manifest_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    header = (
+        "segment_id,start_idx0,n_steps,representative_tag,representative_metric,representative_mode,"
+        "representative_value,eval_steps,rmse_global,mae_global,final_step_rmse,final_step_mae,rmse_last_over_first"
+    )
+    lines = [header]
+    for row in rows:
+        lines.append(
+            ",".join(
+                [
+                    str(int(row["segment_id"])),
+                    str(int(row["start_idx0"])),
+                    str(int(row["n_steps"])),
+                    str(row["representative_tag"]),
+                    str(row["representative_metric"]),
+                    str(row["representative_mode"]),
+                    f"{float(row['representative_value']):.8f}",
+                    str(int(row["eval_steps"])),
+                    f"{float(row['rmse_global']):.8f}",
+                    f"{float(row['mae_global']):.8f}",
+                    f"{float(row['final_step_rmse']):.8f}",
+                    f"{float(row['final_step_mae']):.8f}",
+                    f"{float(row['rmse_last_over_first']):.8f}",
+                ]
+            )
+        )
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_replay_outputs(
     *,
     out_dir: str | Path,
@@ -952,6 +1027,8 @@ def write_replay_outputs(
         "component_metrics_csv": "component_metrics.csv",
         "step_metrics_csv": "step_metrics.csv",
         "pred_samples": "pred_samples.npz",
+        "pred_context": "pred_context.npz",
+        "sample_manifest_csv": "pred_sample_manifest.csv",
         "resolved_replay_yaml": "resolved_replay.yaml",
     }
     metrics_payload["cfg"] = to_snapshot_value(cfg_snapshot, base_dir=path_root)
@@ -975,3 +1052,12 @@ def write_replay_outputs(
         y_true=replay_result.sample_pred_y_true,
         valid_mask=replay_result.sample_pred_mask,
     )
+    np.savez_compressed(
+        out_path / "pred_context.npz",
+        segment_id=replay_result.sample_context["segment_id"],
+        start_idx0=replay_result.sample_context["start_idx0"],
+        n_steps=replay_result.sample_context["n_steps"],
+        sample_tag=replay_result.sample_context["sample_tag"],
+        component_labels=replay_result.sample_context["component_labels"],
+    )
+    _write_sample_manifest_csv(out_path / "pred_sample_manifest.csv", replay_result.sample_manifest_rows)

@@ -1,12 +1,12 @@
 # 项目当前状态
 
-更新时间：2026-04-10
+更新时间：2026-04-11
 
 ## 1. 当前阶段
 
 项目当前处于：
 
-**`状态转移求解器升级 Phase 1 已完成；Phase 2 已新增 quality-context 与 single-step 两条实验分支`**
+**`状态转移求解器升级 Phase 1 已完成；当前推荐主线已切换到 quality-context + single-step 的 7 GPU 正式筛选方案`**
 
 当前主目标是：
 
@@ -101,8 +101,11 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
   - `configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml`
 - single-step 训练配置：
   - `configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml`
-- 8 卡矩阵：
-  - `configs/launch/pooltest02_s1_kf_ctx_8gpu_v1.yaml`
+- 7 GPU 矩阵：
+  - `configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml`
+  - `configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml`
+- 7 GPU 全流程设计：
+  - `docs/design/transition_solver_full_pipeline_7gpu_v2.md`
 - 升级设计文档：
   - `docs/design/transition_solver_phase1_upgrade.md`
 
@@ -116,7 +119,7 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 
 ### 当前风险
 
-- 8 卡矩阵尚未按 Phase 1 修复后的契约正式重跑
+- 7 GPU 正式矩阵尚未按当前资源约束完整重跑
 - 新图包尚未用修复后的 run 重新生成
 - 若模型主体不进一步收口为一步转移器，长期自由递推能力仍可能不足
 - 当前 replay 仍属于开环重放验证，还不是闭环控制证明
@@ -128,8 +131,8 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 1. 用 Phase 1 修复后的代码重建融合基础表与数据集
 2. 做单卡 smoke，确认 `train_summary.yaml / eval_test/metrics.yaml` 正常
 3. 对比 v2、quality v3、quality step v1 三条单卡 smoke
-4. 基于对比结果选定“一步转移”是否转正为主线
-5. 再做 8 卡矩阵与 top2 图包
+4. 用 `pooltest02_s1_kf_quality_7gpu_v2` 与 `pooltest02_s1_kf_quality_step_7gpu_v2` 完成正式矩阵
+5. 基于 replay 排名选定最终一步状态转移求解器，再整理 top2 图包
 6. 最后再接最小 controller replay 或 RL wrapper
 
 ## 8. 当前不建议的做法

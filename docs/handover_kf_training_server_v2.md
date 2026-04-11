@@ -1,6 +1,6 @@
 # KF 融合训练服务器迁移交接文档
 
-更新时间：2026-04-10  
+更新时间：2026-04-11  
 当前工作分支：`feature/kf-preprocess-training-v1`
 
 ## 1. 迁移目标
@@ -10,7 +10,7 @@
 1. 生成新的 KF 融合基础表
 2. 构建新的 KF 数据集
 3. 单卡 smoke 验证训练链
-4. 启动 8 卡矩阵
+4. 启动 7 卡矩阵
 5. 对 top2 输出长期拟合图包
 
 注意：
@@ -28,14 +28,14 @@
 - 训练期按 `val_transition_score` 选 best ckpt
 - run 级按长期 rollout 相关指标筛选
 
-当前服务器侧推荐拆成两个 8 卡批次：
+当前服务器侧推荐拆成两个 7 卡批次：
 
 1. `H=10` 的 quality-context 主线重训批次
 2. `H=1` 的 single-step transition 实验批次
 
 这样做的原因是：
 
-- 两批次都能吃满 8 卡并发
+- 当前只占用第 1 到第 7 张 GPU 卡，第 8 张卡留给其他任务
 - 避免 `pred_len=10` 与 `pred_len=1` 混入同一 compare 链
 - 让多步主线与一步分支分别做清晰筛选
 
@@ -60,8 +60,9 @@
 - `configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml`
 - `configs/dataset/pooltest02_s1_kf_ctx_quality_step_v1.yaml`
 - `configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml`
-- `configs/launch/pooltest02_s1_kf_quality_8gpu_v1.yaml`
-- `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml`
+- `configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml`
+- `configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml`
+- `configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml`
 
 文档：
 
@@ -112,7 +113,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q \
 1. 先确认 Phase 1 自检通过
 2. 重建融合基础表与数据集
 3. 做单卡 smoke
-4. 再进入 8 卡服务器批次
+4. 再进入 7 卡服务器批次
 
 一步状态转移训练配置仍是后续主线，不属于本页的已完成部分。
 
@@ -123,7 +124,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q \
 
 ```bash
 python -m uwnav_dynamics.cli.server_pipeline \
-  -c configs/launch/pooltest02_server_full_pipeline_v1.yaml
+  -c configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml
 ```
 
 该入口会按顺序执行：
@@ -131,25 +132,27 @@ python -m uwnav_dynamics.cli.server_pipeline \
 1. KF / ESKF 融合基础表生成
 2. `quality_v3` 与 `quality_step_v1` 数据集构建
 3. 单卡 smoke
-4. 两个 8 卡矩阵批次
+4. 两个 7 卡矩阵批次
 5. 基于 `train_matrix/summary.csv` 自动生成 replay matrix 并完成长序列方案评估
 
 主要总控产物：
 
 ```text
-out/server_pipeline/pooltest02_kf_full_v1/manifest.yaml
-out/server_pipeline/pooltest02_kf_full_v1/phase_status.csv
-out/server_pipeline/pooltest02_kf_full_v1/generated_replay_matrix/*.yaml
-out/server_pipeline/pooltest02_kf_full_v1/logs/*.log
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/manifest.yaml
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/phase_status.csv
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/generated_replay_matrix/*.yaml
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/*.log
 ```
 
 最终结果重点看：
 
 ```text
-out/train_matrix/pooltest02_s1_kf_quality_8gpu_v1/summary.csv
-out/train_matrix/pooltest02_s1_kf_quality_step_8gpu_v1/summary.csv
-out/replay_matrix/pooltest02_s1_kf_quality_8gpu_v1/ranking.csv
-out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v1/ranking.csv
+out/train_matrix/pooltest02_s1_kf_quality_7gpu_v2/summary.csv
+out/train_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/summary.csv
+out/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2/ranking.csv
+out/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/ranking.csv
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/final_selection.csv
+out/server_pipeline/pooltest02_kf_full_7gpu_v2/paper_artifact_manifest.yaml
 ```
 
 ### 4.3 生成融合基础表
@@ -183,18 +186,18 @@ python -m uwnav_dynamics.cli.train \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
 ```
 
-### 4.6 8 卡矩阵批次 A：quality-context 主线
+### 4.6 7 卡矩阵批次 A：quality-context 主线
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
 ```
 
-### 4.7 8 卡矩阵批次 B：single-step 分支
+### 4.7 7 卡矩阵批次 B：single-step 分支
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
 ```
 
 ## 5. 迁移后先检查什么
@@ -225,6 +228,7 @@ python -m uwnav_dynamics.cli.train_matrix \
 - `summary.csv` 正常产出
 - 每个 run 都有 `train_summary.yaml` 和 `eval_test/metrics.yaml`
 - `quality` 与 `quality_step` 两个矩阵各自产出独立 compare 目录
+- `server_pipeline` 最终还应产出 `final_selection.csv` 与 `paper_artifact_manifest.yaml`
 
 ## 6. 当前筛选标准
 
