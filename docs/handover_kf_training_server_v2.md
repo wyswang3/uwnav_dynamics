@@ -1,6 +1,6 @@
 # KF 融合训练服务器迁移交接文档
 
-更新时间：2026-04-11  
+更新时间：2026-04-11（晚）  
 当前工作分支：`feature/kf-preprocess-training-v1`
 
 ## 1. 迁移目标
@@ -155,6 +155,129 @@ out/server_pipeline/pooltest02_kf_full_7gpu_v2/final_selection.csv
 out/server_pipeline/pooltest02_kf_full_7gpu_v2/paper_artifact_manifest.yaml
 ```
 
+### 4.2.2 本轮服务器执行记录（2026-04-11）
+
+本轮已确认：
+
+- `fusion`：成功
+- `dataset`：成功
+- `quality_v3_smoke`：成功
+- `quality_step_v1_smoke`：成功
+- `pooltest02_s1_kf_quality_7gpu_v2`：部分成功，phase 记为 `failed`
+- `pooltest02_s1_kf_quality_step_7gpu_v2`：部分成功，phase 记为 `failed`
+- 两个 replay phase：已执行并写出 `summary.csv / ranking.csv`
+
+证据入口：
+
+- `out/server_pipeline/pooltest02_kf_full_7gpu_v2/phase_status.csv`
+- `out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/train_matrix_pooltest02_s1_kf_quality_7gpu_v2.log`
+- `out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/train_matrix_pooltest02_s1_kf_quality_step_7gpu_v2.log`
+- `out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/replay_quality_v3_replay.log`
+- `out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/replay_quality_step_v1_replay.log`
+
+当前离线最优候选：
+
+- `quality_v3`：
+  - `QV3_B4_grouped_tb_blocks_seed8`
+  - `rmse_global = 0.05492`
+  - `mae_global = 0.01779`
+- `quality_step_v1`：
+  - `STEP_B4_grouped_tb_blocks_seed9`
+  - `rmse_global = 0.03635`
+  - `mae_global = 0.00690`
+
+当前结论：
+
+- `quality_step_v1` 明显优于 `quality_v3`，是下一步状态转移求解器主候选。
+- 两个最优 run 都已确认 `runtime_device = cuda`，不是 CPU fallback。
+- 服务器端 `fusion + dataset` 预处理阶段已经完成；若原始 CSV 与配置未变化，下次进入服务器默认不需要先重跑 `4.3 / 4.4`。
+
+当前失败原因：
+
+- `quality_v3` 的 `V2_B4` 两个候选失败，原因是缺少：
+  - `data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2/features.npz`
+- `quality_step_v1` 的 `step_a0_joint_nll_seed8/9` 两个候选失败，原因是：
+  - `loss.type=nll_diag` 与当前 `transition_balance` 字段组合不满足配置契约
+
+一个必须注意的路径问题：
+
+- replay 日志显示结果写到了仓库外路径，而不是仓库内 `out/replay_matrix/`：
+  - `/home/wys/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2/`
+  - `/home/wys/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/`
+
+所以下次接手时，优先先把这两个目录回收到仓库内，或者直接把其中的：
+
+- `summary.csv`
+- `ranking.csv`
+- 关键 run 目录
+
+拷回 `out/replay_matrix/`，再做最终 solver 选型。
+
+### 4.2.3 当前更实用的命令行顺序：训练 -> 评估 -> 验证 -> 可视化 -> 保存
+
+如果服务器端预处理产物仍然有效，当前更推荐直接从网络训练开始：
+
+1. 启动单步主线网络训练
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.train \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+```
+
+2. 训练后做测试集评估并自动出图
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.eval \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --plots \
+  --plot_fmt png
+```
+
+3. 对同一权重做长序列状态转移 replay 验证
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.transition_replay \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --min_steps 50
+```
+
+4. 如需并发正式训练，直接启动矩阵
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \
+  -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
+```
+
+5. 保存当前主结果时，至少保留以下产物
+
+```bash
+RUN_DIR=run.out_dir/run.variant
+mkdir -p out/archive/step_transition_main
+cp -r "$RUN_DIR"/resolved_train.yaml out/archive/step_transition_main/
+cp -r "$RUN_DIR"/train_history.csv out/archive/step_transition_main/
+cp -r "$RUN_DIR"/train_summary.yaml out/archive/step_transition_main/
+cp -r "$RUN_DIR"/best.pth out/archive/step_transition_main/
+cp -r "$RUN_DIR"/eval_test out/archive/step_transition_main/
+cp -r "$RUN_DIR"/replay_test out/archive/step_transition_main/
+```
+
+这里的 `RUN_DIR` 需要替换成真实运行目录，例如：
+
+```text
+out/ckpts/pooltest02_s1_kf_quality_step_7gpu_v2/STEP_B4_grouped_tb_blocks_seed9
+```
+
+建议保存后至少复核：
+
+```text
+RUN_DIR/eval_test/metrics.yaml
+RUN_DIR/eval_test/plots/
+RUN_DIR/replay_test/metrics.yaml
+RUN_DIR/replay_test/segment_metrics.csv
+```
+
 ### 4.3 生成融合基础表
 
 ```bash
@@ -198,6 +321,13 @@ python -m uwnav_dynamics.cli.train_matrix \
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
+```
+
+如果只是接着今天的工作继续，不要先重跑整批；先回收 replay 结果并核对：
+
+```bash
+ls -lah /home/wys/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2
+ls -lah /home/wys/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2
 ```
 
 ## 5. 迁移后先检查什么

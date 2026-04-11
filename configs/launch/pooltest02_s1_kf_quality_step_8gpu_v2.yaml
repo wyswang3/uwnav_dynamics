@@ -1,0 +1,136 @@
+# 2026-04-11 基于上一轮 7 GPU 结果收缩后的 8 GPU 单步状态转移矩阵：
+# - 目标优先级：状态转移求解器候选筛选 > 结构解释性 > 基线补跑
+# - 去掉上一轮已失败且与当前 transition_balance 主线不一致的 joint-NLL 分支
+# - 保留 `B0 / B2-delta / B4` 三类中更贴近实际状态转移需求的方案
+# - 其中 `B4` 拿到更多 seed，用于回答“结构块是否能稳定优于更轻量的 B0”
+
+base_train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_s1_kf_quality_step_8gpu_v2
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 2048
+  plots: true
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_step_v1
+    batch_size: 1024
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: step_b0_grouped_tb_seed10
+    label: StepBase s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: STEP_B0_grouped_tb_seed10
+
+  - name: step_b0_grouped_tb_seed11
+    label: StepBase s11
+    role: primary
+    overrides:
+      run:
+        seed: 11
+        variant: STEP_B0_grouped_tb_seed11
+
+  - name: step_b2_grouped_tb_strong_delta_seed10
+    label: StepDelta s10
+    role: ablation
+    overrides:
+      run:
+        seed: 10
+        variant: STEP_B2_grouped_tb_strong_delta_seed10
+      loss:
+        delta_huber_weight: 1.4
+        acc_weight: 3.2
+        gyro_weight: 2.1
+        vel_weight: 2.3
+
+  - name: step_b2_grouped_tb_strong_delta_seed11
+    label: StepDelta s11
+    role: ablation
+    overrides:
+      run:
+        seed: 11
+        variant: STEP_B2_grouped_tb_strong_delta_seed11
+      loss:
+        delta_huber_weight: 1.4
+        acc_weight: 3.2
+        gyro_weight: 2.1
+        vel_weight: 2.3
+
+  - name: step_b4_grouped_tb_blocks_seed10
+    label: StepDyn s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: STEP_B4_grouped_tb_blocks_seed10
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: step_b4_grouped_tb_blocks_seed11
+    label: StepDyn s11
+    role: primary
+    overrides:
+      run:
+        seed: 11
+        variant: STEP_B4_grouped_tb_blocks_seed11
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: step_b4_grouped_tb_blocks_seed12
+    label: StepDyn s12
+    role: primary
+    overrides:
+      run:
+        seed: 12
+        variant: STEP_B4_grouped_tb_blocks_seed12
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: step_b4_grouped_tb_blocks_seed13
+    label: StepDyn s13
+    role: primary
+    overrides:
+      run:
+        seed: 13
+        variant: STEP_B4_grouped_tb_blocks_seed13
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true

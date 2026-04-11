@@ -1,0 +1,147 @@
+# 2026-04-11 基于上一轮 7 GPU 结果收缩后的 8 GPU 长期拟合矩阵：
+# - 目标优先级：保留最强长期拟合主线 `B4`，并保留最能压低误差增长的 `B2-longtail`
+# - 去掉上一轮失败的 `v2_b4`，因为其依赖的数据目录缺失，且不再是当前最贴近实际需要的主线
+# - 去掉新的 baseline 补跑，把预算集中给 `B4` 的 family 稳定性确认
+
+base_train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_s1_kf_quality_8gpu_v2
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 1024
+  plots: true
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_s1_kf_quality_8gpu_v2
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_v3
+    batch_size: 512
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: qv3_b2_grouped_tb_longtail_seed10
+    label: QualTail s10
+    role: ablation
+    overrides:
+      run:
+        seed: 10
+        variant: QV3_B2_grouped_tb_longtail_seed10
+      loss:
+        tail_weight_power: 2.0
+        acc_weight: 3.2
+        gyro_weight: 2.0
+        vel_weight: 2.2
+
+  - name: qv3_b2_grouped_tb_longtail_seed11
+    label: QualTail s11
+    role: ablation
+    overrides:
+      run:
+        seed: 11
+        variant: QV3_B2_grouped_tb_longtail_seed11
+      loss:
+        tail_weight_power: 2.0
+        acc_weight: 3.2
+        gyro_weight: 2.0
+        vel_weight: 2.2
+
+  - name: qv3_b4_grouped_tb_blocks_seed10
+    label: QualDyn s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: QV3_B4_grouped_tb_blocks_seed10
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: qv3_b4_grouped_tb_blocks_seed11
+    label: QualDyn s11
+    role: primary
+    overrides:
+      run:
+        seed: 11
+        variant: QV3_B4_grouped_tb_blocks_seed11
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: qv3_b4_grouped_tb_blocks_seed12
+    label: QualDyn s12
+    role: primary
+    overrides:
+      run:
+        seed: 12
+        variant: QV3_B4_grouped_tb_blocks_seed12
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: qv3_b4_grouped_tb_blocks_seed13
+    label: QualDyn s13
+    role: primary
+    overrides:
+      run:
+        seed: 13
+        variant: QV3_B4_grouped_tb_blocks_seed13
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: qv3_b4_grouped_tb_blocks_seed14
+    label: QualDyn s14
+    role: primary
+    overrides:
+      run:
+        seed: 14
+        variant: QV3_B4_grouped_tb_blocks_seed14
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true
+
+  - name: qv3_b4_grouped_tb_blocks_seed15
+    label: QualDyn s15
+    role: primary
+    overrides:
+      run:
+        seed: 15
+        variant: QV3_B4_grouped_tb_blocks_seed15
+      model:
+        blocks:
+          thruster_lag:
+            enabled: true
+          hydro_ssm:
+            enabled: true

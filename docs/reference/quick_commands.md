@@ -184,7 +184,7 @@ run_dir/eval_test/mae_by_horizon.csv
 run_dir/eval_test/plots/
 ```
 
-## 8.1 长序列状态求解器 replay
+## 8.3 长序列状态求解器 replay
 
 推荐优先对 `quality_step_v1` 训练结果做长序列 replay：
 
@@ -204,7 +204,39 @@ run.out_dir/run.variant/replay_test/component_metrics.csv
 run.out_dir/run.variant/replay_test/pred_samples.npz
 ```
 
-## 8.2 多方案 replay 统一排行
+## 8.4 训练 -> 评估 -> 验证 -> 可视化 -> 保存
+
+如果服务器侧 `fusion + dataset` 已经完成，当前最推荐直接从训练链开始：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.train \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+
+PYTHONPATH=src python -m uwnav_dynamics.cli.eval \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --plots \
+  --plot_fmt png
+
+PYTHONPATH=src python -m uwnav_dynamics.cli.transition_replay \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --min_steps 50
+```
+
+保存最小结果包时，至少保留：
+
+```bash
+RUN_DIR=run.out_dir/run.variant
+mkdir -p out/archive/step_transition_main
+cp -r "$RUN_DIR"/resolved_train.yaml out/archive/step_transition_main/
+cp -r "$RUN_DIR"/train_summary.yaml out/archive/step_transition_main/
+cp -r "$RUN_DIR"/best.pth out/archive/step_transition_main/
+cp -r "$RUN_DIR"/eval_test out/archive/step_transition_main/
+cp -r "$RUN_DIR"/replay_test out/archive/step_transition_main/
+```
+
+## 8.5 多方案 replay 统一排行
 
 当你需要比较多种候选方案时，优先使用 replay matrix：
 

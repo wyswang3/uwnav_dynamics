@@ -1,6 +1,6 @@
 # 项目交接指南
 
-更新时间：2026-04-11
+更新时间：2026-04-11（晚）
 
 ## 1. 当前接手时先知道什么
 
@@ -83,6 +83,14 @@ Phase 1 已完成并收口了前两个基础阻塞：
 
 因此，当前可以恢复单卡 smoke 与新一轮数据重建，
 但还不建议把项目表述成“已具备闭环求解器”。
+
+补充：截至 2026-04-11 晚，本轮 7 GPU 服务器批次已经实际执行过一轮。
+
+- `quality_step_v1` 当前离线最优候选是 `STEP_B4_grouped_tb_blocks_seed9`
+- `quality_v3` 当前离线最优候选是 `QV3_B4_grouped_tb_blocks_seed8`
+- 两个最优 run 都确认 `runtime_device = cuda`
+- replay 结果暂未完整回收到仓库 `out/`，明天优先回收 `/home/wys/replay_matrix/...`
+- 服务器侧 `fusion + dataset` 预处理阶段已经完成；若数据和配置未变化，下次进入服务器可直接从训练、评估和 replay 验证开始。
 
 ## 4. 当前最短工作流
 
@@ -168,6 +176,33 @@ python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
 ```
 
+6. 单次评估、可视化与 replay 验证
+
+```bash
+python -m uwnav_dynamics.cli.eval \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --plots \
+  --plot_fmt png
+
+python -m uwnav_dynamics.cli.transition_replay \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --min_steps 50
+```
+
+7. 保存关键产物
+
+```bash
+RUN_DIR=run.out_dir/run.variant
+mkdir -p out/archive/step_transition_main
+cp -r "$RUN_DIR"/resolved_train.yaml out/archive/step_transition_main/
+cp -r "$RUN_DIR"/train_summary.yaml out/archive/step_transition_main/
+cp -r "$RUN_DIR"/best.pth out/archive/step_transition_main/
+cp -r "$RUN_DIR"/eval_test out/archive/step_transition_main/
+cp -r "$RUN_DIR"/replay_test out/archive/step_transition_main/
+```
+
 ## 5. 当前最该盯的产物
 
 训练前：
@@ -220,10 +255,10 @@ run 级筛选：
 
 下一步最合理的顺序是：
 
-1. 用 Phase 1 修复后的代码重建融合基础表与数据集
-2. 先对比 v2、quality v3 与 quality step v1 的单卡 smoke
-3. 评估是否把一步状态转移分支转正为主线
-4. 之后再重开 7 卡矩阵与 top2 图包
+1. 先回收服务器上的 replay 结果目录与 `ranking.csv`
+2. 基于 replay ranking 确认最终 solver 候选与备选
+3. 再决定是否需要补跑失败候选，而不是直接整批重开
+4. 最后整理 top2 图包和论文表格
 
 如果后续要继续扩展，应优先扩训练与评估链、求解器接口与最小 replay 验证，
 而不是重新打开旧阶段的大型验证壳层。

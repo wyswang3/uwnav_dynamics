@@ -1,6 +1,6 @@
 # 项目当前状态
 
-更新时间：2026-04-11
+更新时间：2026-04-11（晚）
 
 ## 1. 当前阶段
 
@@ -70,9 +70,57 @@
   - `src/uwnav_dynamics/cli/transition_replay.py`
 - 当前建议优先基于 `quality_step_v1` 分支验证经验型状态求解器
 
+### 2026-04-11 服务器训练快照
+
+- 已完成：
+  - `fusion`
+  - `quality_v3` / `quality_step_v1` 数据集构建
+  - 两个 single-card smoke
+  - 两个 7 GPU train matrix
+  - 两个 replay matrix 启动
+- 因此服务器侧数据预处理已经完成；若原始 CSV 与配置未变化，下一次进入服务器可直接从训练与评估链开始，而不是默认重跑 `fusion / dataset`
+- 证据：
+  - `out/server_pipeline/pooltest02_kf_full_7gpu_v2/phase_status.csv`
+- 当前 train matrix 的状态应理解为：
+  - 两条矩阵都已有有效结果；
+  - 但因部分候选失败，`server_pipeline` 中对应 phase 被记为 `failed`，不代表整批不可用。
+
+当前离线最优候选：
+
+- `quality_v3` 最优：
+  - `out/train_matrix/pooltest02_s1_kf_quality_7gpu_v2/summary.csv`
+  - 当前最优 run：`QV3_B4_grouped_tb_blocks_seed8`
+  - 关键指标：
+    - `rmse_global = 0.05492`
+    - `mae_global = 0.01779`
+    - `tail_abs_p95_dense = 0.08882`
+    - `tail_abs_p99_dense = 0.26575`
+- `quality_step_v1` 最优：
+  - `out/train_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/summary.csv`
+  - 当前最优 run：`STEP_B4_grouped_tb_blocks_seed9`
+  - 关键指标：
+    - `rmse_global = 0.03635`
+    - `mae_global = 0.00690`
+    - `tail_abs_p95_dense = 0.02134`
+    - `tail_abs_p99_dense = 0.16039`
+
+当前阶段可下的结论：
+
+- 单步状态转移主线 `quality_step_v1` 明显优于 `quality_v3`。
+- `B4 + blocks` 在当前单步主线上仍是最值得继续推进的候选。
+- 最优 run 的 `resolved_train.yaml` 中 `_meta.runtime_device = cuda`，说明主结果确实来自 GPU 训练：
+  - `out/ckpts/pooltest02_s1_kf_quality_step_7gpu_v2/STEP_B4_grouped_tb_blocks_seed9/resolved_train.yaml`
+  - `out/ckpts/pooltest02_s1_kf_quality_7gpu_v2/QV3_B4_grouped_tb_blocks_seed8/resolved_train.yaml`
+
+本轮失败原因也已明确：
+
+- `quality_v3` 中两个 `V2_B4` 候选失败，是因为缺少旧版数据集：
+  - `data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2/features.npz`
+- `quality_step_v1` 中两个 `A0 NLL` 候选失败，是因为 `loss.type=nll_diag` 与当前 `transition_balance` 字段组合不满足配置契约。
+
 ## 3. 当前最重要的工程事实
 
-当前要特别明确三件事：
+当前要特别明确四件事：
 
 1. 现在的训练链在“因果性”和“rollout 数值语义”上比上一轮更可靠。
 2. 当前默认主线模型主体仍是“历史窗 -> 固定未来块输出”，还不是严格的一步状态转移器。
@@ -80,6 +128,9 @@
    - 状态代理量 + 质量上下文
    - 单步状态转移
 4. 当前离线指标仍然只代表控制前筛查，不代表闭环可用性证明。
+5. 当前本地 `out/` 中还没有 `replay_matrix` 实际结果与 `final_selection.csv`；服务器 replay 日志显示结果被写到了仓库外路径：
+   - `/home/wys/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2/`
+   - `/home/wys/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/`
 
 ## 4. 当前剩余主阻塞
 
@@ -88,6 +139,11 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 1. 模型形式仍偏“轨迹预测器”  
    当前默认主线仍是 `hist_len=100, pred_len=10` 的“历史窗 -> 固定未来块输出”，
    还不是更接近系统状态方程形式的 `x_{t+1}=f(x_t,u_t,c_t)` 一步状态转移模型。
+
+补充说明：
+
+- 从当前离线结果看，`pred_len=1` 的单步主线已经优于 `pred_len=10` 质量上下文主线；
+- 但最终是否转正为状态转移求解器主模型，仍需要 replay ranking 证据闭环。
 
 ## 5. 当前可直接复用的产物
 
@@ -119,8 +175,10 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 
 ### 当前风险
 
-- 7 GPU 正式矩阵尚未按当前资源约束完整重跑
-- 新图包尚未用修复后的 run 重新生成
+- 本轮 7 GPU 正式矩阵已跑通主体，但有 2+2 个候选失败，导致 phase 状态不是全绿
+- replay 结果目前落在仓库外的 `/home/wys/replay_matrix/`，如果不回收，会导致本地分析链缺少 `ranking.csv`
+- `final_selection.csv` 与 `paper_artifact_manifest.yaml` 尚未在当前本地 `out/server_pipeline/` 中落盘确认
+- 新图包尚未基于 replay ranking 做最终筛选
 - 若模型主体不进一步收口为一步转移器，长期自由递推能力仍可能不足
 - 当前 replay 仍属于开环重放验证，还不是闭环控制证明
 
@@ -132,7 +190,8 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 2. 做单卡 smoke，确认 `train_summary.yaml / eval_test/metrics.yaml` 正常
 3. 对比 v2、quality v3、quality step v1 三条单卡 smoke
 4. 用 `pooltest02_s1_kf_quality_7gpu_v2` 与 `pooltest02_s1_kf_quality_step_7gpu_v2` 完成正式矩阵
-5. 基于 replay 排名选定最终一步状态转移求解器，再整理 top2 图包
+5. 从服务器回收 `/home/wys/replay_matrix/...` 到仓库 `out/replay_matrix/...`，确认 `ranking.csv`
+6. 基于 replay 排名选定最终一步状态转移求解器，再整理 top2 图包
 6. 最后再接最小 controller replay 或 RL wrapper
 
 ## 8. 当前不建议的做法
