@@ -25,6 +25,7 @@
 
 - [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
 - [reference/quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
+- `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
 
 如果目标是比较“过去主线 vs 当前主线”谁更适合状态转移求解器，优先看：
 
@@ -54,6 +55,7 @@
 ### 2.3 `reference/`：命令手册与执行参考
 
 - [reference/quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)：当前主线命令手册
+- [reference/cli_command_index.md](/home/wys/uwnav_dynamics/docs/reference/cli_command_index.md)：各 CLI 入口索引与最小调用模板
 
 ### 2.4 `math/` 与 `thesis/`：理论与论文支撑材料
 

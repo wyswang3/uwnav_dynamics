@@ -9,7 +9,8 @@
 主要功能：
 1. 将绝对路径按指定基准目录转换成相对路径。
 2. 递归序列化包含 `Path` 的 dict/list/tuple 结构。
-3. 为 `resolved_train.yaml`、`metrics.yaml`、`summary.csv` 等产物提供统一路径格式。
+3. 统一解析“相对仓库根目录”与“相对配置文件目录”两类运行时路径。
+4. 为 `resolved_train.yaml`、`metrics.yaml`、`summary.csv` 等产物提供统一路径格式。
 
 数据流：
 Path / dict / list
@@ -27,6 +28,8 @@ yaml / csv / manifest / summary
 备注：
 - 已经是相对路径的值会原样保留，避免重复重写用户配置。
 - 绝对路径仅在落盘快照时做相对化，不改变运行时真实文件解析逻辑。
+- 对 launcher/config 驱动的实验入口，若路径中显式包含 `..`，默认解释为“相对配置文件目录”；
+  否则优先兼容仓库内常见的 repo-root 相对路径（如 `configs/...`、`out/...`）。
 """
 
 from __future__ import annotations
@@ -45,6 +48,57 @@ def relative_path_str(path: str | Path, *, base_dir: str | Path) -> str:
     base = Path(base_dir)
     rel = os.path.relpath(str(p), str(base))
     return Path(rel).as_posix()
+
+
+def looks_repo_relative_path(path: str | Path) -> bool:
+    """判断一个相对路径是否明显在表达 repo-root 语义。"""
+    p = Path(path)
+    if p.is_absolute() or len(p.parts) == 0:
+        return False
+    return p.parts[0] in {
+        "apps",
+        "configs",
+        "data",
+        "docs",
+        "out",
+        "replay_matrix",
+        "src",
+        "tests",
+    }
+
+
+def resolve_config_path(
+    path: str | Path,
+    *,
+    repo_root: str | Path,
+    config_dir: str | Path,
+) -> Path:
+    """
+    统一解析配置文件中的路径字段。
+
+    兼容两类常见来源：
+    1. 仓库内手写配置：多使用 repo-root 相对路径。
+    2. 由上游 launcher 生成的配置：常写成相对当前配置目录的 `../..` 路径。
+    """
+    raw = Path(path)
+    if raw.is_absolute():
+        return raw.resolve()
+
+    repo_root_path = Path(repo_root)
+    config_dir_path = Path(config_dir)
+    repo_candidate = (repo_root_path / raw).resolve()
+    config_candidate = (config_dir_path / raw).resolve()
+    has_parent_hop = any(part == ".." for part in raw.parts)
+
+    if has_parent_hop:
+        return config_candidate
+    if repo_candidate.exists():
+        return repo_candidate
+    if config_candidate.exists():
+        return config_candidate
+    if looks_repo_relative_path(raw):
+        return repo_candidate
+    return config_candidate
 
 
 def to_snapshot_value(value: Any, *, base_dir: str | Path) -> Any:

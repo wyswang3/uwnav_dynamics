@@ -379,3 +379,61 @@ def test_transition_replay_matrix_supports_feature_row_eval_against_common_obser
     assert ranked_rows[0]["overall_rank"] == "1"
     assert ranked_rows[1]["name"] == "biased_obs"
     assert (tmp_path / "replay_matrix_obs_out" / "compare_test" / "replay_model_compare.png").exists()
+
+
+def test_transition_replay_matrix_accepts_paths_relative_to_config_dir(tmp_path, monkeypatch):
+    data_dir = tmp_path / "nested" / "perfect_cfg_data"
+    _build_dataset(data_dir, target_value=5.0)
+
+    train_yaml = _write_train_yaml(tmp_path, name="perfect_cfg_run", data_dir=data_dir)
+    ckpt = _prepare_run_artifacts(train_yaml)
+
+    generated_dir = tmp_path / "server_out" / "generated_replay_matrix"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = generated_dir / "replay_from_summary.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "launcher": {
+                    "work_dir": "../../replay_matrix_cfg_out",
+                    "split": "test",
+                    "device": "cpu",
+                    "min_steps": 3,
+                    "save_samples": 2,
+                    "fail_fast": False,
+                },
+                "runs": [
+                    {
+                        "name": "perfect_cfg",
+                        "label": "Perfect Cfg",
+                        "role": "primary",
+                        "train_yaml": "../../perfect_cfg_run.yaml",
+                        "ckpt": "../../out/perfect_cfg_run/best.pth",
+                    }
+                ],
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "uwnav_dynamics.cli.transition_replay_matrix",
+            "-c",
+            str(cfg_path),
+        ],
+    )
+    assert transition_replay_matrix.main() == 0
+
+    summary_path = tmp_path / "replay_matrix_cfg_out" / "summary.csv"
+    assert summary_path.exists()
+    with summary_path.open("r", encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["name"] == "perfect_cfg"
+    assert rows[0]["status"] == "ok"
+    assert float(rows[0]["rmse_global"]) == 0.0

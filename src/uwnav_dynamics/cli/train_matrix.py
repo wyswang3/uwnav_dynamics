@@ -53,7 +53,7 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from uwnav_dynamics.experiment.layout import RunLayout, load_yaml_dict
-from uwnav_dynamics.experiment.paths import relative_path_str
+from uwnav_dynamics.experiment.paths import relative_path_str, resolve_config_path
 from uwnav_dynamics.experiment.reporting import (
     EVAL_SUMMARY_FIELDS,
     TRAIN_SUMMARY_FIELDS,
@@ -78,6 +78,7 @@ class MatrixRunSpec:
 @dataclass(frozen=True)
 class MatrixLauncherConfig:
     """多 GPU 实验矩阵调度的完整运行配置。"""
+    config_path: Path
     base_train_yaml: Path
     work_dir: Path
     gpus: tuple[str, ...]
@@ -182,7 +183,8 @@ def _normalize_compare_metrics(values: Sequence[Any]) -> tuple[str, ...]:
 
 def load_matrix_launcher_config(path: str | Path) -> MatrixLauncherConfig:
     """从矩阵 launcher YAML 解析强类型调度配置。"""
-    raw = load_yaml_dict(path)
+    config_path = Path(path).expanduser().resolve()
+    raw = load_yaml_dict(config_path)
 
     base_train_yaml = Path(str(raw.get("base_train_yaml", "")))
     if not str(base_train_yaml):
@@ -230,6 +232,7 @@ def load_matrix_launcher_config(path: str | Path) -> MatrixLauncherConfig:
     )
 
     return MatrixLauncherConfig(
+        config_path=config_path,
         base_train_yaml=base_train_yaml,
         work_dir=Path(str(launcher_d.get("work_dir", "out/train_matrix/default"))),
         gpus=gpus,
@@ -278,8 +281,10 @@ def _default_run_config(
     return merged
 
 
-def _resolve_repo_path(repo_root: Path, path: Path) -> Path:
-    return path if path.is_absolute() else (repo_root / path)
+def _resolve_repo_path(repo_root: Path, path: Path, *, config_dir: Path | None = None) -> Path:
+    if config_dir is None:
+        return path if path.is_absolute() else (repo_root / path)
+    return resolve_config_path(path, repo_root=repo_root, config_dir=config_dir)
 
 
 def _resolve_generated_train_dir(cfg: MatrixLauncherConfig, *, repo_root: Path) -> Path:
@@ -292,12 +297,11 @@ def _resolve_generated_train_dir(cfg: MatrixLauncherConfig, *, repo_root: Path) 
 
 def prepare_matrix_runs(cfg: MatrixLauncherConfig, *, repo_root: Path) -> list[PreparedMatrixRun]:
     """根据基础 YAML 与各变体 override 生成独立运行配置文件。"""
-    base_yaml_path = cfg.base_train_yaml
-    if not base_yaml_path.is_absolute():
-        base_yaml_path = repo_root / base_yaml_path
+    config_dir = cfg.config_path.parent
+    base_yaml_path = _resolve_repo_path(repo_root, cfg.base_train_yaml, config_dir=config_dir)
     base_yaml = load_yaml_dict(base_yaml_path)
 
-    resolved_work_dir = _resolve_repo_path(repo_root, cfg.work_dir)
+    resolved_work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir)
     generated_dir = _resolve_generated_train_dir(cfg, repo_root=repo_root)
     logs_dir = resolved_work_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -312,8 +316,14 @@ def prepare_matrix_runs(cfg: MatrixLauncherConfig, *, repo_root: Path) -> list[P
         merged = _default_run_config(merged=merged, spec=spec, launcher_cfg=cfg)
 
         run_d = _require_mapping(merged.get("run", {}), where="merged.run")
+        resolved_run_out_dir = _resolve_repo_path(
+            repo_root,
+            Path(str(run_d["out_dir"])),
+            config_dir=config_dir,
+        )
+        run_d["out_dir"] = relative_path_str(resolved_run_out_dir, base_dir=generated_dir)
         layout = RunLayout(
-            out_dir=Path(str(run_d["out_dir"])),
+            out_dir=resolved_run_out_dir,
             variant=str(run_d["variant"]),
         )
         if layout.run_dir in seen_run_dirs:
@@ -479,10 +489,18 @@ def _write_manifest(
     cfg: MatrixLauncherConfig,
     prepared_runs: Sequence[PreparedMatrixRun],
     path: Path,
+    repo_root: Path,
 ) -> None:
+    config_dir = cfg.config_path.parent
     payload = {
-        "base_train_yaml": relative_path_str(cfg.base_train_yaml, base_dir=path.parent),
-        "work_dir": relative_path_str(cfg.work_dir, base_dir=path.parent),
+        "base_train_yaml": relative_path_str(
+            _resolve_repo_path(repo_root, cfg.base_train_yaml, config_dir=config_dir),
+            base_dir=path.parent,
+        ),
+        "work_dir": relative_path_str(
+            _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir),
+            base_dir=path.parent,
+        ),
         "gpus": list(cfg.gpus),
         "max_parallel": cfg.max_parallel,
         "run_eval": cfg.run_eval,
@@ -555,9 +573,14 @@ def _generate_compare_outputs(
 
 def run_matrix_launcher(cfg: MatrixLauncherConfig, *, repo_root: Path) -> int:
     """按 GPU 池调度整个实验矩阵，并汇总 summary/compare 产物。"""
-    resolved_work_dir = _resolve_repo_path(repo_root, cfg.work_dir)
+    resolved_work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=cfg.config_path.parent)
     prepared_runs = prepare_matrix_runs(cfg, repo_root=repo_root)
-    _write_manifest(cfg=cfg, prepared_runs=prepared_runs, path=resolved_work_dir / "manifest.yaml")
+    _write_manifest(
+        cfg=cfg,
+        prepared_runs=prepared_runs,
+        path=resolved_work_dir / "manifest.yaml",
+        repo_root=repo_root,
+    )
 
     pending = list(prepared_runs)
     gpu_pool = list(cfg.gpus[: cfg.max_parallel])

@@ -37,6 +37,9 @@ summary.csv / ranking.csv / manifest.yaml / compare_<split>/*
 - 若比较对象来自不同训练主线，优先通过 `runs[].eval`
   指定统一的预测列 / 目标列 / 观测 mask，再做排行。
 - 排行协议只用于离线候选比较，不等价于闭环最终结论。
+- 路径解析同时兼容两类 replay 配置：
+  - 仓库内手写配置常使用 repo-root 相对路径（如 `configs/...`、`out/...`）
+  - `server_pipeline` 生成配置会写成相对配置文件目录的 `../..` 路径
 """
 
 from __future__ import annotations
@@ -51,7 +54,11 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from uwnav_dynamics.experiment.layout import load_yaml_dict
-from uwnav_dynamics.experiment.paths import relative_path_str, to_snapshot_value
+from uwnav_dynamics.experiment.paths import (
+    relative_path_str,
+    resolve_config_path,
+    to_snapshot_value,
+)
 from uwnav_dynamics.solver.replay import (
     ReplayEvalSpec,
     ReplayThresholdSpec,
@@ -91,6 +98,7 @@ class ReplayMatrixRunSpec:
 @dataclass(frozen=True)
 class ReplayMatrixConfig:
     """replay 批量评估的全局运行配置。"""
+    config_path: Path
     work_dir: Path
     split: str
     device: str | None
@@ -134,7 +142,8 @@ def _parse_str_list(value: Any, *, where: str) -> tuple[str, ...]:
 
 def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
     """从 yaml 加载 replay 批量评估配置。"""
-    raw = load_yaml_dict(path)
+    config_path = Path(path).expanduser().resolve()
+    raw = load_yaml_dict(config_path)
     launcher = _require_mapping(raw.get("launcher", {}), where="launcher")
     runs_raw = raw.get("runs", [])
     if not isinstance(runs_raw, list) or len(runs_raw) <= 0:
@@ -197,6 +206,7 @@ def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
         )
 
     return ReplayMatrixConfig(
+        config_path=config_path,
         work_dir=work_dir,
         split=split,
         device=None if launcher.get("device") in (None, "") else str(launcher.get("device")),
@@ -216,8 +226,10 @@ def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
     )
 
 
-def _resolve_repo_path(repo_root: Path, value: Path) -> Path:
-    return value if value.is_absolute() else (repo_root / value).resolve()
+def _resolve_repo_path(repo_root: Path, value: Path, *, config_dir: Path | None = None) -> Path:
+    if config_dir is None:
+        return value if value.is_absolute() else (repo_root / value).resolve()
+    return resolve_config_path(value, repo_root=repo_root, config_dir=config_dir)
 
 
 def _safe_error_text(exc: BaseException) -> str:
@@ -279,11 +291,12 @@ def _compute_ranking_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def _write_manifest(*, cfg: ReplayMatrixConfig, path: Path, repo_root: Path) -> None:
+    config_dir = cfg.config_path.parent
     payload = {
         "schema_version": "transition_replay_matrix_v1",
         "launcher": to_snapshot_value(
             {
-                "work_dir": _resolve_repo_path(repo_root, cfg.work_dir),
+                "work_dir": _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir),
                 "split": cfg.split,
                 "device": cfg.device,
                 "min_steps": cfg.min_steps,
@@ -305,8 +318,10 @@ def _write_manifest(*, cfg: ReplayMatrixConfig, path: Path, repo_root: Path) -> 
                     "name": run.name,
                     "label": run.label,
                     "role": run.role,
-                    "train_yaml": _resolve_repo_path(repo_root, run.train_yaml),
-                    "ckpt": None if run.ckpt is None else _resolve_repo_path(repo_root, run.ckpt),
+                    "train_yaml": _resolve_repo_path(repo_root, run.train_yaml, config_dir=config_dir),
+                    "ckpt": None
+                    if run.ckpt is None
+                    else _resolve_repo_path(repo_root, run.ckpt, config_dir=config_dir),
                     "split": run.split,
                     "device": run.device,
                     "min_steps": run.min_steps,
@@ -403,7 +418,8 @@ def _generate_compare_outputs(*, cfg: ReplayMatrixConfig, rows: Sequence[dict[st
 
 def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) -> tuple[Path, Path]:
     """按统一协议执行多个候选模型的长序列 replay，并写出 summary/ranking。"""
-    work_dir = _resolve_repo_path(repo_root, cfg.work_dir)
+    config_dir = cfg.config_path.parent
+    work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     _write_manifest(cfg=cfg, path=work_dir / "manifest.yaml", repo_root=repo_root)
 
@@ -418,16 +434,24 @@ def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) ->
             "role": run.role or "",
             "status": "ok",
             "error": "",
-            "train_yaml": relative_path_str(_resolve_repo_path(repo_root, run.train_yaml), base_dir=work_dir),
-            "ckpt": "" if run.ckpt is None else relative_path_str(_resolve_repo_path(repo_root, run.ckpt), base_dir=work_dir),
+            "train_yaml": relative_path_str(
+                _resolve_repo_path(repo_root, run.train_yaml, config_dir=config_dir),
+                base_dir=work_dir,
+            ),
+            "ckpt": ""
+            if run.ckpt is None
+            else relative_path_str(
+                _resolve_repo_path(repo_root, run.ckpt, config_dir=config_dir),
+                base_dir=work_dir,
+            ),
             "out_dir": relative_path_str(out_dir, base_dir=work_dir),
             "metrics_path": relative_path_str(metrics_path, base_dir=work_dir),
         }
         row.update({field: "" for field in REPLAY_SUMMARY_FIELDS})
         try:
             loaded = load_trained_transition_solver(
-                train_yaml=_resolve_repo_path(repo_root, run.train_yaml),
-                ckpt=None if run.ckpt is None else _resolve_repo_path(repo_root, run.ckpt),
+                train_yaml=_resolve_repo_path(repo_root, run.train_yaml, config_dir=config_dir),
+                ckpt=None if run.ckpt is None else _resolve_repo_path(repo_root, run.ckpt, config_dir=config_dir),
                 device=(run.device or cfg.device),
             )
             replay_dataset = load_replay_dataset(loaded.cfg_train.data.data_dir)
@@ -451,8 +475,10 @@ def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) ->
                 ),
             )
             cfg_snapshot = {
-                "train_yaml": _resolve_repo_path(repo_root, run.train_yaml),
-                "ckpt": None if run.ckpt is None else _resolve_repo_path(repo_root, run.ckpt),
+                "train_yaml": _resolve_repo_path(repo_root, run.train_yaml, config_dir=config_dir),
+                "ckpt": None
+                if run.ckpt is None
+                else _resolve_repo_path(repo_root, run.ckpt, config_dir=config_dir),
                 "split": split,
                 "device": run.device or cfg.device or str(loaded.cfg_train.run.device),
                 "data_dir": loaded.cfg_train.data.data_dir,

@@ -55,7 +55,7 @@ from uwnav_dynamics.experiment.final_selection import (
     write_paper_artifact_manifest,
 )
 from uwnav_dynamics.experiment.layout import load_yaml_dict
-from uwnav_dynamics.experiment.paths import relative_path_str, to_snapshot_value
+from uwnav_dynamics.experiment.paths import relative_path_str, resolve_config_path, to_snapshot_value
 
 
 @dataclass(frozen=True)
@@ -87,6 +87,7 @@ class ReplayFromMatrixSpec:
 @dataclass(frozen=True)
 class ServerPipelineConfig:
     """服务器全流程编排配置。"""
+    config_path: Path
     work_dir: Path
     fail_fast: bool
     fusion_yamls: tuple[Path, ...] = ()
@@ -118,7 +119,8 @@ def _parse_optional_int(value: Any) -> int | None:
 
 def load_server_pipeline_config(path: str | Path) -> ServerPipelineConfig:
     """从 yaml 加载服务器全流程编排配置。"""
-    raw = load_yaml_dict(path)
+    config_path = Path(path).expanduser().resolve()
+    raw = load_yaml_dict(config_path)
     launcher = _require_mapping(raw.get("launcher", {}), where="launcher")
     preprocess = _require_mapping(raw.get("preprocess", {}), where="preprocess")
     smoke = raw.get("smoke", [])
@@ -179,6 +181,7 @@ def load_server_pipeline_config(path: str | Path) -> ServerPipelineConfig:
         )
 
     return ServerPipelineConfig(
+        config_path=config_path,
         work_dir=Path(str(launcher.get("work_dir", "out/server_pipeline/default"))),
         fail_fast=bool(launcher.get("fail_fast", False)),
         fusion_yamls=_parse_path_list(preprocess.get("fusion_yamls", []), where="preprocess.fusion_yamls"),
@@ -189,8 +192,10 @@ def load_server_pipeline_config(path: str | Path) -> ServerPipelineConfig:
     )
 
 
-def _resolve_repo_path(repo_root: Path, value: Path) -> Path:
-    return value if value.is_absolute() else (repo_root / value).resolve()
+def _resolve_repo_path(repo_root: Path, value: Path, *, config_dir: Path | None = None) -> Path:
+    if config_dir is None:
+        return value if value.is_absolute() else (repo_root / value).resolve()
+    return resolve_config_path(value, repo_root=repo_root, config_dir=config_dir)
 
 
 def _build_env(repo_root: Path) -> dict[str, str]:
@@ -202,22 +207,23 @@ def _build_env(repo_root: Path) -> dict[str, str]:
 
 
 def _write_manifest(*, cfg: ServerPipelineConfig, repo_root: Path, path: Path) -> None:
+    config_dir = cfg.config_path.parent
     payload = {
         "schema_version": "server_pipeline_v1",
         "launcher": to_snapshot_value(
             {
-                "work_dir": _resolve_repo_path(repo_root, cfg.work_dir),
+                "work_dir": _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir),
                 "fail_fast": cfg.fail_fast,
             },
             base_dir=path.parent,
         ),
         "preprocess": {
             "fusion_yamls": to_snapshot_value(
-                [_resolve_repo_path(repo_root, p) for p in cfg.fusion_yamls],
+                [_resolve_repo_path(repo_root, p, config_dir=config_dir) for p in cfg.fusion_yamls],
                 base_dir=path.parent,
             ),
             "dataset_yamls": to_snapshot_value(
-                [_resolve_repo_path(repo_root, p) for p in cfg.dataset_yamls],
+                [_resolve_repo_path(repo_root, p, config_dir=config_dir) for p in cfg.dataset_yamls],
                 base_dir=path.parent,
             ),
         },
@@ -225,7 +231,7 @@ def _write_manifest(*, cfg: ServerPipelineConfig, repo_root: Path, path: Path) -
             to_snapshot_value(
                 {
                     "name": item.name,
-                    "yaml": _resolve_repo_path(repo_root, item.yaml_path),
+                    "yaml": _resolve_repo_path(repo_root, item.yaml_path, config_dir=config_dir),
                     "device": item.device,
                     "epochs": item.epochs,
                     "batch_size": item.batch_size,
@@ -235,15 +241,15 @@ def _write_manifest(*, cfg: ServerPipelineConfig, repo_root: Path, path: Path) -
             for item in cfg.smoke_runs
         ],
         "train_matrix": to_snapshot_value(
-            [_resolve_repo_path(repo_root, p) for p in cfg.train_matrix_configs],
+            [_resolve_repo_path(repo_root, p, config_dir=config_dir) for p in cfg.train_matrix_configs],
             base_dir=path.parent,
         ),
         "replay": [
             to_snapshot_value(
                 {
                     "name": item.name,
-                    "source_summary_csv": _resolve_repo_path(repo_root, item.source_summary_csv),
-                    "work_dir": _resolve_repo_path(repo_root, item.work_dir),
+                    "source_summary_csv": _resolve_repo_path(repo_root, item.source_summary_csv, config_dir=config_dir),
+                    "work_dir": _resolve_repo_path(repo_root, item.work_dir, config_dir=config_dir),
                     "split": item.split,
                     "device": item.device,
                     "min_steps": item.min_steps,
@@ -315,8 +321,9 @@ def _build_generated_replay_config(
     spec: ReplayFromMatrixSpec,
     repo_root: Path,
     generated_dir: Path,
+    config_dir: Path,
 ) -> Path:
-    summary_csv = _resolve_repo_path(repo_root, spec.source_summary_csv)
+    summary_csv = _resolve_repo_path(repo_root, spec.source_summary_csv, config_dir=config_dir)
     if not summary_csv.exists():
         raise FileNotFoundError(f"replay source summary.csv not found: {summary_csv}")
 
@@ -348,7 +355,10 @@ def _build_generated_replay_config(
 
     payload = {
         "launcher": {
-            "work_dir": relative_path_str(_resolve_repo_path(repo_root, spec.work_dir), base_dir=generated_dir),
+            "work_dir": relative_path_str(
+                _resolve_repo_path(repo_root, spec.work_dir, config_dir=config_dir),
+                base_dir=generated_dir,
+            ),
             "split": spec.split,
             "device": spec.device,
             "min_steps": spec.min_steps,
@@ -373,7 +383,8 @@ def _build_generated_replay_config(
 
 def run_server_pipeline(cfg: ServerPipelineConfig, *, repo_root: Path) -> Path:
     """执行服务器全流程编排，并返回 phase_status.csv 路径。"""
-    work_dir = _resolve_repo_path(repo_root, cfg.work_dir)
+    config_dir = cfg.config_path.parent
+    work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir)
     logs_dir = work_dir / "logs"
     generated_dir = work_dir / "generated_replay_matrix"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -416,7 +427,7 @@ def run_server_pipeline(cfg: ServerPipelineConfig, *, repo_root: Path) -> Path:
             name=name,
             status=status,
             returncode=rc,
-            config_path=_resolve_repo_path(repo_root, config_path),
+            config_path=_resolve_repo_path(repo_root, config_path, config_dir=config_dir),
             generated_config_path=None,
             log_path=log_path,
         )
@@ -461,6 +472,7 @@ def run_server_pipeline(cfg: ServerPipelineConfig, *, repo_root: Path) -> Path:
             spec=item,
             repo_root=repo_root,
             generated_dir=generated_dir,
+            config_dir=config_dir,
         )
         log_path = logs_dir / f"replay_{item.name}.log"
         rc = _run_logged(
@@ -474,7 +486,7 @@ def run_server_pipeline(cfg: ServerPipelineConfig, *, repo_root: Path) -> Path:
             name=item.name,
             status=status,
             returncode=rc,
-            config_path=_resolve_repo_path(repo_root, item.source_summary_csv),
+            config_path=_resolve_repo_path(repo_root, item.source_summary_csv, config_dir=config_dir),
             generated_config_path=generated_cfg,
             log_path=log_path,
         )
@@ -486,8 +498,8 @@ def run_server_pipeline(cfg: ServerPipelineConfig, *, repo_root: Path) -> Path:
     train_summary_paths: list[Path] = []
     replay_ranking_paths: list[Path] = []
     for item in cfg.replay_jobs:
-        train_summary_csv = _resolve_repo_path(repo_root, item.source_summary_csv)
-        replay_ranking_csv = _resolve_repo_path(repo_root, item.work_dir) / "ranking.csv"
+        train_summary_csv = _resolve_repo_path(repo_root, item.source_summary_csv, config_dir=config_dir)
+        replay_ranking_csv = _resolve_repo_path(repo_root, item.work_dir, config_dir=config_dir) / "ranking.csv"
         if not train_summary_csv.exists() or not replay_ranking_csv.exists():
             continue
         train_summary_paths.append(train_summary_csv)

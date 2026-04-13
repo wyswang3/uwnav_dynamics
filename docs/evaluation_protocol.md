@@ -594,6 +594,17 @@ work_dir/
 - `manifest.yaml`
   - 固定本次批量比较使用的 split、最小 segment 长度、保存样例数量与排行协议
 
+对于 `transition_replay_matrix` 的配置文件，还需要额外固定路径解析约定：
+
+- 手写 launcher 配置可以继续使用 repo-root 相对路径
+  - 例如 `configs/train/...`、`out/replay_matrix/...`
+- 由 `server_pipeline` 自动生成的 replay matrix 配置，
+  允许使用相对“该配置文件所在目录”的 `../..` 路径
+- 运行时必须兼容这两类来源
+  - 否则把服务器生成配置带回本地或跨目录重放时，
+    `train_yaml / ckpt / work_dir` 很容易被错误解析到仓库外部路径，
+    导致 replay / ranking 看起来“全部失效”，但实际是配置文件未被正确读取
+
 当前推荐排行协议：
 
 - 先过硬门槛：

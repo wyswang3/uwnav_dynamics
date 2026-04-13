@@ -261,3 +261,23 @@ run:
 ```
 
 这样路径契约简洁、稳定，也更适合后续自动化管线与审查。
+
+### 6.4 launcher 相对路径锚点
+
+对于 `train_matrix / server_pipeline / transition_replay_matrix` 这类 launcher 配置，
+当前路径解析约定需要额外固定为：
+
+- 普通仓库内路径
+  - 例如 `configs/...`、`out/...`、`data/...`
+  - 继续按 repo-root 相对路径解释
+- 显式包含 `..` 的路径
+  - 视为“相对当前配置文件所在目录”
+  - 典型用途是：
+    - 把 launcher 配置放到临时目录或服务器工作目录下
+    - 仍希望 `work_dir / source_summary_csv / replay_out_dir / generated train yaml run.out_dir`
+      跟着该配置目录一起迁移
+
+这样做的目的有两个：
+
+- 避免把原本想写到配置旁边的产物错误展开到系统根目录或仓库外层目录
+- 避免 server 侧自动生成配置带回本地后，因为工作目录不同而出现“文件找不到 / 产物写错位置”
