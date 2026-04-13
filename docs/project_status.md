@@ -1,12 +1,12 @@
 # 项目当前状态
 
-更新时间：2026-04-11（晚）
+更新时间：2026-04-12
 
 ## 1. 当前阶段
 
 项目当前处于：
 
-**`状态转移求解器升级 Phase 1 已完成；当前推荐主线已切换到 quality-context + single-step 的 7 GPU 正式筛选方案`**
+**`状态转移求解器升级 Phase 1 已完成；当前推荐主线已收口为 quality-context + single-step，其中下一轮正式训练优先采用 8 GPU 的 single-step 主线`**
 
 当前主目标是：
 
@@ -70,7 +70,7 @@
   - `src/uwnav_dynamics/cli/transition_replay.py`
 - 当前建议优先基于 `quality_step_v1` 分支验证经验型状态求解器
 
-### 2026-04-11 服务器训练快照
+### 2026-04-11 服务器训练快照（已完成 7 GPU 基线批次）
 
 - 已完成：
   - `fusion`
@@ -108,6 +108,7 @@
 
 - 单步状态转移主线 `quality_step_v1` 明显优于 `quality_v3`。
 - `B4 + blocks` 在当前单步主线上仍是最值得继续推进的候选。
+- 下一轮正式训练应优先启动 `pooltest02_s1_kf_quality_step_8gpu_v2`，而不是默认重开 `quality_v3` 宽矩阵。
 - 最优 run 的 `resolved_train.yaml` 中 `_meta.runtime_device = cuda`，说明主结果确实来自 GPU 训练：
   - `out/ckpts/pooltest02_s1_kf_quality_step_7gpu_v2/STEP_B4_grouped_tb_blocks_seed9/resolved_train.yaml`
   - `out/ckpts/pooltest02_s1_kf_quality_7gpu_v2/QV3_B4_grouped_tb_blocks_seed8/resolved_train.yaml`
@@ -157,11 +158,18 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
   - `configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml`
 - single-step 训练配置：
   - `configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml`
+- 8 GPU 矩阵：
+  - `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml`
+  - `configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml`
+- 8 GPU 全流程：
+  - `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
 - 7 GPU 矩阵：
   - `configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml`
   - `configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml`
 - 7 GPU 全流程设计：
   - `docs/design/transition_solver_full_pipeline_7gpu_v2.md`
+- 8 GPU 下一轮计划：
+  - `docs/design/pooltest02_8gpu_plan_after_7gpu.md`
 - 升级设计文档：
   - `docs/design/transition_solver_phase1_upgrade.md`
 
@@ -186,13 +194,13 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 
 当前建议严格按这个顺序推进：
 
-1. 用 Phase 1 修复后的代码重建融合基础表与数据集
-2. 做单卡 smoke，确认 `train_summary.yaml / eval_test/metrics.yaml` 正常
-3. 对比 v2、quality v3、quality step v1 三条单卡 smoke
-4. 用 `pooltest02_s1_kf_quality_7gpu_v2` 与 `pooltest02_s1_kf_quality_step_7gpu_v2` 完成正式矩阵
-5. 从服务器回收 `/home/wys/replay_matrix/...` 到仓库 `out/replay_matrix/...`，确认 `ranking.csv`
+1. 先从服务器回收 `/home/wys/replay_matrix/...` 到仓库 `out/replay_matrix/...`，确认上一轮 7 GPU 的 `ranking.csv`
+2. 若数据和配置未变化，不重跑 `fusion / dataset`，先做一次单卡 smoke 复核
+3. 优先启动 `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml`
+4. 基于 replay / solver 指标决定是否补跑 `configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml`
+5. 如需一键串联流程，使用 `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
 6. 基于 replay 排名选定最终一步状态转移求解器，再整理 top2 图包
-6. 最后再接最小 controller replay 或 RL wrapper
+7. 最后再接最小 controller replay 或 RL wrapper
 
 ## 8. 当前不建议的做法
 

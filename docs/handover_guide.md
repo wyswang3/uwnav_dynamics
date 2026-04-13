@@ -1,6 +1,6 @@
 # 项目交接指南
 
-更新时间：2026-04-11（晚）
+更新时间：2026-04-12
 
 ## 1. 当前接手时先知道什么
 
@@ -91,6 +91,7 @@ Phase 1 已完成并收口了前两个基础阻塞：
 - 两个最优 run 都确认 `runtime_device = cuda`
 - replay 结果暂未完整回收到仓库 `out/`，明天优先回收 `/home/wys/replay_matrix/...`
 - 服务器侧 `fusion + dataset` 预处理阶段已经完成；若数据和配置未变化，下次进入服务器可直接从训练、评估和 replay 验证开始。
+- 下一轮正式训练优先顺序应改为：先 `quality_step_8gpu_v2`，再决定是否补跑 `quality_8gpu_v2`。
 
 ## 4. 当前最短工作流
 
@@ -160,20 +161,31 @@ python -m uwnav_dynamics.cli.train \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
 ```
 
-5. 7 卡训练矩阵
+5. 当前推荐训练矩阵顺序
 
 说明：
 
-- 当前默认只占用第 1 到第 7 张 GPU 卡；
-- 若服务器按 0-based CUDA 编号，则对应 `gpus: [0,1,2,3,4,5,6]`；
-- 第 8 张物理卡对应 CUDA id `7`，当前留给其他任务。
+- 当前训练采用多卡并发单卡实验矩阵，不是 DDP。
+- 若 8 张卡都可用，优先使用 `8gpu_v2`；
+- 若仍需让出一张卡，再回退到 `7gpu_v2`。
+- 当前更推荐先做单步状态转移主线，再决定是否补长期拟合对照。
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml
 
 python -m uwnav_dynamics.cli.train_matrix \
+  -c configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml
+```
+
+如果当前只有 7 张卡可用，则回退到：
+
+```bash
+python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
+
+python -m uwnav_dynamics.cli.train_matrix \
+  -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
 ```
 
 6. 单次评估、可视化与 replay 验证
@@ -256,8 +268,9 @@ run 级筛选：
 下一步最合理的顺序是：
 
 1. 先回收服务器上的 replay 结果目录与 `ranking.csv`
-2. 基于 replay ranking 确认最终 solver 候选与备选
-3. 再决定是否需要补跑失败候选，而不是直接整批重开
+2. 用 `quality_step_8gpu_v2` 做下一轮正式 single-step 训练
+3. 基于 replay ranking 确认最终 solver 候选与备选
+4. 再决定是否需要补跑 `quality_8gpu_v2` 或其他失败候选，而不是直接整批重开
 4. 最后整理 top2 图包和论文表格
 
 如果后续要继续扩展，应优先扩训练与评估链、求解器接口与最小 replay 验证，

@@ -177,9 +177,24 @@ What Phase 1 does \emph{not} prove is:
 \item or equivalence to a high-fidelity physical simulator.
 \end{itemize}
 
+\subsection{Current Engineering Interpretation}
+
+The present repository still contains both:
+\begin{itemize}
+\item a multi-step block-prediction line for horizon-comparable offline evaluation, and
+\item a single-step transition line that is closer to a solver-style recursive interface.
+\end{itemize}
+
+The current engineering preference is the second line.
+This preference does not come from aesthetics; it comes from the project requirement that the model be usable as a short-horizon transition component inside replay, control-readiness analysis, and later controller / RL integration.
+
+Therefore, the most relevant mathematical question is no longer
+``how far can a fixed future block be predicted,'' but rather
+``whether a causally constructed proxy state admits a stable short recursive transition law.''
+
 \subsection{Next Mathematical Step}
 
-The next step is to shift from block prediction toward explicit one-step transition learning:
+The next step is to consolidate the existing single-step transition branch and continue shifting from block prediction toward explicit one-step transition learning:
 \[
 \hat{\mathbf{x}}_{k+1} = f_{\vartheta}(\hat{\mathbf{x}}_k, \mathbf{u}_k, \mathbf{c}_k),
 \]
@@ -206,4 +221,4 @@ where:
 \end{itemize}
 
 This is the mathematically natural bridge from offline fitted sequence prediction
-to a transition model usable by control and reinforcement learning.
+to a transition model usable by replay screening, control-oriented validation, and reinforcement learning.

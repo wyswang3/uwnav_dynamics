@@ -12,6 +12,7 @@ data/raw/**/*_aligned.png
 data/raw/**/offline_nav_outputs/
 datasets/
 out/
+replay_matrix/
 outputs/
 runs/
 logs/
@@ -92,6 +93,7 @@ tests/
 tmp/
 temp/
 *.tmp
+repo_tree.txt/
 
 ############################
 # local tools

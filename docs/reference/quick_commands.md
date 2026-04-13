@@ -266,17 +266,33 @@ tail_error.abs_p99_global
 bias.worst_abs_bias
 ```
 
-## 9. 7 卡服务器重训
+## 9. 服务器重训
 
 说明：
 
-- 当前推荐策略不是单模型 DDP，而是只使用第 1 到第 7 张 GPU 卡做单卡实验并发。
-- 若服务器按 0-based CUDA 编号，则对应 `launcher.gpus: [0,1,2,3,4,5,6]`。
+- 当前推荐策略不是单模型 DDP，而是多张 GPU 上并发跑独立单卡实验。
+- 若服务器 8 张卡都可用，优先使用 `8gpu_v2` 方案；若仍需让出一张卡，再回退到 `7gpu_v2`。
 - `pred_len=10` 与 `pred_len=1` 分开跑，避免混入同一个 compare 链。
 
-### 9.0 一键服务器全流程
+### 9.0 一键服务器全流程（8 卡优先）
 
-如果需要在 7 卡服务器资源约束下从预处理一直跑到最终方案评估，直接执行：
+如果 8 张卡都可用，并希望从预处理一直跑到最终方案评估，直接执行：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml
+```
+
+总控产物：
+
+```text
+out/server_pipeline/pooltest02_kf_full_8gpu_v2/manifest.yaml
+out/server_pipeline/pooltest02_kf_full_8gpu_v2/phase_status.csv
+out/server_pipeline/pooltest02_kf_full_8gpu_v2/generated_replay_matrix/
+out/server_pipeline/pooltest02_kf_full_8gpu_v2/logs/
+```
+
+如果当前仍按 7 卡资源约束运行，再执行：
 
 ```bash
 PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
@@ -292,7 +308,18 @@ out/server_pipeline/pooltest02_kf_full_7gpu_v2/generated_replay_matrix/
 out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/
 ```
 
-最终重点查看：
+8 卡全流程最终重点查看：
+
+```text
+out/train_matrix/pooltest02_s1_kf_quality_8gpu_v2/summary.csv
+out/train_matrix/pooltest02_s1_kf_quality_step_8gpu_v2/summary.csv
+out/replay_matrix/pooltest02_s1_kf_quality_8gpu_v2/ranking.csv
+out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2/ranking.csv
+out/server_pipeline/pooltest02_kf_full_8gpu_v2/final_selection.csv
+out/server_pipeline/pooltest02_kf_full_8gpu_v2/paper_artifact_manifest.yaml
+```
+
+7 卡回退方案最终重点查看：
 
 ```text
 out/train_matrix/pooltest02_s1_kf_quality_7gpu_v2/summary.csv
@@ -303,14 +330,30 @@ out/server_pipeline/pooltest02_kf_full_7gpu_v2/final_selection.csv
 out/server_pipeline/pooltest02_kf_full_7gpu_v2/paper_artifact_manifest.yaml
 ```
 
-### 9.1 多步主线 7 卡矩阵
+### 9.1 当前更推荐的 8 卡训练顺序
+
+当前阶段更推荐先跑单步状态转移主线，再决定是否补跑长期拟合主线：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml
+```
+
+如果 replay / solver 复核后仍需补长期拟合对照，再跑：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \
+  -c configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml
+```
+
+### 9.2 7 卡回退矩阵
 
 ```bash
 PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
 ```
 
-### 9.2 单步实验线 7 卡矩阵
+### 9.3 单步实验线 7 卡矩阵
 
 ```bash
 PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \

@@ -46,6 +46,10 @@ Therefore, the main engineering requirement is not a visually impressive traject
 \subsection{Current Repository Status}
 
 The repository does not yet expose a fully unified production-ready \texttt{step(u\_t, dt)} interface.
-However, the present data contract and the single-step transition branch already define the mathematical form such an interface should follow.
+However, the present data contract, the single-step transition branch, and the offline transition-solver wrapper already define the mathematical form such an interface should follow.
+
+In other words, the project is no longer only discussing a solver in the abstract:
+it already has the ingredients for offline replay-style solver validation,
+but it has not yet completed the final interface unification needed for controller deployment.
 
 This makes the current phase a preparation stage for solver-style deployment rather than a terminal modeling stage.

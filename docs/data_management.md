@@ -1,6 +1,6 @@
 # 数据与 Git 管理规则
 
-更新时间：2026-04-10
+更新时间：2026-04-13
 
 ## 1. 目标
 
@@ -21,6 +21,7 @@ data/
   splits/
 
 out/
+replay_matrix/
 runs/
 ```
 
@@ -31,6 +32,7 @@ runs/
 - `data/processed/`：训练直接消费的数据集产物，不进 git
 - `data/splits/`：外部统一 split 索引或临时划分产物，不进 git
 - `out/`：训练、评估、绘图、日志、矩阵结果，不进 git
+- `replay_matrix/`：本地临时回收或人工整理的 replay 汇总目录，不进 git
 - `runs/`：运行期目录，不进 git
 
 ## 3. Git 入库规则
@@ -46,12 +48,15 @@ runs/
   - `data/processed/**`
   - `data/splits/**`
   - `out/**`
+  - `replay_matrix/**`
   - `runs/**`
 
 这意味着：
 
 - 原始数据是仓库的可复现实验输入
 - 处理后数据是可重建 artifact，不是版本控制真源
+- replay 结果若需要长期引用，应统一整理到 `out/replay_matrix/<variant>/`
+- 本地手工回收、比对或临时汇总目录保持在仓库忽略区内
 
 ## 4. `raw/` 目录边界
 
@@ -99,6 +104,16 @@ python -m uwnav_dynamics.preprocess.build_dataset \
 
 - [reference/quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
 - [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
+
+## 5.1 Replay 结果目录约定
+
+当前 replay 相关目录职责统一为：
+
+- `out/replay_matrix/<variant>/`：正式运行产物目录，作为评估与汇报引用路径
+- `replay_matrix/<variant>/`：本地临时回收、副本整理或人工比对目录，不进 git
+
+若需要把服务器侧 replay 结果带回仓库，应优先整理到 `out/replay_matrix/` 契约下；
+不要把临时汇总目录直接放在根目录等待入库。
 
 ## 6. 当前建议的最小审计信息
 

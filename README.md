@@ -2,7 +2,25 @@
 
 面向水下机器人的科研级数据驱动状态转移建模仓库。
 
-当前主线不是恢复完整精确水动力学，也不是直接交付闭环控制系统，而是把离线训练得到的学习型动力学模型推进到“可验证的状态转移求解器”阶段，使其能够为控制仿真、controller-in-the-loop 验证和后续强化学习环境提供短时动态预测能力。
+当前主线不是恢复完整精确水动力学，也不是直接交付闭环控制系统，而是把离线训练得到的学习型动力学模型推进到“可验证的状态转移求解器”阶段，使其能够承担短时状态递推、经验型仿真内核和 controller-in-the-loop / model-based RL 前置验证中的动态预测职责。
+
+## 当前阶段
+
+当前项目已经从“宽矩阵长时拟合探索”收口到：
+
+**因果 KF 状态代理量 -> 质量上下文增强 -> 一步状态转移建模 -> 长序列 replay 验证**
+
+当前应优先回答三个问题：
+
+- 因果状态代理量链是否足够稳定，能支撑短时递推。
+- 学习模型能否更接近 `x_{t+1} = f(x_t, u_t, c_t)` 的一步状态转移算子。
+- 离线评估与长序列 replay 是否足以支撑“进入最小控制/仿真闭环前”的工程判断。
+
+截至 2026-04-11 晚，已有 7 卡正式矩阵结果表明：
+
+- `quality_step_v1` 的离线最优候选优于 `quality_v3`
+- `B4 + blocks` 仍是当前最值得继续推进的结构家族
+- 下一轮正式训练更适合优先使用 8 卡并发矩阵继续做 `single-step` 主线确认
 
 ## 项目定位
 
@@ -10,7 +28,7 @@
 
 - 如何把异步、多频、含噪传感器链路收口为统一的因果状态代理量。
 - 如何训练一个对控制输入敏感、可递推、可评估的短时状态转移模型。
-- 如何在不依赖高保真物理真值模型的前提下，为控制与 RL 提供工程上可用的动态内核。
+- 如何在不依赖高保真物理真值模型的前提下，为控制验证与 RL 提供工程上可用的动态内核。
 
 当前对模型的正确定位是：
 
@@ -24,9 +42,9 @@
 - 完整闭环控制系统
 - 已验证可实机部署的安全控制栈
 
-## 当前主线
+## 方法总览
 
-当前工程主线已经切到“因果状态代理量训练”：
+当前工程主线是：
 
 ```text
 Raw Logs
@@ -36,7 +54,8 @@ Raw Logs
 -> Proxy-state dataset build
 -> S1Predictor training
 -> Offline transition evaluation
--> Controller / simulator readiness analysis
+-> Transition replay / solver ranking
+-> Minimal controller or simulator integration
 ```
 
 默认主时间轴为 `100 Hz`，主要数据源为：
@@ -46,9 +65,9 @@ Raw Logs
 - DVL: `10 Hz`
 - Power: `5 Hz`
 
-## 当前数据与模型契约
+数据与模型的核心契约如下。
 
-### 代理状态定义
+### 代理状态
 
 当前主监督状态代理量为 `9` 维：
 
@@ -64,76 +83,107 @@ Raw Logs
 
 ### 当前活跃配置分支
 
-1. `kf_ctx_v2` 主线  
-   `29 -> 9`，用于多步 block rollout：
-   `PWM 8 + AccKf 3 + GyroKf 3 + VelKf 3 + AttCtx 4 + Power 8`
+1. `kf_ctx_v2`
+   `29 -> 9`，作为历史对照主线与旧结果参照。
 
-2. `quality_v3` 主线增强版  
-   `34 -> 9`，在 `kf_ctx_v2` 基础上加入状态质量上下文：
+2. `quality_v3`
+   `34 -> 9`，在 `kf_ctx_v2` 基础上加入质量上下文：
    `HasDvlUpdate 1 + DtSinceDvl_s 1 + VelKfVar 3`
 
-3. `quality_step_v1` 单步状态转移实验分支  
-   保持 `34 -> 9`，但把 `pred_len` 收口为 `1`，用于更接近
-   `x_{t+1} = f(x_t, u_t, c_t)` 的建模路径
+3. `quality_step_v1`
+   `34 -> 9`，保持相同输入语义，但将 `pred_len` 收口为 `1`，
+   作为更接近 `x_{t+1}=f(x_t,u_t,c_t)` 的一步状态转移实验主线。
 
 ### 当前主模型
 
 - family: `S1Predictor`
-- 默认 rollout: `y_hat = y0 + cumsum(dY)`
+- 当前默认 rollout 语义：`y_hat = y0 + cumsum(dY)`
 - 当前推荐损失：`transition_balance`
 - 当前推荐训练监控：`val_transition_score`
 
-这意味着当前仓库同时维护两条研究线：
+这意味着仓库当前同时维护两条研究线：
 
-- 多步块输出主线，用于维持现有评估与图包可比性
-- 单步状态转移实验线，用于向控制与 RL 接口收口
+- 多步块输出主线：维持现有 horizon / rollout 图包可比性
+- 单步状态转移主线：向 solver、控制和 RL 接口收口
 
-## 为什么使用 KF 状态代理量
+## 当前训练思路
 
-当前工程判断是：对“状态转移求解器”来说，训练目标使用因果滤波后的体坐标系状态代理量，比直接使用原始传感器序列更有代表性。
+当前更推荐的训练决策，不是“先把所有长时拟合再补一轮”，而是：
 
-原因是原始异步观测会把以下问题同时压给网络：
+1. 先用 `quality_step_v1` 做一步状态转移矩阵
+2. 基于 replay ranking 看 solver 稳定性和尾部误差
+3. 再决定是否补跑 `quality_v3` 作为长期拟合对照
 
-- 时间对齐
-- 去噪和 bias 抑制
-- 稀疏观测补全
-- 受控动力学学习
+这样更符合当前阶段目标，因为我们现在要验证的是“能否作为状态转移部件使用”，而不是只追求长 horizon 图更好看。
 
-而 `KF / ESKF` 预处理把学习问题收口为：
+## 核心数学原理
 
-```text
-给定控制输入 u_t、
-代理状态 x_t、
-质量上下文 c_t，
-学习 x_{t+1} 或短时 rollout。
+本项目的数学思路可以压缩为三层。
+
+### 1. 因果状态代理量构造
+
+原始观测是异步、多频、带噪且部分缺失的：
+
+- IMU 稠密但噪声和 bias 明显
+- DVL 稀疏但能提供强速度校正
+- Power 是辅助致动上下文，不是主状态标签
+
+因此当前不直接学习“原始观测流到未来观测流”的映射，而是先构造因果状态代理量：
+
+```math
+\hat{x}_k = \mathcal{F}(Y_{0:k}, u_{0:k})
 ```
 
-这更接近系统辨识和控制建模问题本身，也更利于后续闭环验证。
+这里 `\hat{x}_k` 表示只依赖当前及过去信息的工程状态代理量。  
+这一步的目的是把学习问题从“同时做时间对齐、去噪、状态估计、动力学学习”，收口成“在已构造的状态空间上学习受控状态转移”。
 
-## 当前已经完成的关键升级
+### 2. 增量式状态转移建模
 
-当前仓库已经完成以下基础升级：
+当前目标不是恢复完整物理参数，而是在代理状态空间中学习：
 
-- `KF / ESKF` 初值 warm-start 已改为严格因果，不再从未来 DVL 泄漏初始化速度。
-- 共享状态维 `X/Y` scaler 已收口到单一统计量，避免 delta-cumsum rollout 语义失真。
-- `quality_v3` 质量上下文配置已经加入输入链。
-- `quality_step_v1` 单步状态转移实验分支已经建立。
-- 当前服务器矩阵已经拆成：
-  - `H=10` quality-context 主线矩阵
-  - `H=1` single-step transition 矩阵
+```math
+x_{k+1} = f_\theta(x_k, u_k, c_k)
+```
 
-因此，当前项目已经具备“重建数据集 -> 单卡 smoke -> 7 卡矩阵 -> 离线评估”的完整实验骨架。
+或等价地学习增量形式：
 
-## 当前阶段边界
+```math
+\Delta x_k = g_\theta(x_k, u_k, c_k), \qquad x_{k+1} = x_k + \Delta x_k
+```
 
-当前仍需保持这几个边界判断：
+其中：
 
-- KF 输出是状态代理量，不是高保真物理真值。
-- 当前默认主模型仍以 `S1Predictor` 为核心。
-- 多步主线仍是“历史窗 -> 固定未来块输出”，还不是严格的一步动力学算子。
-- 离线指标只能证明 rollout 与短时动态拟合质量，不能直接等价于闭环可用性证明。
+- `x_k` 是 `AccKf + GyroKf + VelKf`
+- `u_k` 是 8 维 PWM 控制输入
+- `c_k` 是姿态上下文、DVL 新鲜度和功率等辅助上下文
 
-## 最短上手路径
+多步主线仍采用 `dY + cumsum` 的 block rollout 语义；单步主线则在形式上更接近显式一步递推。
+
+### 3. 离线筛查不等于闭环证明
+
+当前训练与评估能证明的，是：
+
+- 短时状态转移是否数值自洽
+- rollout 是否稳定到足以进入 replay 验证
+- 哪些候选在 `final_step / rollout_growth / tail_error` 上更适合继续推进
+
+当前还不能直接证明的，是：
+
+- 全局闭环稳定性
+- 实机安全性
+- 与高保真物理仿真的等价性
+
+因此，当前推荐的证据链是：
+
+```text
+single-step train
+-> offline eval
+-> long-sequence replay
+-> solver ranking
+-> minimal controller/simulator integration
+```
+
+## 当前执行路线
 
 仓库根目录：
 
@@ -142,15 +192,7 @@ cd /home/wys/uwnav_dynamics
 export PYTHONPATH=src
 ```
 
-建议阅读顺序：
-
-1. `docs/handover_guide.md`
-2. `docs/project_status.md`
-3. `ARCHITECTURE.md`
-4. `docs/design/transition_solver_phase1_upgrade.md`
-5. `docs/handover_kf_training_server_v2.md`
-
-## 最短执行顺序
+### 最短执行顺序
 
 1. 生成融合基础表
 
@@ -159,66 +201,55 @@ python -m uwnav_dynamics.preprocess.fusion.cli_fuse_train_base \
   -y configs/fusion/pooltest02_kf_eskf_v2.yaml
 ```
 
-2. 构建数据集
-
-`kf_ctx_v2`：
-
-```bash
-python -m uwnav_dynamics.preprocess.build_dataset \
-  -y configs/dataset/pooltest02_s1_kf_ctx_v2.yaml
-```
-
-`quality_v3`：
-
-```bash
-python -m uwnav_dynamics.preprocess.build_dataset \
-  -y configs/dataset/pooltest02_s1_kf_ctx_quality_v3.yaml
-```
-
-`quality_step_v1`：
+2. 构建当前主数据集
 
 ```bash
 python -m uwnav_dynamics.preprocess.build_dataset \
   -y configs/dataset/pooltest02_s1_kf_ctx_quality_step_v1.yaml
 ```
 
-3. 单卡 smoke
+如需补长期拟合主线，再额外构建：
 
 ```bash
-python -m uwnav_dynamics.cli.train \
-  -y configs/train/pooltest02_s1_kf_ctx_quality_transition_v3.yaml
+python -m uwnav_dynamics.preprocess.build_dataset \
+  -y configs/dataset/pooltest02_s1_kf_ctx_quality_v3.yaml
 ```
 
-或单步实验：
+3. 单卡 smoke
 
 ```bash
 python -m uwnav_dynamics.cli.train \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
 ```
 
-4. 7 卡矩阵
+4. 当前推荐的 8 卡训练矩阵
 
-说明：
-
-- 当前默认只使用第 1 到第 7 张 GPU 卡；
-- 若服务器按 0-based CUDA 编号暴露设备，则对应 `launcher.gpus: [0,1,2,3,4,5,6]`；
-- 第 8 张物理卡对应 CUDA id `7`，当前方案不占用。
-
-`H=10` quality-context 主线：
+先跑一步状态转移主线：
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml
 ```
 
-`H=1` single-step 实验线：
+若 replay / solver 复核后仍需要长期拟合对照，再跑：
 
 ```bash
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml
 ```
 
-## 评估口径
+5. 8 卡一键全流程
+
+如果希望从预处理一直跑到 matrix + replay 结果整理，可直接执行：
+
+```bash
+python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml
+```
+
+如果服务器仍需让出一张卡，再回退到 `7gpu_v2` 方案。
+
+## 当前评估口径
 
 当前推荐的 run 级判断口径至少包括：
 
@@ -236,53 +267,32 @@ python -m uwnav_dynamics.cli.train_matrix \
 - 控制循环周期
 - 实际运行频率
 
-## 状态求解器升级
+## 当前阶段边界
 
-当前已经新增最小“经验型状态求解器 + 长序列 replay”升级链：
+当前仍需保持这些边界判断：
 
-- 求解器模块：`src/uwnav_dynamics/solver/transition_solver.py`
-- replay 验证：`src/uwnav_dynamics/cli/transition_replay.py`
-- replay 批量排行：`src/uwnav_dynamics/cli/transition_replay_matrix.py`
-- 服务器全流程：`src/uwnav_dynamics/cli/server_pipeline.py`
-
-推荐先用 `pred_len=1` 的一步状态转移分支训练，再做长序列 replay：
-
-```bash
-python -m uwnav_dynamics.cli.train \
-  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
-
-python -m uwnav_dynamics.cli.transition_replay \
-  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
-  --split test \
-  --min_steps 50
-
-python -m uwnav_dynamics.cli.transition_replay_matrix \
-  -c configs/launch/replay_matrix_example.yaml
-
-python -m uwnav_dynamics.cli.server_pipeline \
-  -c configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml
-```
-
-详细升级路线见：
-
-- `docs/design/transition_solver_phase2_replay_upgrade.md`
-- `docs/design/transition_solver_full_pipeline_7gpu_v2.md`
+- KF 输出是状态代理量，不是高保真物理真值
+- `S1Predictor` 仍是当前默认主模型 family
+- 多步主线仍是“历史窗 -> 固定未来块输出”，不是严格的一步动力学算子
+- 单步主线虽然更接近 solver 接口，但仍需要 replay ranking 形成更强证据
+- 离线指标和 replay 结果只能证明控制前筛查价值，不能直接等价于闭环可用性证明
 
 ## 文档入口
 
 - 文档总导航：`docs/README.md`
-- 项目状态：`docs/project_status.md`
 - 当前交接入口：`docs/handover_guide.md`
+- 项目状态：`docs/project_status.md`
 - 数据与 git 规则：`docs/data_management.md`
-- 服务器执行入口：`docs/handover_kf_training_server_v2.md`
 - 命令手册：`docs/reference/quick_commands.md`
+- 服务器执行入口：`docs/handover_kf_training_server_v2.md`
 - 工程升级路线：`docs/engineering_roadmap.md`
 - 建模路线：`docs/modeling_roadmap.md`
-- 设计说明：`docs/design/transition_solver_phase1_upgrade.md`
+- Phase 1 升级设计：`docs/design/transition_solver_phase1_upgrade.md`
+- 8 卡训练计划：`docs/design/pooltest02_8gpu_plan_after_7gpu.md`
 - 状态求解器升级：`docs/design/transition_solver_phase2_replay_upgrade.md`
-- 当前 7 GPU 全流程：`docs/design/transition_solver_full_pipeline_7gpu_v2.md`
 - 最终选模与论文产物契约：`docs/design/final_selection_artifact_contract_v1.md`
-- 数学原理：`docs/math/main.tex`
+- 数学原理入口：`docs/math/README.md`
+- 主数学文档：`docs/math/main.tex`
 - 评估规范：`docs/evaluation_protocol.md`
 - 文件索引：`docs/repo_index.md`
 
@@ -291,7 +301,7 @@ python -m uwnav_dynamics.cli.server_pipeline \
 - 修改训练、预处理、评估或接口契约后，必须同步更新文档。
 - 新增代码文件必须包含中文模块说明。
 - 当前阶段优先做最小闭环验证，不扩大成完整系统重做。
-- 本地默认只做轻量测试；正式训练与评估以当前 7 卡方案为主。
+- 当前正式训练优先以 8 卡并发矩阵为主，不把多卡并发矩阵误写成 DDP。
 
 推荐最小自检：
 
