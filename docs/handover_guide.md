@@ -189,6 +189,9 @@ python -m uwnav_dynamics.cli.train_matrix \
 
 python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml
+
+PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
+    -c configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml
 ```
 
 如果当前只有 7 张卡可用，则回退到：
