@@ -12,6 +12,7 @@
 3. 验证 control-readiness summary / compare 图的命名、排序和版式契约。
 4. 验证 horizon 单模型图仍保持无标题和最小 legend。
 5. 验证 dense / masked horizon artifact 并行存在时，绘图脚本输出命名稳定且降级策略明确。
+6. 验证单步 horizon 产物会补 marker，避免 STEP 类模型导出空图。
 
 数据流：
 synthetic eval_dir artifacts
@@ -51,6 +52,11 @@ from uwnav_dynamics.viz.eval.plot_component_residuals import (
     plot_component_residuals_from_npz,
 )
 from uwnav_dynamics.viz.eval.plot_pred_vs_observed import PredObservedPlotCfg, build_pred_vs_observed_figure, plot_pred_vs_observed_from_npz
+from uwnav_dynamics.viz.eval.plot_prediction_trace import (
+    build_prediction_trace_figure,
+    build_prediction_trace_group_axes_figure,
+    plot_prediction_trace,
+)
 from uwnav_dynamics.viz.eval.plot_rollout_samples import build_rollout_sample_figure, plot_rollout_samples_from_npz
 
 
@@ -176,6 +182,24 @@ def _make_eval_dir(
         component_display_labels=np.asarray(["Acc X", "Acc Y", "Acc Z", "Gyro X", "Gyro Y", "Gyro Z", "Vel X", "Vel Y", "Vel Z"], dtype=str),
         component_units=np.asarray(["m/s^2", "m/s^2", "m/s^2", "rad/s", "rad/s", "rad/s", "m/s", "m/s", "m/s"], dtype=str),
     )
+    trace_t = np.arange(20, dtype=float) * 0.01
+    trace_true = np.tile(np.linspace(0.0, 1.0, 20, dtype=float).reshape(20, 1), (1, 9))
+    trace_hat = trace_true + scale * 0.05
+    np.savez_compressed(
+        eval_dir / "pred_trace.npz",
+        y_hat=trace_hat.astype(np.float32),
+        y_true=trace_true.astype(np.float32),
+        logvar=np.full_like(trace_hat, -2.0, dtype=np.float32),
+        target_mask=np.ones_like(trace_hat, dtype=bool),
+        sample_index=np.arange(20, dtype=np.int64),
+        t_s=trace_t,
+        component_labels=np.asarray(list(canonical_semantic_output_layout(9).component_labels), dtype=str),
+        component_display_labels=np.asarray(["Acc X", "Acc Y", "Acc Z", "Gyro X", "Gyro Y", "Gyro Z", "Vel X", "Vel Y", "Vel Z"], dtype=str),
+        component_units=np.asarray(["m/s^2", "m/s^2", "m/s^2", "rad/s", "rad/s", "rad/s", "m/s", "m/s", "m/s"], dtype=str),
+        horizon_index=np.asarray(0, dtype=np.int64),
+        dt_s=np.asarray(0.01, dtype=np.float64),
+        requested_seconds=np.asarray(50.0, dtype=np.float64),
+    )
     return eval_dir
 
 
@@ -194,6 +218,56 @@ def test_pred_vs_observed_group_norm_has_bottom_xlabel_and_single_legend(tmp_pat
 
     plot_pred_vs_observed_from_npz(eval_dir / "pred_samples.npz", eval_dir / "plots", n=1, cfg=cfg)
     assert (eval_dir / "plots" / "pred_vs_observed_group_norm_000.png").exists()
+
+
+def test_prediction_trace_uses_three_shared_x_axes(tmp_path):
+    eval_dir = _make_eval_dir(tmp_path, "eval_trace", scale=1.0)
+    with np.load(eval_dir / "pred_trace.npz", allow_pickle=False) as z:
+        semantic_layout = canonical_semantic_output_layout(9)
+        fig, axes = build_prediction_trace_figure(
+            y_hat=z["y_hat"],
+            y_true=z["y_true"],
+            target_mask=z["target_mask"],
+            t_s=z["t_s"],
+            semantic_layout=semantic_layout,
+        )
+
+    assert len(axes) == 3
+    assert [ax.get_xlabel() for ax in axes] == ["", "", "Trace time (s)"]
+    assert fig._suptitle is not None
+    assert fig._suptitle.get_text() == "Group Norm Prediction Trace"
+    assert len(fig.legends) == 1
+    assert axes[0].get_legend() is None
+
+    plot_prediction_trace(eval_dir, eval_dir / "plots", fmt="png", mode="group_norm")
+    assert (eval_dir / "plots" / "prediction_trace_group_norm.png").exists()
+
+
+def test_prediction_trace_group_axes_writes_one_figure_per_physical_group(tmp_path):
+    eval_dir = _make_eval_dir(tmp_path, "eval_trace_axes", scale=1.0)
+    with np.load(eval_dir / "pred_trace.npz", allow_pickle=False) as z:
+        semantic_layout = canonical_semantic_output_layout(9)
+        fig, axes = build_prediction_trace_group_axes_figure(
+            y_hat=z["y_hat"],
+            y_true=z["y_true"],
+            target_mask=z["target_mask"],
+            t_s=z["t_s"],
+            semantic_layout=semantic_layout,
+            group_key="acc",
+        )
+
+    assert len(axes) == 3
+    assert [ax.get_xlabel() for ax in axes] == ["", "", "Trace time (s)"]
+    assert [ax.get_ylabel() for ax in axes] == ["acc_x", "acc_y", "acc_z"]
+    assert fig._suptitle is not None
+    assert fig._suptitle.get_text() == "Acceleration Prediction Trace"
+    assert len(fig.legends) == 1
+    assert axes[0].get_legend() is None
+
+    plot_prediction_trace(eval_dir, eval_dir / "plots", fmt="png")
+    assert (eval_dir / "plots" / "prediction_trace_acc_axes.png").exists()
+    assert (eval_dir / "plots" / "prediction_trace_gyro_axes.png").exists()
+    assert (eval_dir / "plots" / "prediction_trace_vel_axes.png").exists()
 
 
 def test_pred_vs_observed_component_mode_writes_3x3_component_figure(tmp_path):
@@ -260,6 +334,39 @@ def test_rollout_sample_figure_marks_masked_targets_when_pred_context_exists(tmp
 
     plot_rollout_samples_from_npz(eval_dir / "pred_samples.npz", eval_dir / "plots", n=1, dt_s=0.02, fmt="png")
     assert (eval_dir / "plots" / "rollout_sample_000.png").exists()
+
+
+def test_single_step_eval_plots_use_markers_to_avoid_blank_figures(tmp_path):
+    eval_dir = _make_eval_dir(tmp_path, "single_step_eval", scale=1.0, masked_scale=0.5)
+    one_step_metric = np.arange(1, 10, dtype=float).reshape(1, 9) * 0.01
+    _write_metric_csv(eval_dir / "rmse_by_horizon.csv", one_step_metric)
+    _write_metric_csv(eval_dir / "rmse_by_horizon_masked.csv", one_step_metric * 0.5)
+
+    y_true = np.arange(9, dtype=float).reshape(1, 1, 9) * 0.01
+    y_hat = y_true + 0.001
+    np.savez_compressed(eval_dir / "pred_samples.npz", y_hat=y_hat, y_true=y_true)
+    np.savez_compressed(
+        eval_dir / "pred_context.npz",
+        target_mask=np.ones_like(y_hat, dtype=bool),
+    )
+
+    horizon_cfg = HorizonPlotCfg(dt_s=0.01, use_seconds=True, metric="rmse", out_name="rmse_horizon_groups", fmt="png")
+    fig_horizon, ax_horizon = build_groups_vs_horizon_figure(eval_dirs=[eval_dir], labels=["single"], cfg=horizon_cfg)
+    assert all(line.get_marker() == "o" for line in ax_horizon.lines)
+
+    pred_cfg = PredObservedPlotCfg(dt_s=0.01, mode="component", fmt="png")
+    fig_pred, pred_axes = build_pred_vs_observed_figure(y_hat=y_hat[0], y_true=y_true[0], cfg=pred_cfg)
+    assert all(line.get_marker() == "o" for ax in pred_axes for line in ax.lines)
+
+    fig_rollout, rollout_axes = build_rollout_sample_figure(y_hat=y_hat[0], y_true=y_true[0], dt_s=0.01)
+    assert all(line.get_marker() == "o" for ax in rollout_axes for line in ax.lines)
+
+    fig_residual, residual_axes = build_component_residual_figure(y_hat=y_hat[0], y_true=y_true[0], dt_s=0.01)
+    residual_lines = [line for ax in residual_axes for line in ax.lines if line.get_label() != "_child0"]
+    assert all(line.get_marker() == "o" for line in residual_lines)
+
+    for fig in (fig_horizon, fig_pred, fig_rollout, fig_residual):
+        fig.clf()
 
 
 def test_model_compare_horizon_highlights_primary_over_baseline(tmp_path):

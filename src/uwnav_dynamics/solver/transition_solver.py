@@ -8,8 +8,9 @@
 主要功能：
 1. 从 `train yaml + ckpt + run-scoped split/scaler artifact` 加载训练好的模型。
 2. 提供 `predict_next_state()`，把一段历史窗映射成下一时刻主状态预测。
-3. 提供 `rollout_with_feature_templates()`，在给定未来控制/上下文模板时做 autoregressive 递推。
-4. 对 `pred_len>1` 的旧模型提供保守兼容：默认只消费第一步预测作为单步求解结果。
+3. 提供 `step_with_feature_template()`，把一步预测结果写回下一行 feature 模板。
+4. 提供 `rollout_with_feature_templates()`，在给定未来控制/上下文模板时做 autoregressive 递推。
+5. 对 `pred_len>1` 的旧模型提供保守兼容：默认只消费第一步预测作为单步求解结果。
 
 数据流：
 train yaml + ckpt + x/y scaler
@@ -72,6 +73,13 @@ class TransitionSolverRolloutResult:
     predicted_states: np.ndarray
     replay_rows: np.ndarray
     nonfinite_trigger_count: int
+
+
+@dataclass(frozen=True)
+class TransitionSolverStepResult:
+    """单步状态求解结果。"""
+    next_state: np.ndarray
+    next_feature_row: np.ndarray
 
 
 def _sanitize_scaled_inputs(x_scaled: np.ndarray) -> np.ndarray:
@@ -151,6 +159,36 @@ class TrainedTransitionSolver:
             raise FloatingPointError("predicted next state contains non-finite values")
         return next_state
 
+    def step_with_feature_template(
+        self,
+        *,
+        history_window_physical: np.ndarray,
+        feature_template_physical: np.ndarray,
+    ) -> TransitionSolverStepResult:
+        """
+        执行一步状态转移，并把预测主状态写回下一时刻 feature 行。
+
+        该接口是后续 controller / RL wrapper 最小可复用边界：
+        调用方负责准备下一时刻已知控制量与上下文模板，
+        求解器只负责根据历史窗预测主状态槽位并返回新的 feature row。
+        """
+        template = np.asarray(feature_template_physical, dtype=np.float32)
+        if template.ndim != 1 or template.shape[0] != int(self.cfg_model.din):
+            raise ValueError(
+                "feature_template_physical must be (Din,), got "
+                f"{tuple(template.shape)} with Din={self.cfg_model.din}"
+            )
+        next_state = self.predict_next_state(history_window_physical)
+        next_row = np.array(template, copy=True, dtype=np.float32)
+        next_row[list(self.y_in_idx)] = next_state
+
+        if not np.all(np.isfinite(next_row)):
+            raise FloatingPointError("single-step transition produced non-finite feature row")
+        return TransitionSolverStepResult(
+            next_state=np.asarray(next_state, dtype=np.float32, copy=False),
+            next_feature_row=np.asarray(next_row, dtype=np.float32, copy=False),
+        )
+
     def rollout_with_feature_templates(
         self,
         *,
@@ -184,13 +222,16 @@ class TrainedTransitionSolver:
         nonfinite_trigger_count = 0
 
         for template in templates:
-            next_state = self.predict_next_state(hist)
-            next_row = np.array(template, copy=True, dtype=np.float32)
-            next_row[list(self.y_in_idx)] = next_state
-
-            if not np.all(np.isfinite(next_row)):
+            try:
+                step_result = self.step_with_feature_template(
+                    history_window_physical=hist,
+                    feature_template_physical=template,
+                )
+            except FloatingPointError:
                 nonfinite_trigger_count += 1
-                raise FloatingPointError("autoregressive replay produced non-finite feature row")
+                raise
+            next_state = step_result.next_state
+            next_row = step_result.next_feature_row
 
             pred_rows.append(next_row)
             pred_states.append(next_state)

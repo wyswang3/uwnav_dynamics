@@ -1,19 +1,19 @@
 # 项目交接指南
 
-更新时间：2026-04-12
+更新时间：2026-04-20
 
 ## 1. 当前接手时先知道什么
 
 当前项目主线已经从“先跑长时拟合矩阵”进一步收口为：
 
-**`因果 KF 状态代理量 -> 共享状态维 scaler 收口 -> 一步状态转移求解器升级`**
+**`因果 KF 状态代理量 -> 单步状态转移求解器 -> 长序列 replay / RL-ready 基础接口`**
 
 当前不要再从旧的 controller / transition validation 壳层切入。  
 当前最重要的问题已经变成：
 
-- 当前状态代理量链是否满足严格因果
-- rollout 训练的数值语义是否一致
-- 下一阶段如何把模型收口成更接近 `x_{t+1}=f(x_t,u_t,c_t)` 的一步算子
+- 状态转移模型是否可以稳定执行超过 10 步的长序列递推
+- 评估、replay 与图表 artifact 是否足够清晰、可复现、可比较
+- 下一阶段如何把 `step_with_feature_template()` 包装成 controller / RL 环境接口
 
 ## 2. 先读哪几份文档
 
@@ -40,8 +40,8 @@ export PYTHONPATH=src
 
 然后按这个顺序恢复上下文：
 
-1. 先看本文件第 `3.1` 节，确认 Phase 1 已完成内容与剩余阻塞。
-2. 再看 `docs/design/transition_solver_phase1_upgrade.md` 第 `5` 节，确认本地最小执行顺序。
+1. 先看本文件第 `3.1` 节，确认当前 solver / replay / visualization 已完成内容。
+2. 再看 `docs/design/transition_solver_phase2_replay_upgrade.md`，确认状态求解器 replay 协议。
 3. 再看 `docs/handover_kf_training_server_v2.md` 第 `4.2` 节，确认服务器上的执行顺序。
 4. 需要查命令时，去 `docs/reference/quick_commands.md`，不要把它当主交接文档。
 5. 如果要继续修代码，优先从 `data_pipeline.py`、`s1_predictor.py`、`run_train.py` 三处开始。
@@ -64,6 +64,19 @@ export PYTHONPATH=src
 - Phase 2 单步分支已新增：
   - `configs/dataset/pooltest02_s1_kf_ctx_quality_step_v1.yaml`
   - `configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml`
+- 训练后状态求解器已具备最小 step 接口：
+  - `src/uwnav_dynamics/solver/transition_solver.py`
+  - `TrainedTransitionSolver.predict_next_state()`
+  - `TrainedTransitionSolver.step_with_feature_template()`
+  - `TrainedTransitionSolver.rollout_with_feature_templates()`
+- 数值评估已新增 50s 诊断 trace artifact：
+  - `eval_<split>/pred_trace.npz`
+- 默认评估出图已改为信息适度的长时序图：
+  - `prediction_trace_acc_axes.png`
+  - `prediction_trace_gyro_axes.png`
+  - `prediction_trace_vel_axes.png`
+  - 每张图 3 个子窗，X/Y/Z 三轴共享 x 轴
+- replay / eval 配置快照继续遵循相对路径契约，避免把本机绝对目录写死进可复现实验产物。
 
 ## 3.1 当前阶段结论
 
@@ -75,23 +88,23 @@ Phase 1 已完成并收口了前两个基础阻塞：
 2. rollout 训练的共享状态维 scaler 已收口为单一统计量  
    代码位置：`src/uwnav_dynamics/train/data_pipeline.py`
 
-当前剩余主阻塞：
+当前剩余主阻塞已经从“有没有一步求解器接口”转为：
 
-3. 模型仍是“历史窗 -> 固定未来块输出”预测器，
-   还不是严格的一步状态转移算子。  
-   代码位置：`src/uwnav_dynamics/models/nets/s1_predictor.py`
+3. 还缺少正式 controller / RL wrapper。
+   当前已有 `step_with_feature_template()` 与 replay 验证，
+   但尚未实现完整 `reset()/step()/reward()/done` 环境，也尚未完成闭环控制证明。
 
-因此，当前可以恢复单卡 smoke 与新一轮数据重建，
-但还不建议把项目表述成“已具备闭环求解器”。
+补充：截至 2026-04-20，本地 `out/ckpts` 中已经保留多轮 7/8 GPU 评估结果。
 
-补充：截至 2026-04-11 晚，本轮 7 GPU 服务器批次已经实际执行过一轮。
-
-- `quality_step_v1` 当前离线最优候选是 `STEP_B4_grouped_tb_blocks_seed9`
-- `quality_v3` 当前离线最优候选是 `QV3_B4_grouped_tb_blocks_seed8`
-- 两个最优 run 都确认 `runtime_device = cuda`
-- replay 结果暂未完整回收到仓库 `out/`，明天优先回收 `/home/wys/replay_matrix/...`
+- 当前单步主线最优候选应优先看：
+  - `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B4_grouped_tb_blocks_seed10/eval_test`
+  - `rmse_global_masked = 0.0341668`
+  - `mae_global_masked = 0.0064416`
+  - `tail_p95_masked = 0.0198636`
+  - `tail_p99_masked = 0.1422205`
+- 当前组均值显示 `STEP_B4_blocks` 优于 `STEP_B0_base / STEP_B2_strong_delta / QV3_*`，更适合作为下一阶段 solver 候选。
 - 服务器侧 `fusion + dataset` 预处理阶段已经完成；若数据和配置未变化，下次进入服务器可直接从训练、评估和 replay 验证开始。
-- 下一轮正式训练优先顺序应改为：先 `quality_step_8gpu_v2`，再决定是否补跑 `quality_8gpu_v2`。
+- 下一轮正式工作优先顺序：先基于 `STEP_B4_grouped_tb_blocks_seed10` 做 replay / controller wrapper smoke，再决定是否补跑 `quality_8gpu_v2`。
 
 ## 4. 当前最短工作流
 
@@ -195,6 +208,7 @@ python -m uwnav_dynamics.cli.eval \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
   --split test \
   --plots \
+  --trace_seconds 50 \
   --plot_fmt png
 
 python -m uwnav_dynamics.cli.transition_replay \
@@ -253,6 +267,8 @@ run 级筛选：
 - `tail_error`
 - `worst_abs_bias`
 - `acc / gyro / vel` 组误差
+- `pred_trace.npz` 对应的 50s 三轴图是否非空、无遮挡、信息不过密
+- replay `metrics.yaml / resolved_replay.yaml` 中的路径是否保持相对路径快照
 
 ## 7. 现在不要先做什么
 
@@ -267,11 +283,11 @@ run 级筛选：
 
 下一步最合理的顺序是：
 
-1. 先回收服务器上的 replay 结果目录与 `ranking.csv`
-2. 用 `quality_step_8gpu_v2` 做下一轮正式 single-step 训练
-3. 基于 replay ranking 确认最终 solver 候选与备选
-4. 再决定是否需要补跑 `quality_8gpu_v2` 或其他失败候选，而不是直接整批重开
-4. 最后整理 top2 图包和论文表格
+1. 以 `STEP_B4_grouped_tb_blocks_seed10` 为默认候选，补齐 replay matrix 与最终选模表
+2. 基于 `step_with_feature_template()` 做最小 controller / RL wrapper smoke
+3. 记录推理延迟、循环周期、失败步数、非有限值触发次数
+4. 保持默认图表为 3 到 4 个子窗；长时序诊断优先使用 Acc/Gyro/Vel 三张 50s 三轴图
+5. 再决定是否补跑 `quality_8gpu_v2` 或其他失败候选，而不是直接整批重开
 
 如果后续要继续扩展，应优先扩训练与评估链、求解器接口与最小 replay 验证，
 而不是重新打开旧阶段的大型验证壳层。

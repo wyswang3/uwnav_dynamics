@@ -10,6 +10,7 @@
 2. 将 semantic layout 驱动的 Acc / Gyro / Vel 三组误差拆成 3×1 共享 x 轴布局。
 3. 自动根据标签或显式 role 推断视觉层级，突出 proposed / primary 方法。
 4. 在 masked horizon artifact 存在时并行输出 masked compare 图，不覆盖现有 dense 输出。
+5. 对单步 horizon 比较曲线自动补 marker，避免 STEP 类候选在比较图中不可见。
 
 数据流：
 多个 eval_dir 下的 metrics.yaml + rmse/mae_by_horizon.csv
@@ -54,6 +55,7 @@ from uwnav_dynamics.viz.style.sci_style import (
     get_model_role_styles,
     infer_model_role,
     normalize_model_label,
+    plot_visible_series,
     save_figure,
     setup_mpl,
 )
@@ -124,7 +126,8 @@ def build_horizon_compare_figure(
             if np.any(valid):
                 curve[valid] = np.nansum(vals[valid], axis=1) / valid_count[valid]
             sty = resolved_role_styles[idx]
-            group_ax.plot(
+            plot_visible_series(
+                group_ax,
                 x,
                 curve,
                 label=label,

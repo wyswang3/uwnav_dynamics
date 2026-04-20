@@ -12,9 +12,10 @@
 3. 以物理量纲写出代表性 `pred_samples.npz`，同时保留 `pred_samples_zspace.npz` 供调参与排障。
 4. 额外导出 `pred_context.npz`、`pred_sample_manifest.csv` 与 `component_metrics*.csv`，
    供 component/residual 可视化与论文图表复用。
-5. 在 `metrics.yaml` 中写出控制前诊断摘要，用于筛查长时漂移、尾部误差与系统偏差。
-6. 对经过 scaler 后仍残留在输入 `X` 中的非有限值做最小清洗，与训练消费端保持一致。
-7. 额外写出 `long_horizon_fit` 摘要，固化长期 rollout 拟合能力证据。
+5. 额外写出 `pred_trace.npz`，提供约 50s 的连续时序诊断窗口。
+6. 在 `metrics.yaml` 中写出控制前诊断摘要，用于筛查长时漂移、尾部误差与系统偏差。
+7. 对经过 scaler 后仍残留在输入 `X` 中的非有限值做最小清洗，与训练消费端保持一致。
+8. 额外写出 `long_horizon_fit` 摘要，固化长期 rollout 拟合能力证据。
 
 数据流：
 train yaml + checkpoint + run_dir artifacts
@@ -29,7 +30,8 @@ metrics.yaml(metric_space + layout + supervision + control_readiness) +
 long_horizon_fit +
 rmse/mae_by_horizon*.csv +
 component_metrics*.csv +
-pred_samples.npz + pred_samples_zspace.npz + pred_context.npz + pred_sample_manifest.csv
+pred_samples.npz + pred_samples_zspace.npz + pred_context.npz + pred_sample_manifest.csv +
+pred_trace.npz
     ↓
 cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 
@@ -45,6 +47,8 @@ cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 - 正式用户入口为 `cli/eval.py` 与 `cli/pipeline.py`；`evaluate.py` 不直接编排绘图。
 - 主指标与主样例产物使用物理量纲；z-space 指标只作为并行辅助信息保留。
 - 当前样例产物默认保存代表性窗口，而不是简单截取前 N 个样本。
+- `pred_trace.npz` 按原 dataset sample index 选择一个最密集的长时序窗口，
+  用于 3 子窗共享 x 轴的实际时序诊断图。
 - `control_readiness` 只提供“是否值得进入后续控制验证”的离线筛查信息，
   不能替代真正的闭环控制验证。
 - runtime mask 的唯一执行真源是评估 batch 中的 `target_mask`。
@@ -456,6 +460,90 @@ def _select_representative_sample_rows(
     )
 
 
+def _select_trace_slots(
+    *,
+    dataset_sample_index: np.ndarray,
+    trace_seconds: float,
+    trace_dt_s: float,
+) -> np.ndarray:
+    """选择一个按原始样本索引计约 50s 的最密集诊断窗口。"""
+    sample_index = np.asarray(dataset_sample_index, dtype=np.int64)
+    if sample_index.ndim != 1:
+        raise ValueError(f"dataset_sample_index must be 1D, got {sample_index.shape}")
+    if sample_index.shape[0] == 0:
+        return np.zeros((0,), dtype=np.int64)
+
+    sorted_slots = np.argsort(sample_index, kind="stable")
+    sorted_index = sample_index[sorted_slots]
+    dt = max(float(trace_dt_s), np.finfo(float).eps)
+    window_steps = max(1, int(round(max(float(trace_seconds), dt) / dt)))
+
+    best_start = 0
+    best_stop = 1
+    stop = 0
+    for start in range(sorted_index.shape[0]):
+        if stop < start:
+            stop = start
+        max_index = int(sorted_index[start]) + window_steps - 1
+        while stop < sorted_index.shape[0] and int(sorted_index[stop]) <= max_index:
+            stop += 1
+        if (stop - start) > (best_stop - best_start):
+            best_start = start
+            best_stop = stop
+
+    return np.asarray(sorted_slots[best_start:best_stop], dtype=np.int64)
+
+
+def _build_prediction_trace_artifact(
+    *,
+    y_hat: np.ndarray,
+    y_true: np.ndarray,
+    logvar: np.ndarray,
+    target_mask: np.ndarray,
+    dataset_sample_index: np.ndarray,
+    component_labels: Sequence[str],
+    component_display_labels: Sequence[str],
+    component_units: Sequence[str],
+    trace_seconds: float,
+    trace_dt_s: float,
+) -> dict[str, np.ndarray | float | int]:
+    """构建长时序预测诊断 artifact，供 3 子窗共享 x 轴绘图消费。"""
+    if y_hat.shape != y_true.shape or y_hat.shape != logvar.shape or y_hat.shape != target_mask.shape:
+        raise ValueError(
+            "trace inputs must share shape, got "
+            f"y_hat={y_hat.shape}, y_true={y_true.shape}, logvar={logvar.shape}, mask={target_mask.shape}"
+        )
+    if y_hat.ndim != 3:
+        raise ValueError(f"trace inputs must be (N,H,D), got {y_hat.shape}")
+
+    slots = _select_trace_slots(
+        dataset_sample_index=np.asarray(dataset_sample_index, dtype=np.int64),
+        trace_seconds=float(trace_seconds),
+        trace_dt_s=float(trace_dt_s),
+    )
+    horizon_index = int(y_hat.shape[1] - 1)
+    selected_index = np.asarray(dataset_sample_index, dtype=np.int64)[slots]
+    if selected_index.shape[0] > 0:
+        t_s = (selected_index.astype(np.float64) - float(selected_index[0])) * float(trace_dt_s)
+    else:
+        t_s = np.zeros((0,), dtype=np.float64)
+
+    return {
+        "y_hat": np.asarray(y_hat[slots, horizon_index, :], dtype=np.float32),
+        "y_true": np.asarray(y_true[slots, horizon_index, :], dtype=np.float32),
+        "logvar": np.asarray(logvar[slots, horizon_index, :], dtype=np.float32),
+        "target_mask": np.asarray(target_mask[slots, horizon_index, :], dtype=bool),
+        "sample_index": np.asarray(selected_index, dtype=np.int64),
+        "t_s": np.asarray(t_s, dtype=np.float64),
+        "component_labels": np.asarray(component_labels, dtype=str),
+        "component_display_labels": np.asarray(component_display_labels, dtype=str),
+        "component_units": np.asarray(component_units, dtype=str),
+        "horizon_index": int(horizon_index),
+        "dt_s": float(trace_dt_s),
+        "requested_seconds": float(trace_seconds),
+    }
+
+
 def _abs_error_percentiles(
     y_hat: np.ndarray,
     y_true: np.ndarray,
@@ -740,6 +828,8 @@ def summarize_eval_predictions(
     logvar_z_np: np.ndarray,
     save_samples: int,
     late_horizon_fraction: float,
+    trace_seconds: float,
+    trace_dt_s: float,
 ) -> Dict[str, Any]:
     """把 z-space 预测结果统一汇总成指标、CSV/NPZ 所需 artifact 内容。"""
     if y_hat_z_np.shape != y_true_z_np.shape or y_hat_z_np.shape != logvar_z_np.shape:
@@ -873,6 +963,18 @@ def summarize_eval_predictions(
         "component_units": np.asarray(component_units, dtype=str),
         "sample_tag": np.asarray([str(row["representative_tag"]) for row in representative_rows], dtype=str),
     }
+    pred_trace = _build_prediction_trace_artifact(
+        y_hat=y_hat_phys_np,
+        y_true=y_true_phys_np,
+        logvar=logvar_phys_np,
+        target_mask=target_mask_np_eval,
+        dataset_sample_index=np.asarray(split_artifacts.sample_index, dtype=np.int64),
+        component_labels=component_labels,
+        component_display_labels=component_display_labels,
+        component_units=component_units,
+        trace_seconds=float(trace_seconds),
+        trace_dt_s=float(trace_dt_s),
+    )
 
     return {
         "n_total": int(split_artifacts.n_total),
@@ -915,6 +1017,7 @@ def summarize_eval_predictions(
         "samples": samp,
         "samples_zspace": samp_z,
         "pred_context": pred_context,
+        "pred_trace": pred_trace,
         "sample_manifest_rows": representative_rows,
     }
 
@@ -1008,6 +1111,7 @@ def write_eval_outputs(
             "auxiliary_samples_zspace": "pred_samples_zspace.npz",
             "sample_context": "pred_context.npz",
             "sample_manifest_csv": "pred_sample_manifest.csv",
+            "prediction_trace_npz": "pred_trace.npz",
             "component_metrics_csv": "component_metrics.csv",
             "component_metrics_masked_csv": "component_metrics_masked.csv",
             "component_metrics_zspace_csv": "component_metrics_zspace.csv",
@@ -1068,6 +1172,22 @@ def write_eval_outputs(
         component_display_labels=res["pred_context"]["component_display_labels"],
         component_units=res["pred_context"]["component_units"],
         sample_tag=res["pred_context"]["sample_tag"],
+    )
+    pred_trace_npz = out_dir / "pred_trace.npz"
+    np.savez_compressed(
+        pred_trace_npz,
+        y_hat=res["pred_trace"]["y_hat"],
+        y_true=res["pred_trace"]["y_true"],
+        logvar=res["pred_trace"]["logvar"],
+        target_mask=res["pred_trace"]["target_mask"],
+        sample_index=res["pred_trace"]["sample_index"],
+        t_s=res["pred_trace"]["t_s"],
+        component_labels=res["pred_trace"]["component_labels"],
+        component_display_labels=res["pred_trace"]["component_display_labels"],
+        component_units=res["pred_trace"]["component_units"],
+        horizon_index=res["pred_trace"]["horizon_index"],
+        dt_s=res["pred_trace"]["dt_s"],
+        requested_seconds=res["pred_trace"]["requested_seconds"],
     )
     _write_sample_manifest_csv(out_dir / "pred_sample_manifest.csv", res["sample_manifest_rows"])
 
@@ -1130,6 +1250,8 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
         logvar_z_np=logvar_z_np,
         save_samples=int(cfg_eval.save_samples),
         late_horizon_fraction=float(cfg_eval.long_horizon_fraction),
+        trace_seconds=float(cfg_eval.trace_seconds),
+        trace_dt_s=float(cfg_eval.trace_dt_s),
     )
 
 
@@ -1144,6 +1266,8 @@ def main() -> int:
     ap.add_argument("--batch_size", type=int, default=None, help="override batch size")
     ap.add_argument("--out_dir", type=str, default=None, help="override output directory")
     ap.add_argument("--save_samples", type=int, default=256, help="save first N samples to npz for viz")
+    ap.add_argument("--trace_seconds", type=float, default=50.0, help="continuous prediction trace window length")
+    ap.add_argument("--trace_dt", type=float, default=0.01, help="sample period for pred_trace time axis")
 
     # 仅保留解析以给出明确迁移提示；evaluate.py 不再承载绘图执行。
     ap.add_argument("--plots", action="store_true", help="deprecated: use cli/eval.py or cli/pipeline.py for plotting")
@@ -1171,6 +1295,8 @@ def main() -> int:
         batch_size=args.batch_size,
         out_dir=Path(args.out_dir) if args.out_dir is not None else None,
         save_samples=int(args.save_samples),
+        trace_seconds=float(args.trace_seconds),
+        trace_dt_s=float(args.trace_dt),
     )
 
     _ensure_dir(cfg_eval.out_dir)
@@ -1190,6 +1316,9 @@ def main() -> int:
             "y0_source": cfg_eval.y0_source,
             "mode": cfg_eval.mode,
             "long_horizon_fraction": cfg_eval.long_horizon_fraction,
+            "save_samples": cfg_eval.save_samples,
+            "trace_seconds": cfg_eval.trace_seconds,
+            "trace_dt_s": cfg_eval.trace_dt_s,
             "predictor": {
                 "type": "neural",
                 "kind": "s1_predictor",

@@ -10,6 +10,7 @@
 2. 明确将图中的 `observed` 解释为评估阶段监督目标 `y_true`。
 3. 复用统一 style token，导出稳定命名的图片 artifact，供 CLI 批量生成。
 4. 为未来 uncertainty band 扩展保留接口。
+5. 对单步 horizon 的 STEP 类评估自动补 marker，避免单点曲线不可见。
 
 数据流：
 pred_samples.npz + metrics.yaml(layout.semantic)
@@ -59,6 +60,7 @@ from uwnav_dynamics.viz.style.sci_style import (
     get_group_styles,
     get_observed_pred_styles,
     get_xyz_styles,
+    plot_visible_series,
     save_figure,
     setup_mpl,
 )
@@ -158,7 +160,8 @@ def _build_group_norm_figure(
         obs_label = "Target" if row_idx == 0 else None
         pred_label = "Pred" if row_idx == 0 else None
 
-        ax.plot(
+        plot_visible_series(
+            ax,
             t,
             obs,
             label=obs_label,
@@ -168,7 +171,8 @@ def _build_group_norm_figure(
             alpha=observed_style.alpha,
             zorder=observed_style.zorder,
         )
-        ax.plot(
+        plot_visible_series(
+            ax,
             t,
             pred,
             label=pred_label,
@@ -224,7 +228,8 @@ def _build_component_figure(
         component_color = xyz_styles.get(axis_key, observed_style).color
         obs_label = "Target" if idx == 0 else None
         pred_label = "Pred" if idx == 0 else None
-        ax.plot(
+        plot_visible_series(
+            ax,
             t,
             y_true[:, idx],
             label=obs_label,
@@ -234,7 +239,8 @@ def _build_component_figure(
             alpha=observed_style.alpha,
             zorder=observed_style.zorder,
         )
-        ax.plot(
+        plot_visible_series(
+            ax,
             t,
             y_hat[:, idx],
             label=pred_label,

@@ -29,6 +29,7 @@ single-step prediction / replay validation
 from .transition_solver import (
     TransitionSolverLoadResult,
     TransitionSolverRolloutResult,
+    TransitionSolverStepResult,
     TrainedTransitionSolver,
     load_trained_transition_solver,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "REPLAY_SUMMARY_FIELDS",
     "TransitionSolverLoadResult",
     "TransitionSolverRolloutResult",
+    "TransitionSolverStepResult",
     "TrainedTransitionSolver",
     "build_replay_segments",
     "flatten_replay_metrics",

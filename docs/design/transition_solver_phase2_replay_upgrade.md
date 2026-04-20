@@ -1,6 +1,6 @@
 # 状态求解器升级 Phase 2：一步求解与长序列 Replay
 
-更新时间：2026-04-10
+更新时间：2026-04-20
 
 ## 1. 阶段目标
 
@@ -31,12 +31,15 @@
 - 将训练后的 `S1Predictor + scaler` 封装成 `TrainedTransitionSolver`
 - 提供：
   - `predict_next_state(history_window)`
+  - `step_with_feature_template(history_window, feature_template)`
   - `rollout_with_feature_templates(initial_history, future_templates)`
 
 当前语义：
 
 - 若模型 `pred_len=1`，直接作为一步状态求解器
 - 若模型 `pred_len>1`，保守退化为“取 block rollout 的第一步作为 step 输出”
+- `step_with_feature_template()` 是 controller / RL wrapper 的当前最小边界：
+  调用方给出下一时刻已知控制量与上下文模板，求解器只填回主状态槽位。
 
 ### Phase 2.2 已落地：长序列 autoregressive replay 评估
 
@@ -137,7 +140,15 @@ run.out_dir/run.variant/replay_test/
 - `metrics.yaml`
 - `segment_metrics.csv`
 - `component_metrics.csv`
+- `step_metrics.csv`
 - `pred_samples.npz`
+- `pred_context.npz`
+- `resolved_replay.yaml`
+
+路径契约：
+
+- `metrics.yaml["cfg"]` 与 `resolved_replay.yaml["cfg"]` 中的路径必须以相对路径快照保存；
+- 运行时可以使用绝对路径加载模型或数据，但落盘 artifact 不应绑定某台机器的绝对目录。
 
 ### 3.3 replay matrix 统一排行
 
@@ -162,6 +173,25 @@ python -m uwnav_dynamics.cli.transition_replay_matrix \
 3. 不出现非有限值传播
 4. 能输出 segment 级与全局级误差摘要
 5. 能为后续多组实验保留统一 artifact 契约
+6. 默认图包保持单图 3 到 4 个子窗，标题与图例位于数据区域之外或不遮挡曲线
+
+## 4.1 当前推荐可视化
+
+离线评估主图包：
+
+- `prediction_trace_acc_axes.*`
+- `prediction_trace_gyro_axes.*`
+- `prediction_trace_vel_axes.*`
+
+这三张图分别分析加速度、角速度和速度，每张图只放 X/Y/Z 三个共享 x 轴子窗。
+默认窗口建议使用 50s，短 0.1s 样例图只作为排查补充，不作为主图包。
+
+replay model selection 主图包：
+
+- `replay_model_compare.*`
+  - 当前版式为 2x2 四窗，集中比较 `rmse_global / final_step / growth / threshold failure`
+- `replay_long_horizon_curves.*`
+  - 当前版式为 2x2 四窗，比较 step-wise 误差与生存率
 
 ## 5. 风险点
 

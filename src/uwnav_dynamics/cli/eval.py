@@ -9,7 +9,8 @@
 1. 解析用户传入的 train yaml、checkpoint 与评估运行参数。
 2. 先调用纯数值的 `uwnav_dynamics.eval.evaluate` 生成评估 artifact。
 3. 若请求绘图，再调用 `uwnav_dynamics.viz.eval.*` 从 artifact 读盘出图，
-   包括 horizon/long-horizon/control-readiness/残差图与总览 dashboard。
+   默认包括 horizon/long-horizon/control-readiness/50s 长时序图与总览 dashboard；
+   短窗口样例图需要显式开启。
 
 数据流：
 train yaml + ckpt/run_dir + CLI runtime args
@@ -17,11 +18,11 @@ train yaml + ckpt/run_dir + CLI runtime args
 cli.utils 解析 ckpt / eval_dir / plots_dir
     ↓
 eval.evaluate 写出 metrics.yaml / horizon CSV / component CSV /
-pred_samples.npz / pred_samples_zspace.npz / pred_context.npz
+pred_samples.npz / pred_samples_zspace.npz / pred_context.npz / pred_trace.npz
     ↓
     viz.eval.plot_horizon_metrics + viz.eval.plot_long_horizon_summary + viz.eval.plot_control_readiness +
-    viz.eval.plot_rollout_samples + viz.eval.plot_pred_vs_observed +
-    viz.eval.plot_component_residuals + viz.eval.plot_metrics_dashboard
+    viz.eval.plot_prediction_trace + viz.eval.plot_metrics_dashboard
+    可选：viz.eval.plot_rollout_samples + viz.eval.plot_pred_vs_observed + viz.eval.plot_component_residuals
     ↓
 plots/*
 
@@ -31,6 +32,7 @@ plots/*
 - uwnav_dynamics.viz.eval.plot_horizon_metrics
 - uwnav_dynamics.viz.eval.plot_long_horizon_summary
 - uwnav_dynamics.viz.eval.plot_control_readiness
+- uwnav_dynamics.viz.eval.plot_prediction_trace
 - uwnav_dynamics.viz.eval.plot_rollout_samples
 
 备注：
@@ -69,7 +71,9 @@ def main() -> int:
     ap.add_argument("--plots", action="store_true")
     ap.add_argument("--plot_fmt", type=str, default="png", choices=["png", "pdf", "both"])
     ap.add_argument("--dt", type=float, default=0.01)
+    ap.add_argument("--trace_seconds", type=float, default=50.0)
     ap.add_argument("--x_axis", type=str, default="sec", choices=["sec", "step"])
+    ap.add_argument("--sample_plots", action="store_true", help="also generate short representative sample plots")
     ap.add_argument("--n_plot_samples", type=int, default=8)
     args = ap.parse_args()
 
@@ -96,6 +100,8 @@ def main() -> int:
         "--ckpt", str(ckpt),
         "--split", args.split,
         "--save_samples", "256",
+        "--trace_seconds", str(args.trace_seconds),
+        "--trace_dt", str(args.dt),
     ]
     if args.device is not None:
         cmd_eval += ["--device", args.device]
@@ -183,57 +189,21 @@ def main() -> int:
             ],
         ),
         (
-            "PLOT_SAMPLES",
+            "PLOT_PREDICTION_TRACE",
             [
                 sys.executable,
                 "-m",
-                "uwnav_dynamics.viz.eval.plot_rollout_samples",
+                "uwnav_dynamics.viz.eval.plot_prediction_trace",
                 "--eval_dir",
                 str(eval_out_dir),
                 "--out_dir",
                 str(plots_dir),
-                "--n",
-                str(args.n_plot_samples),
-                "--dt",
-                str(args.dt),
-                "--fmt",
-                args.plot_fmt,
-            ],
-        ),
-        (
-            "PLOT_COMPONENT_TRACE",
-            [
-                sys.executable,
-                "-m",
-                "uwnav_dynamics.viz.eval.plot_pred_vs_observed",
-                "--eval_dir",
-                str(eval_out_dir),
-                "--out_dir",
-                str(plots_dir),
-                "--n",
-                str(args.n_plot_samples),
+                "--seconds",
+                str(args.trace_seconds),
                 "--dt",
                 str(args.dt),
                 "--mode",
-                "component",
-                "--fmt",
-                args.plot_fmt,
-            ],
-        ),
-        (
-            "PLOT_COMPONENT_RESIDUAL",
-            [
-                sys.executable,
-                "-m",
-                "uwnav_dynamics.viz.eval.plot_component_residuals",
-                "--eval_dir",
-                str(eval_out_dir),
-                "--out_dir",
-                str(plots_dir),
-                "--n",
-                str(args.n_plot_samples),
-                "--dt",
-                str(args.dt),
+                "group_axes",
                 "--fmt",
                 args.plot_fmt,
             ],
@@ -253,6 +223,69 @@ def main() -> int:
             ],
         ),
     ]
+    if args.sample_plots:
+        viz_cmds.extend(
+            [
+                (
+                    "PLOT_SAMPLES",
+                    [
+                        sys.executable,
+                        "-m",
+                        "uwnav_dynamics.viz.eval.plot_rollout_samples",
+                        "--eval_dir",
+                        str(eval_out_dir),
+                        "--out_dir",
+                        str(plots_dir),
+                        "--n",
+                        str(args.n_plot_samples),
+                        "--dt",
+                        str(args.dt),
+                        "--fmt",
+                        args.plot_fmt,
+                    ],
+                ),
+                (
+                    "PLOT_COMPONENT_TRACE",
+                    [
+                        sys.executable,
+                        "-m",
+                        "uwnav_dynamics.viz.eval.plot_pred_vs_observed",
+                        "--eval_dir",
+                        str(eval_out_dir),
+                        "--out_dir",
+                        str(plots_dir),
+                        "--n",
+                        str(args.n_plot_samples),
+                        "--dt",
+                        str(args.dt),
+                        "--mode",
+                        "group_norm",
+                        "--fmt",
+                        args.plot_fmt,
+                    ],
+                ),
+                (
+                    "PLOT_COMPONENT_RESIDUAL",
+                    [
+                        sys.executable,
+                        "-m",
+                        "uwnav_dynamics.viz.eval.plot_component_residuals",
+                        "--eval_dir",
+                        str(eval_out_dir),
+                        "--out_dir",
+                        str(plots_dir),
+                        "--n",
+                        str(args.n_plot_samples),
+                        "--dt",
+                        str(args.dt),
+                        "--mode",
+                        "group_norm",
+                        "--fmt",
+                        args.plot_fmt,
+                    ],
+                ),
+            ]
+        )
 
     print(f"[CLI][EVAL] start visualization stage under: {plots_dir}")
     for stage_name, cmd in viz_cmds:

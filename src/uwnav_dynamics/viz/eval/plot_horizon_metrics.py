@@ -10,6 +10,7 @@
 2. 优先根据 `metrics.yaml.layout.semantic` 对输出分组聚合并绘图。
 3. 支持 dense / masked horizon artifact 并行存在，且不覆盖现有 dense 输出命名。
 4. 支持单评估目录出图与多评估目录对比出图。
+5. 对单步 horizon 结果自动补 marker，避免 STEP 类模型图片看似为空。
 
 数据流：
 eval_<split>/metrics.yaml + rmse_by_horizon.csv / mae_by_horizon.csv
@@ -57,6 +58,7 @@ from uwnav_dynamics.viz.style.sci_style import (
     get_model_role_styles,
     infer_model_role,
     normalize_model_label,
+    plot_visible_series,
     save_figure,
     setup_mpl,
 )
@@ -174,7 +176,8 @@ def build_groups_vs_horizon_figure(
             for key in semantic_layout0.group_indices:
                 display_name = _GROUP_DISPLAY_NAMES[key]
                 sty = group_styles[display_name]
-                ax.plot(
+                plot_visible_series(
+                    ax,
                     x,
                     curves[key],
                     label=display_name,
@@ -186,7 +189,8 @@ def build_groups_vs_horizon_figure(
                 )
         else:
             sty = resolved_role_styles[idx]
-            ax.plot(
+            plot_visible_series(
+                ax,
                 x,
                 curves["vel"],
                 label=lab,

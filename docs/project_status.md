@@ -1,17 +1,18 @@
 # 项目当前状态
 
-更新时间：2026-04-12
+更新时间：2026-04-20
 
 ## 1. 当前阶段
 
 项目当前处于：
 
-**`状态转移求解器升级 Phase 1 已完成；当前推荐主线已收口为 quality-context + single-step，其中下一轮正式训练优先采用 8 GPU 的 single-step 主线`**
+**`状态转移求解器升级已进入长序列 replay 与 RL-ready 基础接口阶段；当前推荐候选收口为 quality_step_8gpu_v2 的 B4+blocks 单步模型`**
 
 当前主目标是：
 
 - 保持现有 KF 状态代理量主线
 - 把训练链真正推进到“可解释、可递推、可继续向控制与 RL 接口演进”的状态
+- 让默认评估图表从短 0.1s 样例转向 50s 长窗口诊断，单图保持 3 到 4 个子窗
 
 ## 2. 当前已经完成的内容
 
@@ -65,10 +66,28 @@
 
 - 已新增训练后状态求解器封装：
   - `src/uwnav_dynamics/solver/transition_solver.py`
+- 状态求解器现在提供三层接口：
+  - `predict_next_state(history_window)`
+  - `step_with_feature_template(history_window, feature_template)`
+  - `rollout_with_feature_templates(initial_history, future_templates)`
 - 已新增长序列 autoregressive replay 验证入口：
   - `src/uwnav_dynamics/solver/replay.py`
   - `src/uwnav_dynamics/cli/transition_replay.py`
 - 当前建议优先基于 `quality_step_v1` 分支验证经验型状态求解器
+
+### 评估与可视化
+
+- 数值评估已新增长时序 artifact：
+  - `eval_<split>/pred_trace.npz`
+- `uwnav_dynamics.cli.eval --plots` 默认输出：
+  - horizon RMSE / MAE
+  - long-horizon summary
+  - control-readiness summary
+  - 50s Acc/Gyro/Vel 三轴预测对比图
+  - metrics dashboard
+- 短窗口样例图已移到 `--sample_plots` 显式开启，避免默认图包拥挤。
+- `plot_replay_compare` 的 summary 图已收敛为 2x2 四窗，replay long-horizon 图保持 2x2 四窗。
+- 所有新增评估和 replay 快照应继续使用相对路径，不把本机绝对路径写入交接 artifact。
 
 ### 2026-04-11 服务器训练快照（已完成 7 GPU 基线批次）
 
@@ -104,6 +123,20 @@
     - `tail_abs_p95_dense = 0.02134`
     - `tail_abs_p99_dense = 0.16039`
 
+2026-04-20 本地 `out/ckpts` 多轮结果补充比较：
+
+- 当前更推荐的默认 solver 候选：
+  - `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B4_grouped_tb_blocks_seed10/eval_test`
+  - `rmse_global_masked = 0.0341668`
+  - `mae_global_masked = 0.0064416`
+  - `tail_p95_masked = 0.0198636`
+  - `tail_p99_masked = 0.1422205`
+  - `worst_bias_masked = 0.0016737`
+- 当前组均值显示：
+  - `STEP_B4_blocks` 优于 `STEP_B0_base / STEP_B2_strong_delta`
+  - `quality_step_v1` 单步主线优于 `quality_v3` 10-step 主线
+- 注意：`quality_step_v1` 与 `quality_v3` 的 horizon 语义不同，不能只凭单个指标直接当作闭环结论；但从“短时状态转移求解器”定位看，`STEP_B4_grouped_tb_blocks_seed10` 是当前优先候选。
+
 当前阶段可下的结论：
 
 - 单步状态转移主线 `quality_step_v1` 明显优于 `quality_v3`。
@@ -124,27 +157,27 @@
 当前要特别明确四件事：
 
 1. 现在的训练链在“因果性”和“rollout 数值语义”上比上一轮更可靠。
-2. 当前默认主线模型主体仍是“历史窗 -> 固定未来块输出”，还不是严格的一步状态转移器。
+2. 当前默认主线已经有单步 solver 接口，但还不是完整 controller / RL 环境。
 3. `quality v3` 与 `quality_step_v1` 两条配置分支已经准备好，可用于验证：
    - 状态代理量 + 质量上下文
    - 单步状态转移
 4. 当前离线指标仍然只代表控制前筛查，不代表闭环可用性证明。
-5. 当前本地 `out/` 中还没有 `replay_matrix` 实际结果与 `final_selection.csv`；服务器 replay 日志显示结果被写到了仓库外路径：
+5. 历史服务器 replay 日志曾显示结果被写到了仓库外路径：
    - `/home/wys/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2/`
    - `/home/wys/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/`
 
 ## 4. 当前剩余主阻塞
 
-Phase 1 收口后，当前剩余的主阻塞只剩一条：
+当前剩余的主阻塞只剩一条：
 
-1. 模型形式仍偏“轨迹预测器”  
-   当前默认主线仍是 `hist_len=100, pred_len=10` 的“历史窗 -> 固定未来块输出”，
-   还不是更接近系统状态方程形式的 `x_{t+1}=f(x_t,u_t,c_t)` 一步状态转移模型。
+1. 还缺少正式 controller / RL wrapper
+   当前有 `step_with_feature_template()`、长序列 replay 和多方案 ranking，
+   但还没有统一的 `reset()/step()/reward()/done` 环境封装，也没有闭环控制证明。
 
 补充说明：
 
 - 从当前离线结果看，`pred_len=1` 的单步主线已经优于 `pred_len=10` 质量上下文主线；
-- 但最终是否转正为状态转移求解器主模型，仍需要 replay ranking 证据闭环。
+- 但最终是否转正为控制或 RL 内核，仍需要 replay ranking、最小闭环 smoke 与在线时延证据闭环。
 
 ## 5. 当前可直接复用的产物
 
@@ -179,12 +212,13 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 
 - KF 输出仍应表述为“低噪声状态代理量”，不是物理真值
 - 当前主输出仍是 `9` 维，不含姿态角主监督
-- 当前还没有进程内 `step(u_t, dt)` 形式的统一求解器接口
+- 当前 `step_with_feature_template()` 仍要求调用方提供下一时刻控制/上下文 feature 模板，
+  尚未封装成完全独立的 `step(u_t, dt)` 环境接口
 
 ### 当前风险
 
 - 本轮 7 GPU 正式矩阵已跑通主体，但有 2+2 个候选失败，导致 phase 状态不是全绿
-- replay 结果目前落在仓库外的 `/home/wys/replay_matrix/`，如果不回收，会导致本地分析链缺少 `ranking.csv`
+- 历史 replay 结果若仍落在仓库外的 `/home/wys/replay_matrix/`，需要整理回 `out/replay_matrix/` 才适合长期引用
 - `final_selection.csv` 与 `paper_artifact_manifest.yaml` 尚未在当前本地 `out/server_pipeline/` 中落盘确认
 - 新图包尚未基于 replay ranking 做最终筛选
 - 若模型主体不进一步收口为一步转移器，长期自由递推能力仍可能不足
@@ -194,13 +228,12 @@ Phase 1 收口后，当前剩余的主阻塞只剩一条：
 
 当前建议严格按这个顺序推进：
 
-1. 先从服务器回收 `/home/wys/replay_matrix/...` 到仓库 `out/replay_matrix/...`，确认上一轮 7 GPU 的 `ranking.csv`
+1. 以 `STEP_B4_grouped_tb_blocks_seed10` 为默认候选，补齐 replay matrix 与最终选模表
 2. 若数据和配置未变化，不重跑 `fusion / dataset`，先做一次单卡 smoke 复核
-3. 优先启动 `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml`
-4. 基于 replay / solver 指标决定是否补跑 `configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml`
-5. 如需一键串联流程，使用 `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
-6. 基于 replay 排名选定最终一步状态转移求解器，再整理 top2 图包
-7. 最后再接最小 controller replay 或 RL wrapper
+3. 基于 `step_with_feature_template()` 实现最小 controller / RL wrapper smoke
+4. 记录推理延迟、循环周期、失败步数与非有限值触发次数
+5. 基于 replay / solver / wrapper 指标决定是否补跑 `configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml`
+6. 整理 top2 图包，默认保持单图 3 到 4 个子窗，不恢复拥挤的短窗口样例图作为主图
 
 ## 8. 当前不建议的做法
 

@@ -27,7 +27,7 @@
 |---|---|---|
 | `src/uwnav_dynamics/cli/eval.py` | 正式评估 CLI 入口，自动选择 checkpoint，并按需编排“数值评估 -> viz 出图”。 | 输入：train YAML、可选 ckpt/split/device/plot 参数；输出：评估目录与可选 `plots/*`。 |
 | `src/uwnav_dynamics/eval/evaluate.py` | 数值评估主程序：加载数据与 ckpt，执行 rollout、统计 dense/masked 指标并写出控制前诊断摘要。 | 输入：train YAML + ckpt + `features.npz/labels.npz`；输出：`metrics.yaml`、`rmse/mae_by_horizon*.csv`、`component_metrics*.csv`、代表性 `pred_samples.npz` 与 `pred_sample_manifest.csv`。 |
-| `src/uwnav_dynamics/cli/transition_replay.py` | 状态求解器 replay CLI 入口，执行长序列 autoregressive 重放验证。 | 输入：train YAML + ckpt + split；输出：`replay_<split>/metrics.yaml`、`segment_metrics.csv`、`pred_samples.npz`。 |
+| `src/uwnav_dynamics/cli/transition_replay.py` | 状态求解器 replay CLI 入口，执行长序列 autoregressive 重放验证。 | 输入：train YAML + ckpt + split；输出：`replay_<split>/metrics.yaml`、`segment_metrics.csv`、`step_metrics.csv`、`pred_samples.npz`、`resolved_replay.yaml`。 |
 | `src/uwnav_dynamics/cli/transition_replay_matrix.py` | 多候选 replay 批量评估入口，统一写 `manifest.yaml / summary.csv / ranking.csv`。 | 输入：replay matrix YAML；输出：多方案 replay 汇总表、排行表和各候选独立 replay 目录。 |
 | `src/uwnav_dynamics/cli/server_pipeline.py` | 服务器全流程总控入口，串联 preprocess、smoke、多卡矩阵训练与 replay 排名。 | 输入：server pipeline YAML；输出：`manifest.yaml`、`phase_status.csv`、阶段日志与最终结果目录。 |
 | `src/uwnav_dynamics/experiment/final_selection.py` | 合并训练矩阵与 replay 排名，输出最终选模表与论文产物清单。 | 输入：`summary.csv + ranking.csv`；输出：`final_selection.csv`、`paper_artifact_manifest.yaml`。 |
@@ -60,7 +60,7 @@
 | `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | 输出语义布局 helper，统一组件标签、`acc/gyro/vel` 分组与 legacy fallback。 | 输入：`metrics.yaml` 或 `target_cols`；输出：semantic layout metadata。 |
 | `src/uwnav_dynamics/supervision_mask.py` | 监督有效性 helper，将 `dvl_mask + semantic layout` 构造成 `target_mask`。 | 输入：`labels.npz["dvl_mask"]` 与 semantic layout；输出：`target_mask:(N,H,D)`；对 KF dense target 数据集，`dvl_mask` 也可以是全真。 |
 | `src/uwnav_dynamics/models/utils/rollout.py` | rollout 工具函数（从 `dY` 累加得到未来状态序列）。 | 输入：`y0` 与 `dY`；输出：`y_hat`。 |
-| `src/uwnav_dynamics/solver/transition_solver.py` | 训练后经验型状态求解器封装，提供单步状态预测与 autoregressive 递推接口。 | 输入：train YAML + ckpt + scaler + history window；输出：下一时刻状态或 replay 预测序列。 |
+| `src/uwnav_dynamics/solver/transition_solver.py` | 训练后经验型状态求解器封装，提供单步状态预测、feature-template step 与 autoregressive 递推接口。 | 输入：train YAML + ckpt + scaler + history window + 下一步控制/上下文模板；输出：下一时刻状态、下一行 feature 或 replay 预测序列。 |
 | `src/uwnav_dynamics/solver/replay.py` | 基于 `base_csv + idx0 + split` 的长序列 replay 验证模块。 | 输入：processed dataset、split、transition solver；输出：replay metrics、segment 级 CSV 与样例 NPZ。 |
 | `src/uwnav_dynamics/solver/reporting.py` | replay 指标压平与标准排行协议定义。 | 输入：replay `metrics.yaml`；输出：`summary.csv` 字段、排行指标集合与协议说明。 |
 | `src/uwnav_dynamics/models/losses/nll.py` | 对角高斯 NLL 损失定义，支持 dense 与 masked 两条监督路径。 | 输入：`y_hat/y_true/logvar` 与可选 `target_mask`；输出：标量 loss。 |
@@ -100,7 +100,7 @@
 
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
-| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：dense/masked metrics、CSV、代表性 `pred_samples.npz`、`pred_sample_manifest.csv` 与 layout/supervision/control_readiness metadata；对 KF dense target 数据集，masked 结果可能与 dense 高度接近。 |
+| `src/uwnav_dynamics/eval/evaluate.py` | 评估与 rollout 主流程。 | 输入：数据窗口 + ckpt；输出：dense/masked metrics、CSV、代表性 `pred_samples.npz`、50s 诊断 `pred_trace.npz`、`pred_sample_manifest.csv` 与 layout/supervision/control_readiness metadata；对 KF dense target 数据集，masked 结果可能与 dense 高度接近。 |
 | `src/uwnav_dynamics/models/utils/execution_layout.py` | rollout 执行索引 helper。 | 输入：`cfg_model.y_in_idx` 与 `X`；输出：`y0`。 |
 | `src/uwnav_dynamics/models/utils/semantic_output_layout.py` | rollout 输出语义 helper。 | 输入：`metrics.yaml` 或 `target_cols`；输出：分组解释与 fallback 结果。 |
 | `src/uwnav_dynamics/supervision_mask.py` | supervision mask helper。 | 输入：`dvl_mask` 与 semantic layout；输出：`target_mask`。 |
@@ -108,6 +108,7 @@
 | `src/uwnav_dynamics/viz/eval/plot_horizon_metrics.py` | 画 RMSE/MAE 随预测步长变化曲线。 | 输入：评估目录；输出：dense 图与可选 `*_masked.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_long_horizon_summary.py` | 画长期 rollout 拟合摘要图。 | 输入：`metrics.yaml["long_horizon_fit"]`；输出：`long_horizon_fit_summary.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_control_readiness.py` | 画离线控制前诊断 summary / compare 图。 | 输入：`metrics.yaml["control_readiness"]`；输出：`control_readiness_summary*.png/pdf` 或 `control_readiness_compare*.png/pdf`。 |
+| `src/uwnav_dynamics/viz/eval/plot_prediction_trace.py` | 画 50s 长时序预测-目标三轴对比图。 | 输入：`pred_trace.npz`，旧 artifact 可 fallback 到 `pred_samples.npz` + `pred_context.npz`；输出：`prediction_trace_acc_axes.png/pdf`、`prediction_trace_gyro_axes.png/pdf`、`prediction_trace_vel_axes.png/pdf`，可选 `prediction_trace_group_norm.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_rollout_samples.py` | 画 rollout 样例时域对比图，并可标出 masked-out 目标位置。 | 输入：`pred_samples.npz` 与可选 `pred_context.npz["target_mask"]`；输出：`rollout_sample_*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_model_compare.py` | 画多模型 horizon 比较图。 | 输入：多个评估目录；输出：dense compare 图与可选 `*_masked.png/pdf`。 |
 | `src/uwnav_dynamics/viz/plots/imu_plot.py` | 原始/预处理 IMU 绘图模块。 | 输入：`ImuFrame` 或 `*_proc.csv`；输出：`imu_raw_9axis.png`、`imu_dt.png`、`imu_proc_3rows.png`。 |

@@ -29,15 +29,27 @@ plot 模块通过 helper 构造 figure / axes / legend
 - 多曲线比较图应优先使用高对比、近互补的配色组合，让 primary / baseline / ablation 或多条候选曲线在首眼观察时就能分离。
 - 正式 preset 采用纯白底、无背景网格的科研风格，避免图面噪声抢占曲线注意力。
 - 英文、数字与 mathtext 统一收敛到 `Times New Roman`，文字颜色统一使用纯黑。
+- 在无显示或 HOME 配置目录不可写的服务器上，默认使用 Agg 后端与 `/tmp` 下的 matplotlib cache。
 """
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+import numpy as np
+
+if os.environ.get("MPLCONFIGDIR") is None:
+    mpl_config_dir = Path("/tmp") / f"uwnav_dynamics_mplconfig_{os.getuid()}"
+    mpl_config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["MPLCONFIGDIR"] = str(mpl_config_dir)
+import matplotlib
+
+if os.environ.get("MPLBACKEND") is None and os.environ.get("DISPLAY") is None:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from cycler import cycler
@@ -486,6 +498,52 @@ def apply_axes_style(ax: plt.Axes, *, grid: Optional[bool] = None, grid_alpha: O
         ax.grid(True, color=_GRID_COLOR, alpha=style.grid_alpha if grid_alpha is None else grid_alpha)
     else:
         ax.grid(False)
+
+
+def plot_visible_series(
+    ax: plt.Axes,
+    x,
+    y,
+    *,
+    label: Optional[str] = None,
+    color: str,
+    linestyle: str = "-",
+    linewidth: float = 1.2,
+    alpha: float = 1.0,
+    zorder: float = 3.0,
+    marker: Optional[str] = None,
+    markersize: float = 4.2,
+    markerfacecolor: Optional[str] = None,
+    markeredgecolor: Optional[str] = None,
+) -> list[plt.Line2D]:
+    """
+    绘制时序曲线，并保证单步 horizon 或仅一个有效点时不会退化成不可见线段。
+
+    Matplotlib 的纯折线在只有一个有限点时没有线段长度，导出的图片会像空图。
+    本 helper 保留多步曲线的原有线型，只在有效点数量不足以形成线段时补 marker。
+    """
+    y_arr = np.asarray(y, dtype=float)
+    finite_count = int(np.count_nonzero(np.isfinite(y_arr)))
+    resolved_marker = marker if marker is not None else ("o" if finite_count <= 1 else None)
+    kwargs = {
+        "label": label,
+        "color": color,
+        "linestyle": linestyle,
+        "linewidth": linewidth,
+        "alpha": alpha,
+        "zorder": zorder,
+    }
+    if resolved_marker is not None:
+        kwargs.update(
+            {
+                "marker": resolved_marker,
+                "markersize": markersize,
+                "markerfacecolor": markerfacecolor if markerfacecolor is not None else color,
+                "markeredgecolor": markeredgecolor if markeredgecolor is not None else color,
+                "markeredgewidth": 0.7,
+            }
+        )
+    return ax.plot(x, y, **kwargs)
 
 
 def apply_shared_xlabels(axes: Sequence[plt.Axes], xlabel: str) -> None:

@@ -637,9 +637,8 @@ work_dir/
      - `rmse_global`
      - `final_step`
      - `growth`
-     - `tail`
      - `threshold failure`
-     - `worst bias`
+   - 当前默认 2x2 四窗，避免单图过密
 
 2. `replay_long_horizon_curves.*`
    - 用于查看随 step 推进的：
@@ -647,6 +646,16 @@ work_dir/
      - `abs_p95_global`
      - `rmse_survival_rate`
      - `abs_survival_rate`
+   - 当前默认 2x2 四窗
+
+离线评估默认图包还应包含三张 50s 长时序图：
+
+- `prediction_trace_acc_axes.*`
+- `prediction_trace_gyro_axes.*`
+- `prediction_trace_vel_axes.*`
+
+每张图只包含 X/Y/Z 三个共享 x 轴子窗，图例放在数据区域之外，
+用于替代过去默认输出的大量 0.1s 短窗口样例图。
 
 判断原则：
 

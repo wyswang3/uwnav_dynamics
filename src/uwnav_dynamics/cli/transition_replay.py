@@ -89,12 +89,12 @@ def main() -> int:
         ),
     )
     cfg_snapshot = {
-        "train_yaml": str(train_yaml),
-        "ckpt": str(ckpt_path),
+        "train_yaml": train_yaml,
+        "ckpt": ckpt_path,
         "split": str(args.split),
         "device": str(args.device or loaded.cfg_train.run.device),
-        "data_dir": str(loaded.cfg_train.data.data_dir),
-        "split_indices_path": str(loaded.run_layout.split_indices_path),
+        "data_dir": loaded.cfg_train.data.data_dir,
+        "split_indices_path": loaded.run_layout.split_indices_path,
         "min_steps": int(args.min_steps),
         "max_segments": args.max_segments,
         "max_steps_per_segment": args.max_steps_per_segment,

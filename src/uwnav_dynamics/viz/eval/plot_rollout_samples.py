@@ -11,6 +11,7 @@
 2. 优先根据 `metrics.yaml.layout.semantic` 分组，并在每个组内取范数。
 3. 若存在 `pred_context.npz["target_mask"]`，用轻量标记显示 masked-out 目标位置。
 4. 以紧凑 3×1 共享 x 轴布局输出 `rollout_sample_*.png|pdf`，并把 legend 收敛到单个子图内。
+5. 对单步 horizon 自动补 marker，避免 STEP 类 rollout 样例像空图。
 
 数据流：
 pred_samples.npz + optional pred_context.npz
@@ -57,6 +58,7 @@ from uwnav_dynamics.viz.style.sci_style import (
     get_figure_size,
     get_group_styles,
     get_observed_pred_styles,
+    plot_visible_series,
     save_figure,
     setup_mpl,
 )
@@ -161,6 +163,7 @@ def build_rollout_sample_figure(
 
     fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("rollout_3row_compact"))
     group_specs = _group_specs(semantic_layout)
+    masked_legend_needed = False
 
     for row_idx, (ax, (group_key, indices, ylabel)) in enumerate(zip(axes, group_specs)):
         obs = _norm3(y_true[:, list(indices)])
@@ -169,7 +172,8 @@ def build_rollout_sample_figure(
         obs_label = "Target" if row_idx == 0 else None
         pred_label = "Pred" if row_idx == 0 else None
 
-        ax.plot(
+        plot_visible_series(
+            ax,
             t,
             obs,
             label=obs_label,
@@ -179,7 +183,8 @@ def build_rollout_sample_figure(
             alpha=observed_style.alpha,
             zorder=observed_style.zorder,
         )
-        ax.plot(
+        plot_visible_series(
+            ax,
             t,
             pred,
             label=pred_label,
@@ -193,7 +198,8 @@ def build_rollout_sample_figure(
             group_valid = np.all(target_mask[:, list(indices)], axis=1)
             invalid = ~group_valid
             if np.any(invalid):
-                mask_label = "Masked" if row_idx == 0 else None
+                mask_label = "Masked"
+                masked_legend_needed = True
                 ax.scatter(
                     t[invalid],
                     obs[invalid],
@@ -206,6 +212,18 @@ def build_rollout_sample_figure(
                 )
         ax.set_ylabel(ylabel)
         apply_axes_style(ax, grid=False)
+
+    if masked_legend_needed and "Masked" not in axes[0].get_legend_handles_labels()[1]:
+        axes[0].scatter(
+            [],
+            [],
+            label="Masked",
+            s=16.0,
+            facecolors="white",
+            edgecolors="#8C9199",
+            linewidths=0.75,
+            zorder=5,
+        )
 
     apply_shared_xlabels(list(axes), "Prediction horizon (s)")
     align_ylabels(axes)

@@ -9,6 +9,7 @@
 1. 复用训练配置解析结果，得到与训练一致的模型拓扑配置。
 2. 解析 run-scoped split / scaler / eval 输出目录路径。
 3. 仅装配数值评估运行时字段，不承载绘图参数。
+4. 为长时序诊断 artifact 提供采样周期与窗口长度配置。
 
 数据流：
 train yaml
@@ -62,6 +63,8 @@ class EvalConfig:
     long_horizon_fraction: float = 0.4
 
     save_samples: int = 256
+    trace_seconds: float = 50.0
+    trace_dt_s: float = 0.01
 
 
 def build_eval_config(
@@ -73,6 +76,8 @@ def build_eval_config(
     batch_size: int | None,
     out_dir: str | Path | None,
     save_samples: int,
+    trace_seconds: float = 50.0,
+    trace_dt_s: float = 0.01,
 ) -> Tuple[EvalConfig, S1PredictorConfig]:
     """
     Resolve evaluation inputs from the train yaml and CLI overrides.
@@ -107,5 +112,7 @@ def build_eval_config(
         mode=str(cfg_train.rollout.mode),
         long_horizon_fraction=float(cfg_train.loss.late_horizon_fraction),
         save_samples=int(save_samples),
+        trace_seconds=float(trace_seconds),
+        trace_dt_s=float(trace_dt_s),
     )
     return cfg_eval, cfg_train.model

@@ -7,9 +7,10 @@
 生成可直接用于模型筛选与技术汇报的 summary / 长线曲线图。
 
 主要功能：
-1. 汇总 replay 主指标，生成多模型 2x3 summary compare 图。
+1. 汇总 replay 主指标，生成多模型 2x2 summary compare 图。
 2. 读取逐步 `step_metrics.csv`，生成误差包络与生存率曲线图。
 3. 复用仓库已有 role-aware 风格，突出 primary / ablation / baseline 层级。
+4. 对只有一个 replay step 的曲线自动补 marker，避免单点曲线不可见。
 
 数据流：
 replay_run_dir/metrics.yaml + step_metrics.csv
@@ -49,6 +50,7 @@ from uwnav_dynamics.viz.style.sci_style import (
     get_model_role_styles,
     infer_model_role,
     normalize_model_label,
+    plot_visible_series,
     save_figure,
     setup_mpl,
 )
@@ -122,7 +124,7 @@ def build_replay_summary_figure(
     role_styles = get_model_role_styles([item[2] for item in zipped])
     metrics_list = [_load_yaml(Path(run_dir) / "metrics.yaml") for run_dir, _, _ in zipped]
 
-    fig, axes = plt.subplots(2, 3, figsize=get_figure_size("sensor_4x2"))
+    fig, axes = plt.subplots(2, 2, figsize=get_figure_size("sensor_4x2"))
     flat_axes = tuple(axes.reshape(-1))
     x = np.arange(len(zipped), dtype=float)
     width = 0.62
@@ -133,9 +135,7 @@ def build_replay_summary_figure(
         (("rmse_global",), "Global RMSE"),
         (("final_step", "rmse_global_mean"), "Final-Step RMSE"),
         (("rollout_growth", "rmse_last_over_first_p95"), "Growth P95"),
-        (("tail_error", "abs_p95_global"), "Tail Abs P95"),
         (("long_horizon", "time_to_threshold", "rmse", "failure_rate"), "RMSE Threshold Fail"),
-        (("bias", "worst_abs_bias"), "Worst |Bias|"),
     )
 
     for idx, (ax, (path, title)) in enumerate(zip(flat_axes, panel_specs)):
@@ -160,9 +160,14 @@ def build_replay_summary_figure(
                     color="#000000",
                     zorder=6,
                 )
+        finite_values = [float(v) for v in values if np.isfinite(v)]
+        if finite_values:
+            ymax = max(finite_values)
+            if ymax > 0.0:
+                ax.set_ylim(top=ymax * 1.18)
         ax.set_title(title)
         ax.set_xticks(x, tick_labels)
-        if idx < 3:
+        if idx < 2:
             ax.set_xlabel("")
             ax.tick_params(axis="x", which="both", labelbottom=False)
         else:
@@ -214,7 +219,8 @@ def build_replay_long_horizon_figure(
             x = np.asarray([row["step"] for row in rows], dtype=np.float64)
             y = np.asarray([row[metric_name] for row in rows], dtype=np.float64)
             style = role_styles[idx]
-            ax.plot(
+            plot_visible_series(
+                ax,
                 x,
                 y,
                 label=label,

@@ -208,6 +208,12 @@ def test_transition_replay_cli_writes_autoregressive_replay_artifacts(tmp_path, 
     assert metrics["final_step"]["abs_p95_global"] == 0.0
     assert metrics["long_horizon"]["thresholds"]["rmse"] == 0.05
     assert metrics["long_horizon"]["time_to_threshold"]["rmse"]["failure_rate"] == 0.0
+    assert not Path(str(metrics["cfg"]["train_yaml"])).is_absolute()
+    assert not Path(str(metrics["cfg"]["ckpt"])).is_absolute()
+    assert not Path(str(metrics["cfg"]["data_dir"])).is_absolute()
+
+    resolved = yaml.safe_load((out_dir / "resolved_replay.yaml").read_text(encoding="utf-8"))
+    assert not Path(str(resolved["cfg"]["split_indices_path"])).is_absolute()
 
     assert (out_dir / "segment_metrics.csv").exists()
     assert (out_dir / "component_metrics.csv").exists()

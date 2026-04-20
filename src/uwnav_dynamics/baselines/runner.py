@@ -491,6 +491,9 @@ def run_baseline_suite(
             y_true_z_np=np.asarray(eval_split.Y_scaled, dtype=np.float32),
             logvar_z_np=logvar_eval,
             save_samples=int(save_samples),
+            late_horizon_fraction=float(cfg_eval.long_horizon_fraction),
+            trace_seconds=float(cfg_eval.trace_seconds),
+            trace_dt_s=float(cfg_eval.trace_dt_s),
         )
         write_eval_outputs(
             out_dir=cfg_eval.out_dir,
@@ -506,6 +509,9 @@ def run_baseline_suite(
                 "y_scaler": cfg_eval.y_scaler_path,
                 "y0_source": cfg_eval.y0_source,
                 "mode": cfg_eval.mode,
+                "late_horizon_fraction": cfg_eval.long_horizon_fraction,
+                "trace_seconds": cfg_eval.trace_seconds,
+                "trace_dt_s": cfg_eval.trace_dt_s,
                 "predictor": {
                     "type": "baseline",
                     "kind": baseline_kind,
