@@ -16,11 +16,14 @@
 - 学习模型能否更接近 `x_{t+1} = f(x_t, u_t, c_t)` 的一步状态转移算子。
 - 离线评估与长序列 replay 是否足以支撑“进入最小控制/仿真闭环前”的工程判断。
 
-截至 2026-04-11 晚，已有 7 卡正式矩阵结果表明：
+截至 2026-04-20，本地已完成多轮 7/8 卡结果回收与评估链升级：
 
-- `quality_step_v1` 的离线最优候选优于 `quality_v3`
+- `quality_step_v1` 的单步状态转移主线优于 `quality_v3` 10-step 主线
 - `B4 + blocks` 仍是当前最值得继续推进的结构家族
-- 下一轮正式训练更适合优先使用 8 卡并发矩阵继续做 `single-step` 主线确认
+- 当前推荐默认 solver 候选为
+  `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B4_grouped_tb_blocks_seed10/eval_test`
+- 默认评估图包已从短 0.1s 样例转向 50s 长窗口 Acc/Gyro/Vel 三轴诊断图
+- 已新增 `step_with_feature_template()`，作为后续 controller / RL wrapper 的最小 step 边界
 
 ## 项目定位
 
@@ -55,6 +58,7 @@ Raw Logs
 -> S1Predictor training
 -> Offline transition evaluation
 -> Transition replay / solver ranking
+-> Learned transition step interface
 -> Minimal controller or simulator integration
 ```
 
@@ -106,6 +110,12 @@ Raw Logs
 - 多步块输出主线：维持现有 horizon / rollout 图包可比性
 - 单步状态转移主线：向 solver、控制和 RL 接口收口
 
+当前训练后求解器接口位于 `src/uwnav_dynamics/solver/transition_solver.py`：
+
+- `predict_next_state(history_window)`：预测下一时刻主状态。
+- `step_with_feature_template(history_window, feature_template)`：把预测状态写回下一行 feature 模板，是 controller / RL wrapper 的当前最小接口。
+- `rollout_with_feature_templates(initial_history, future_templates)`：基于未来控制/上下文模板做长序列 autoregressive replay。
+
 ## 当前训练思路
 
 当前更推荐的训练决策，不是“先把所有长时拟合再补一轮”，而是：
@@ -115,6 +125,23 @@ Raw Logs
 3. 再决定是否补跑 `quality_v3` 作为长期拟合对照
 
 这样更符合当前阶段目标，因为我们现在要验证的是“能否作为状态转移部件使用”，而不是只追求长 horizon 图更好看。
+
+当前已回收结果中，默认优先候选是：
+
+```text
+out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/
+  STEP_B4_grouped_tb_blocks_seed10/eval_test/
+```
+
+关键指标：
+
+- `rmse_global_masked = 0.0341668`
+- `mae_global_masked = 0.0064416`
+- `tail_p95_masked = 0.0198636`
+- `tail_p99_masked = 0.1422205`
+
+这些指标只支持“下一阶段 solver / replay / wrapper 优先候选”的判断，
+不应表述为闭环控制已经完成验证。
 
 ## 核心数学原理
 
@@ -249,6 +276,37 @@ python -m uwnav_dynamics.cli.server_pipeline \
 
 如果服务器仍需让出一张卡，再回退到 `7gpu_v2` 方案。
 
+6. 单次评估与默认可视化
+
+```bash
+python -m uwnav_dynamics.cli.eval \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --plots \
+  --trace_seconds 50 \
+  --plot_fmt png
+```
+
+默认图包重点包含：
+
+- `prediction_trace_acc_axes.*`
+- `prediction_trace_gyro_axes.*`
+- `prediction_trace_vel_axes.*`
+
+每张图只包含 X/Y/Z 三个共享 x 轴子窗。短窗口样例图需要显式加
+`--sample_plots`，避免默认图包拥挤。
+
+7. 长序列 replay 验证
+
+```bash
+python -m uwnav_dynamics.cli.transition_replay \
+  -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
+  --split test \
+  --min_steps 50
+```
+
+replay 与 eval artifact 中的配置快照应保持相对路径，避免绑定某一台机器的绝对目录。
+
 ## 当前评估口径
 
 当前推荐的 run 级判断口径至少包括：
@@ -260,6 +318,8 @@ python -m uwnav_dynamics.cli.server_pipeline \
 - `tail_error`
 - `worst_abs_bias`
 - 有效步数、失败步数、非有限值触发次数
+- 50s 长窗口 Acc/Gyro/Vel 三轴图是否非空、无遮挡、信息不过密
+- replay / eval 配置快照是否保持相对路径
 
 如果进入最小闭环，还应额外记录：
 
@@ -273,8 +333,8 @@ python -m uwnav_dynamics.cli.server_pipeline \
 
 - KF 输出是状态代理量，不是高保真物理真值
 - `S1Predictor` 仍是当前默认主模型 family
-- 多步主线仍是“历史窗 -> 固定未来块输出”，不是严格的一步动力学算子
-- 单步主线虽然更接近 solver 接口，但仍需要 replay ranking 形成更强证据
+- 多步主线仍是“历史窗 -> 固定未来块输出”，主要用于对照
+- 单步主线已有 solver step 接口，但仍需要 replay ranking、最小 wrapper 与在线时延证据形成更强闭环
 - 离线指标和 replay 结果只能证明控制前筛查价值，不能直接等价于闭环可用性证明
 
 ## 文档入口
@@ -293,6 +353,7 @@ python -m uwnav_dynamics.cli.server_pipeline \
 - 最终选模与论文产物契约：`docs/design/final_selection_artifact_contract_v1.md`
 - 数学原理入口：`docs/math/README.md`
 - 主数学文档：`docs/math/main.tex`
+- 理论文稿 PDF：`docs/math/main.pdf`
 - 评估规范：`docs/evaluation_protocol.md`
 - 文件索引：`docs/repo_index.md`
 
