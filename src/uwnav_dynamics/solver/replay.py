@@ -26,6 +26,7 @@ transition solver autoregressive rollout
 - numpy
 - pandas
 - yaml
+- math
 - uwnav_dynamics.dataset.split
 - uwnav_dynamics.experiment.paths
 - uwnav_dynamics.solver.transition_solver
@@ -43,6 +44,7 @@ transition solver autoregressive rollout
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -125,6 +127,40 @@ class ReplayResult:
     sample_pred_mask: np.ndarray
     sample_context: dict[str, np.ndarray]
     sample_manifest_rows: list[dict[str, Any]]
+
+
+def replay_seconds_to_steps(seconds: float | int, *, dt_s: float = 0.01) -> int:
+    """把 replay 时长秒数转换成向上取整的 step 数。"""
+    seconds_f = float(seconds)
+    dt_f = float(dt_s)
+    if seconds_f <= 0.0:
+        raise ValueError(f"replay seconds must be positive, got {seconds}")
+    if dt_f <= 0.0:
+        raise ValueError(f"replay dt_s must be positive, got {dt_s}")
+    return max(1, int(math.ceil(seconds_f / dt_f)))
+
+
+def resolve_replay_step_count(
+    *,
+    steps: int | None,
+    seconds: float | int | None,
+    dt_s: float,
+    default_steps: int,
+) -> int:
+    """
+    统一解析 replay 长度配置。
+
+    若提供 `seconds`，优先按 `seconds / dt_s` 换算；
+    否则使用显式 `steps`，再退回默认 step 数。
+    """
+    if seconds is not None:
+        return replay_seconds_to_steps(seconds, dt_s=dt_s)
+    if steps is None:
+        return int(default_steps)
+    steps_i = int(steps)
+    if steps_i <= 0:
+        raise ValueError(f"replay steps must be positive, got {steps}")
+    return steps_i
 
 
 def load_replay_dataset(data_dir: str | Path) -> ReplayDataset:

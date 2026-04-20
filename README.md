@@ -16,10 +16,10 @@
 - 学习模型能否更接近 `x_{t+1} = f(x_t, u_t, c_t)` 的一步状态转移算子。
 - 离线评估与长序列 replay 是否足以支撑“进入最小控制/仿真闭环前”的工程判断。
 
-截至 2026-04-20，本地已完成多轮 7/8 卡结果回收与评估链升级：
+截至 2026-04-20，本地已完成多轮 7/8 卡短 horizon 离线评估结果回收与评估链升级：
 
-- `quality_step_v1` 的单步状态转移主线优于 `quality_v3` 10-step 主线
-- `B4 + blocks` 仍是当前最值得继续推进的结构家族
+- 在当前短期 eval 指标上，`quality_step_v1` 的单步状态转移主线优于 `quality_v3` 10-step 主线；但这还不是 50s 级长时长 replay 结论
+- `B4 + blocks` 是当前最值得进入长时长 replay 验证的结构家族，但不同 seed 间仍有波动
 - 当前推荐默认 solver 候选为
   `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B4_grouped_tb_blocks_seed10/eval_test`
 - 默认评估图包已从短 0.1s 样例转向 50s 长窗口 Acc/Gyro/Vel 三轴诊断图
@@ -140,8 +140,9 @@ out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/
 - `tail_p95_masked = 0.0198636`
 - `tail_p99_masked = 0.1422205`
 
-这些指标只支持“下一阶段 solver / replay / wrapper 优先候选”的判断，
-不应表述为闭环控制已经完成验证。
+这些指标只支持“短期 eval 下的下一阶段候选优先级”判断。
+它们不能回答 50s / 100s 长时长自由递推中哪套方案最稳定；
+下一轮 8 卡训练后必须用 autoregressive replay matrix 重新排序。
 
 ## 核心数学原理
 
@@ -302,10 +303,15 @@ python -m uwnav_dynamics.cli.eval \
 python -m uwnav_dynamics.cli.transition_replay \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
   --split test \
-  --min_steps 50
+  --min_seconds 50 \
+  --max_seconds_per_segment 50 \
+  --dt 0.01
 ```
 
 replay 与 eval artifact 中的配置快照应保持相对路径，避免绑定某一台机器的绝对目录。
+
+注意：在 100 Hz 数据上，`50 steps` 只有 `0.5s`。
+长时长验证必须使用 `--min_seconds 50` 或 replay matrix 中的 `min_seconds: 50`。
 
 ## 当前评估口径
 
@@ -321,6 +327,16 @@ replay 与 eval artifact 中的配置快照应保持相对路径，避免绑定�
 - 50s 长窗口 Acc/Gyro/Vel 三轴图是否非空、无遮挡、信息不过密
 - replay / eval 配置快照是否保持相对路径
 
+下一轮 8 卡服务器训练后的核心选模口径应改为长时长 replay：
+
+- `out/replay_matrix/*/ranking.csv`
+- `segment_count / total_steps`
+- `rmse_threshold_failure_rate`
+- `rmse_growth_p95`
+- `tail_abs_p95_global / tail_abs_p99_global`
+- `nonfinite_trigger_count`
+- `final_step_rmse_global_mean`
+
 如果进入最小闭环，还应额外记录：
 
 - 单步推理延迟
@@ -334,7 +350,7 @@ replay 与 eval artifact 中的配置快照应保持相对路径，避免绑定�
 - KF 输出是状态代理量，不是高保真物理真值
 - `S1Predictor` 仍是当前默认主模型 family
 - 多步主线仍是“历史窗 -> 固定未来块输出”，主要用于对照
-- 单步主线已有 solver step 接口，但仍需要 replay ranking、最小 wrapper 与在线时延证据形成更强闭环
+- 单步主线已有 solver step 接口，但当前最优结论仍来自短期 eval；长时长 replay ranking 尚未完成
 - 离线指标和 replay 结果只能证明控制前筛查价值，不能直接等价于闭环可用性证明
 
 ## 文档入口

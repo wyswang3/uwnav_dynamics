@@ -32,7 +32,11 @@ replay:
     work_dir: out/replay_matrix/pooltest02_s1_kf_quality_8gpu_v2
     split: test
     device: cuda
-    min_steps: 50
+    # 50s at 100 Hz. Keep step fields out of hand-written configs to avoid
+    # confusing 50 steps (0.5s) with 50 seconds.
+    min_seconds: 50
+    max_seconds_per_segment: 50
+    dt_s: 0.01
     save_samples: 8
     include_statuses: [ok]
 
@@ -41,6 +45,8 @@ replay:
     work_dir: out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2
     split: test
     device: cuda
-    min_steps: 50
+    min_seconds: 50
+    max_seconds_per_segment: 50
+    dt_s: 0.01
     save_samples: 8
     include_statuses: [ok]

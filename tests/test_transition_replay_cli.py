@@ -186,8 +186,12 @@ def test_transition_replay_cli_writes_autoregressive_replay_artifacts(tmp_path, 
             "cpu",
             "--out_dir",
             str(out_dir),
-            "--min_steps",
+            "--min_seconds",
             "3",
+            "--dt",
+            "1.0",
+            "--max_seconds_per_segment",
+            "8",
             "--save_samples",
             "2",
         ],
@@ -208,6 +212,10 @@ def test_transition_replay_cli_writes_autoregressive_replay_artifacts(tmp_path, 
     assert metrics["final_step"]["abs_p95_global"] == 0.0
     assert metrics["long_horizon"]["thresholds"]["rmse"] == 0.05
     assert metrics["long_horizon"]["time_to_threshold"]["rmse"]["failure_rate"] == 0.0
+    assert metrics["cfg"]["min_seconds"] == 3.0
+    assert metrics["cfg"]["min_steps"] == 3
+    assert metrics["cfg"]["max_seconds_per_segment"] == 8.0
+    assert metrics["cfg"]["max_steps_per_segment"] == 8
     assert not Path(str(metrics["cfg"]["train_yaml"])).is_absolute()
     assert not Path(str(metrics["cfg"]["ckpt"])).is_absolute()
     assert not Path(str(metrics["cfg"]["data_dir"])).is_absolute()

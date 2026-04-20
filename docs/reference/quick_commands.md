@@ -192,8 +192,12 @@ run_dir/eval_test/plots/
 PYTHONPATH=src python -m uwnav_dynamics.cli.transition_replay \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
   --split test \
-  --min_steps 50
+  --min_seconds 50 \
+  --max_seconds_per_segment 50 \
+  --dt 0.01
 ```
+
+注意：100 Hz 数据中 `50 steps = 0.5s`，50 秒长时验证应使用 `--min_seconds 50`。
 
 主要产物：
 
@@ -221,7 +225,9 @@ PYTHONPATH=src python -m uwnav_dynamics.cli.eval \
 PYTHONPATH=src python -m uwnav_dynamics.cli.transition_replay \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
   --split test \
-  --min_steps 50
+  --min_seconds 50 \
+  --max_seconds_per_segment 50 \
+  --dt 0.01
 ```
 
 保存最小结果包时，至少保留：

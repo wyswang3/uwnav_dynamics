@@ -135,7 +135,9 @@
 - 当前组均值显示：
   - `STEP_B4_blocks` 优于 `STEP_B0_base / STEP_B2_strong_delta`
   - `quality_step_v1` 单步主线优于 `quality_v3` 10-step 主线
-- 注意：`quality_step_v1` 与 `quality_v3` 的 horizon 语义不同，不能只凭单个指标直接当作闭环结论；但从“短时状态转移求解器”定位看，`STEP_B4_grouped_tb_blocks_seed10` 是当前优先候选。
+- 注意：这些结论来自短 horizon / 单步离线 eval。`quality_step_v1` 与 `quality_v3` 的 horizon 语义不同，
+  不能据此判断 50s / 100s 长时长 autoregressive replay 稳定性；
+  `STEP_B4_grouped_tb_blocks_seed10` 只是当前进入长时 replay 的优先候选。
 
 当前阶段可下的结论：
 
@@ -222,17 +224,18 @@
 - `final_selection.csv` 与 `paper_artifact_manifest.yaml` 尚未在当前本地 `out/server_pipeline/` 中落盘确认
 - 新图包尚未基于 replay ranking 做最终筛选
 - 若模型主体不进一步收口为一步转移器，长期自由递推能力仍可能不足
+- 当前尚未落盘 50s 级 replay matrix ranking；已有短期 eval 不能替代长时长自由递推验证
 - 当前 replay 仍属于开环重放验证，还不是闭环控制证明
 
 ## 7. 当前推荐动作
 
 当前建议严格按这个顺序推进：
 
-1. 以 `STEP_B4_grouped_tb_blocks_seed10` 为默认候选，补齐 replay matrix 与最终选模表
-2. 若数据和配置未变化，不重跑 `fusion / dataset`，先做一次单卡 smoke 复核
-3. 基于 `step_with_feature_template()` 实现最小 controller / RL wrapper smoke
-4. 记录推理延迟、循环周期、失败步数与非有限值触发次数
-5. 基于 replay / solver / wrapper 指标决定是否补跑 `configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml`
+1. 在 8 卡服务器上重跑 `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
+2. replay 阶段使用 `min_seconds: 50 / max_seconds_per_segment: 50 / dt_s: 0.01`，不要再用 `min_steps: 50` 表达 50 秒
+3. 基于 `out/replay_matrix/*/ranking.csv` 判断哪套方案在长时长拟合中最稳
+4. 再基于 `step_with_feature_template()` 实现最小 controller / RL wrapper smoke
+5. 记录推理延迟、循环周期、失败步数与非有限值触发次数
 6. 整理 top2 图包，默认保持单图 3 到 4 个子窗，不恢复拥挤的短窗口样例图作为主图
 
 ## 8. 当前不建议的做法

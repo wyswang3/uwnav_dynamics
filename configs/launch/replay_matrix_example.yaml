@@ -2,7 +2,9 @@ launcher:
   work_dir: out/replay_matrix/pooltest02_transition_solver_compare
   split: test
   device: cpu
-  min_steps: 50
+  min_seconds: 50
+  max_seconds_per_segment: 50
+  dt_s: 0.01
   save_samples: 8
   fail_fast: false
 

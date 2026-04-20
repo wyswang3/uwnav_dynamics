@@ -91,7 +91,9 @@ def test_server_pipeline_orchestrates_phases_and_generates_replay_config(tmp_pat
                         "work_dir": str(tmp_path / "replay_out"),
                         "split": "test",
                         "device": "cpu",
-                        "min_steps": 3,
+                        "min_seconds": 3,
+                        "max_seconds_per_segment": 8,
+                        "dt_s": 1.0,
                         "save_samples": 2,
                         "include_statuses": ["ok"],
                     }
@@ -140,6 +142,9 @@ def test_server_pipeline_orchestrates_phases_and_generates_replay_config(tmp_pat
 
     gen = yaml.safe_load(generated_cfg.read_text(encoding="utf-8"))
     assert gen["launcher"]["split"] == "test"
+    assert gen["launcher"]["min_seconds"] == 3.0
+    assert gen["launcher"]["dt_s"] == 1.0
+    assert gen["launcher"]["max_seconds_per_segment"] == 8.0
     assert len(gen["runs"]) == 1
     assert gen["runs"][0]["name"] == "candidate_a"
 

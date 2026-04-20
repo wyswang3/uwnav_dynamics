@@ -226,7 +226,9 @@ def test_transition_replay_matrix_writes_summary_and_ranking(tmp_path, monkeypat
                     "work_dir": str(tmp_path / "replay_matrix_out"),
                     "split": "test",
                     "device": "cpu",
-                    "min_steps": 3,
+                    "min_seconds": 3,
+                    "max_seconds_per_segment": 8,
+                    "dt_s": 1.0,
                     "save_samples": 2,
                     "fail_fast": False,
                 },
@@ -290,6 +292,13 @@ def test_transition_replay_matrix_writes_summary_and_ranking(tmp_path, monkeypat
     assert float(ranking_rows[0]["overall_rank_score"]) < float(ranking_rows[1]["overall_rank_score"])
     assert (tmp_path / "replay_matrix_out" / "compare_test" / "replay_model_compare.png").exists()
     assert (tmp_path / "replay_matrix_out" / "compare_test" / "replay_long_horizon_curves.png").exists()
+    metrics = yaml.safe_load(
+        (tmp_path / "replay_matrix_out" / "runs" / "perfect" / "metrics.yaml").read_text(encoding="utf-8")
+    )
+    assert metrics["cfg"]["min_seconds"] == 3.0
+    assert metrics["cfg"]["min_steps"] == 3
+    assert metrics["cfg"]["max_seconds_per_segment"] == 8.0
+    assert metrics["cfg"]["max_steps_per_segment"] == 8
 
 
 def test_transition_replay_matrix_supports_feature_row_eval_against_common_observation(tmp_path, monkeypatch):

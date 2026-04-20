@@ -126,8 +126,14 @@ python -m uwnav_dynamics.cli.train \
 python -m uwnav_dynamics.cli.transition_replay \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
   --split test \
-  --min_steps 50
+  --min_seconds 50 \
+  --max_seconds_per_segment 50 \
+  --dt 0.01
 ```
+
+说明：100 Hz 数据中 `50 steps` 只有 `0.5s`。
+若目标是 50 秒长时长自由递推验证，必须使用 `--min_seconds 50`
+或 replay matrix 配置中的 `min_seconds: 50`。
 
 默认产物目录：
 
@@ -174,6 +180,8 @@ python -m uwnav_dynamics.cli.transition_replay_matrix \
 4. 能输出 segment 级与全局级误差摘要
 5. 能为后续多组实验保留统一 artifact 契约
 6. 默认图包保持单图 3 到 4 个子窗，标题与图例位于数据区域之外或不遮挡曲线
+7. 长时长 replay 配置必须记录 `dt_s / min_seconds / max_seconds_per_segment`，
+   以便复核实际验证时长
 
 ## 4.1 当前推荐可视化
 

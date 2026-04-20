@@ -261,7 +261,9 @@ PYTHONPATH=src python -m uwnav_dynamics.cli.eval \
 PYTHONPATH=src python -m uwnav_dynamics.cli.transition_replay \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
   --split test \
-  --min_steps 50
+  --min_seconds 50 \
+  --max_seconds_per_segment 50 \
+  --dt 0.01
 ```
 
 4. 如需进入下一轮正式训练，优先启动 8 卡矩阵

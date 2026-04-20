@@ -11,6 +11,7 @@
 3. 支持按 run 指定自定义评估口径，把不同主线的预测统一映射到同一观测真源上比较。
 4. 汇总所有候选的核心指标到 `summary.csv`，并保留长线阈值统计。
 5. 按统一排行协议生成 `ranking.csv`，并自动输出 replay compare 图。
+6. 支持按秒配置 replay 长度，服务器侧默认可直接表达 50s / 100s 长时验证。
 
 数据流：
 replay matrix yaml
@@ -63,6 +64,7 @@ from uwnav_dynamics.solver.replay import (
     ReplayEvalSpec,
     ReplayThresholdSpec,
     load_replay_dataset,
+    resolve_replay_step_count,
     run_transition_replay,
     write_replay_outputs,
 )
@@ -89,8 +91,10 @@ class ReplayMatrixRunSpec:
     split: str | None = None
     device: str | None = None
     min_steps: int | None = None
+    min_seconds: float | None = None
     max_segments: int | None = None
     max_steps_per_segment: int | None = None
+    max_seconds_per_segment: float | None = None
     save_samples: int | None = None
     eval: ReplayEvalSpec | None = None
 
@@ -103,8 +107,11 @@ class ReplayMatrixConfig:
     split: str
     device: str | None
     min_steps: int
+    min_seconds: float | None
+    dt_s: float
     max_segments: int | None
     max_steps_per_segment: int | None
+    max_seconds_per_segment: float | None
     save_samples: int
     rmse_threshold: float
     abs_error_threshold: float
@@ -124,6 +131,12 @@ def _parse_optional_int(value: Any, *, where: str) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _parse_optional_float(value: Any, *, where: str) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _parse_optional_path(value: Any, *, where: str) -> Path | None:
@@ -195,10 +208,15 @@ def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
                 split=None if entry.get("split") in (None, "") else str(entry.get("split")),
                 device=None if entry.get("device") in (None, "") else str(entry.get("device")),
                 min_steps=_parse_optional_int(entry.get("min_steps"), where=f"runs[{idx}].min_steps"),
+                min_seconds=_parse_optional_float(entry.get("min_seconds"), where=f"runs[{idx}].min_seconds"),
                 max_segments=_parse_optional_int(entry.get("max_segments"), where=f"runs[{idx}].max_segments"),
                 max_steps_per_segment=_parse_optional_int(
                     entry.get("max_steps_per_segment"),
                     where=f"runs[{idx}].max_steps_per_segment",
+                ),
+                max_seconds_per_segment=_parse_optional_float(
+                    entry.get("max_seconds_per_segment"),
+                    where=f"runs[{idx}].max_seconds_per_segment",
                 ),
                 save_samples=_parse_optional_int(entry.get("save_samples"), where=f"runs[{idx}].save_samples"),
                 eval=eval_cfg,
@@ -211,10 +229,16 @@ def load_replay_matrix_config(path: str | Path) -> ReplayMatrixConfig:
         split=split,
         device=None if launcher.get("device") in (None, "") else str(launcher.get("device")),
         min_steps=int(launcher.get("min_steps", 50)),
+        min_seconds=_parse_optional_float(launcher.get("min_seconds"), where="launcher.min_seconds"),
+        dt_s=float(launcher.get("dt_s", launcher.get("dt", 0.01))),
         max_segments=_parse_optional_int(launcher.get("max_segments"), where="launcher.max_segments"),
         max_steps_per_segment=_parse_optional_int(
             launcher.get("max_steps_per_segment"),
             where="launcher.max_steps_per_segment",
+        ),
+        max_seconds_per_segment=_parse_optional_float(
+            launcher.get("max_seconds_per_segment"),
+            where="launcher.max_seconds_per_segment",
         ),
         save_samples=int(launcher.get("save_samples", 8)),
         rmse_threshold=float(launcher.get("rmse_threshold", 0.05)),
@@ -300,8 +324,11 @@ def _write_manifest(*, cfg: ReplayMatrixConfig, path: Path, repo_root: Path) -> 
                 "split": cfg.split,
                 "device": cfg.device,
                 "min_steps": cfg.min_steps,
+                "min_seconds": cfg.min_seconds,
+                "dt_s": cfg.dt_s,
                 "max_segments": cfg.max_segments,
                 "max_steps_per_segment": cfg.max_steps_per_segment,
+                "max_seconds_per_segment": cfg.max_seconds_per_segment,
                 "save_samples": cfg.save_samples,
                 "rmse_threshold": cfg.rmse_threshold,
                 "abs_error_threshold": cfg.abs_error_threshold,
@@ -325,8 +352,10 @@ def _write_manifest(*, cfg: ReplayMatrixConfig, path: Path, repo_root: Path) -> 
                     "split": run.split,
                     "device": run.device,
                     "min_steps": run.min_steps,
+                    "min_seconds": run.min_seconds,
                     "max_segments": run.max_segments,
                     "max_steps_per_segment": run.max_steps_per_segment,
+                    "max_seconds_per_segment": run.max_seconds_per_segment,
                     "save_samples": run.save_samples,
                     "eval": None
                     if run.eval is None
@@ -449,6 +478,35 @@ def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) ->
         }
         row.update({field: "" for field in REPLAY_SUMMARY_FIELDS})
         try:
+            effective_min_steps = resolve_replay_step_count(
+                steps=run.min_steps if run.min_steps is not None else cfg.min_steps,
+                seconds=run.min_seconds if run.min_seconds is not None else cfg.min_seconds,
+                dt_s=float(cfg.dt_s),
+                default_steps=50,
+            )
+            effective_max_steps_per_segment = (
+                resolve_replay_step_count(
+                    steps=(
+                        run.max_steps_per_segment
+                        if run.max_steps_per_segment is not None
+                        else cfg.max_steps_per_segment
+                    ),
+                    seconds=(
+                        run.max_seconds_per_segment
+                        if run.max_seconds_per_segment is not None
+                        else cfg.max_seconds_per_segment
+                    ),
+                    dt_s=float(cfg.dt_s),
+                    default_steps=effective_min_steps,
+                )
+                if (
+                    run.max_steps_per_segment is not None
+                    or cfg.max_steps_per_segment is not None
+                    or run.max_seconds_per_segment is not None
+                    or cfg.max_seconds_per_segment is not None
+                )
+                else None
+            )
             loaded = load_trained_transition_solver(
                 train_yaml=_resolve_repo_path(repo_root, run.train_yaml, config_dir=config_dir),
                 ckpt=None if run.ckpt is None else _resolve_repo_path(repo_root, run.ckpt, config_dir=config_dir),
@@ -460,13 +518,9 @@ def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) ->
                 split_indices_path=loaded.run_layout.split_indices_path,
                 split_name=split,
                 solver=loaded.solver,
-                min_steps=int(run.min_steps if run.min_steps is not None else cfg.min_steps),
+                min_steps=int(effective_min_steps),
                 max_segments=run.max_segments if run.max_segments is not None else cfg.max_segments,
-                max_steps_per_segment=(
-                    run.max_steps_per_segment
-                    if run.max_steps_per_segment is not None
-                    else cfg.max_steps_per_segment
-                ),
+                max_steps_per_segment=effective_max_steps_per_segment,
                 save_samples=int(run.save_samples if run.save_samples is not None else cfg.save_samples),
                 eval_spec=run.eval,
                 thresholds=ReplayThresholdSpec(
@@ -483,13 +537,16 @@ def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) ->
                 "device": run.device or cfg.device or str(loaded.cfg_train.run.device),
                 "data_dir": loaded.cfg_train.data.data_dir,
                 "split_indices_path": loaded.run_layout.split_indices_path,
-                "min_steps": int(run.min_steps if run.min_steps is not None else cfg.min_steps),
+                "dt_s": float(cfg.dt_s),
+                "min_seconds": run.min_seconds if run.min_seconds is not None else cfg.min_seconds,
+                "min_steps": int(effective_min_steps),
                 "max_segments": run.max_segments if run.max_segments is not None else cfg.max_segments,
-                "max_steps_per_segment": (
-                    run.max_steps_per_segment
-                    if run.max_steps_per_segment is not None
-                    else cfg.max_steps_per_segment
+                "max_seconds_per_segment": (
+                    run.max_seconds_per_segment
+                    if run.max_seconds_per_segment is not None
+                    else cfg.max_seconds_per_segment
                 ),
+                "max_steps_per_segment": effective_max_steps_per_segment,
                 "save_samples": int(run.save_samples if run.save_samples is not None else cfg.save_samples),
                 "rmse_threshold": float(cfg.rmse_threshold),
                 "abs_error_threshold": float(cfg.abs_error_threshold),

@@ -13,6 +13,7 @@
 4. 统一写出 `manifest.yaml`、`phase_status.csv` 与生成的 replay matrix yaml，便于复现与交接。
 5. 在 replay 结束后合并 `summary.csv + ranking.csv`，输出 `final_selection.csv`
    与 `paper_artifact_manifest.yaml` 作为最终选模与论文图表入口。
+6. 支持 replay 阶段用秒数配置长时验证，避免把 `50 steps` 误当成 `50s`。
 
 数据流：
 server pipeline yaml
@@ -77,8 +78,11 @@ class ReplayFromMatrixSpec:
     split: str = "test"
     device: str | None = None
     min_steps: int = 50
+    min_seconds: float | None = None
+    dt_s: float = 0.01
     max_segments: int | None = None
     max_steps_per_segment: int | None = None
+    max_seconds_per_segment: float | None = None
     save_samples: int = 8
     include_statuses: tuple[str, ...] = ("ok",)
     top_k: int | None = None
@@ -115,6 +119,12 @@ def _parse_optional_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
     return int(value)
+
+
+def _parse_optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
 
 
 def load_server_pipeline_config(path: str | Path) -> ServerPipelineConfig:
@@ -172,8 +182,11 @@ def load_server_pipeline_config(path: str | Path) -> ServerPipelineConfig:
                 split=str(entry.get("split", "test")),
                 device=None if entry.get("device") in (None, "") else str(entry.get("device")),
                 min_steps=int(entry.get("min_steps", 50)),
+                min_seconds=_parse_optional_float(entry.get("min_seconds")),
+                dt_s=float(entry.get("dt_s", entry.get("dt", 0.01))),
                 max_segments=_parse_optional_int(entry.get("max_segments")),
                 max_steps_per_segment=_parse_optional_int(entry.get("max_steps_per_segment")),
+                max_seconds_per_segment=_parse_optional_float(entry.get("max_seconds_per_segment")),
                 save_samples=int(entry.get("save_samples", 8)),
                 include_statuses=tuple(str(v) for v in include_statuses_raw),
                 top_k=_parse_optional_int(entry.get("top_k")),
@@ -253,8 +266,11 @@ def _write_manifest(*, cfg: ServerPipelineConfig, repo_root: Path, path: Path) -
                     "split": item.split,
                     "device": item.device,
                     "min_steps": item.min_steps,
+                    "min_seconds": item.min_seconds,
+                    "dt_s": item.dt_s,
                     "max_segments": item.max_segments,
                     "max_steps_per_segment": item.max_steps_per_segment,
+                    "max_seconds_per_segment": item.max_seconds_per_segment,
                     "save_samples": item.save_samples,
                     "include_statuses": list(item.include_statuses),
                     "top_k": item.top_k,
@@ -362,8 +378,11 @@ def _build_generated_replay_config(
             "split": spec.split,
             "device": spec.device,
             "min_steps": spec.min_steps,
+            "min_seconds": spec.min_seconds,
+            "dt_s": spec.dt_s,
             "max_segments": spec.max_segments,
             "max_steps_per_segment": spec.max_steps_per_segment,
+            "max_seconds_per_segment": spec.max_seconds_per_segment,
             "save_samples": spec.save_samples,
             "fail_fast": False,
         },

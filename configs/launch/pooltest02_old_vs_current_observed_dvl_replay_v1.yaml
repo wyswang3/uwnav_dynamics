@@ -2,7 +2,9 @@ launcher:
   work_dir: out/replay_matrix/pooltest02_old_vs_current_observed_dvl_replay_v1
   split: test
   device: cuda
-  min_steps: 50
+  min_seconds: 50
+  max_seconds_per_segment: 50
+  dt_s: 0.01
   max_segments: 24
   save_samples: 8
   fail_fast: false

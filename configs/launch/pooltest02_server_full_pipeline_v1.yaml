@@ -32,7 +32,9 @@ replay:
     work_dir: out/replay_matrix/pooltest02_s1_kf_quality_8gpu_v1
     split: test
     device: cuda
-    min_steps: 50
+    min_seconds: 50
+    max_seconds_per_segment: 50
+    dt_s: 0.01
     save_samples: 8
     include_statuses: [ok]
 
@@ -41,6 +43,8 @@ replay:
     work_dir: out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v1
     split: test
     device: cuda
-    min_steps: 50
+    min_seconds: 50
+    max_seconds_per_segment: 50
+    dt_s: 0.01
     save_samples: 8
     include_statuses: [ok]

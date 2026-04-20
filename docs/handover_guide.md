@@ -96,15 +96,15 @@ Phase 1 已完成并收口了前两个基础阻塞：
 
 补充：截至 2026-04-20，本地 `out/ckpts` 中已经保留多轮 7/8 GPU 评估结果。
 
-- 当前单步主线最优候选应优先看：
+- 当前短 horizon / 单步 eval 的优先候选应先看：
   - `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B4_grouped_tb_blocks_seed10/eval_test`
   - `rmse_global_masked = 0.0341668`
   - `mae_global_masked = 0.0064416`
   - `tail_p95_masked = 0.0198636`
   - `tail_p99_masked = 0.1422205`
-- 当前组均值显示 `STEP_B4_blocks` 优于 `STEP_B0_base / STEP_B2_strong_delta / QV3_*`，更适合作为下一阶段 solver 候选。
+- 当前组均值显示 `STEP_B4_blocks` 在短期 eval 中优于 `STEP_B0_base / STEP_B2_strong_delta / QV3_*`，更适合作为长时 replay 的优先候选。
 - 服务器侧 `fusion + dataset` 预处理阶段已经完成；若数据和配置未变化，下次进入服务器可直接从训练、评估和 replay 验证开始。
-- 下一轮正式工作优先顺序：先基于 `STEP_B4_grouped_tb_blocks_seed10` 做 replay / controller wrapper smoke，再决定是否补跑 `quality_8gpu_v2`。
+- 下一轮正式工作优先顺序：先在 8 卡服务器上做 50s 长时长 autoregressive replay ranking，再基于排名做 controller wrapper smoke。
 
 ## 4. 当前最短工作流
 
@@ -214,7 +214,9 @@ python -m uwnav_dynamics.cli.eval \
 python -m uwnav_dynamics.cli.transition_replay \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
   --split test \
-  --min_steps 50
+  --min_seconds 50 \
+  --max_seconds_per_segment 50 \
+  --dt 0.01
 ```
 
 7. 保存关键产物
@@ -269,6 +271,7 @@ run 级筛选：
 - `acc / gyro / vel` 组误差
 - `pred_trace.npz` 对应的 50s 三轴图是否非空、无遮挡、信息不过密
 - replay `metrics.yaml / resolved_replay.yaml` 中的路径是否保持相对路径快照
+- 长时长 replay 是否真的使用 `min_seconds: 50`，而不是误用 `min_steps: 50`
 
 ## 7. 现在不要先做什么
 
@@ -283,11 +286,11 @@ run 级筛选：
 
 下一步最合理的顺序是：
 
-1. 以 `STEP_B4_grouped_tb_blocks_seed10` 为默认候选，补齐 replay matrix 与最终选模表
-2. 基于 `step_with_feature_template()` 做最小 controller / RL wrapper smoke
-3. 记录推理延迟、循环周期、失败步数、非有限值触发次数
-4. 保持默认图表为 3 到 4 个子窗；长时序诊断优先使用 Acc/Gyro/Vel 三张 50s 三轴图
-5. 再决定是否补跑 `quality_8gpu_v2` 或其他失败候选，而不是直接整批重开
+1. 重新在 8 卡服务器上运行 `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
+2. 用 50s replay matrix 排名确认哪套方案长时长拟合最稳
+3. 基于 `step_with_feature_template()` 做最小 controller / RL wrapper smoke
+4. 记录推理延迟、循环周期、失败步数、非有限值触发次数
+5. 保持默认图表为 3 到 4 个子窗；长时序诊断优先使用 Acc/Gyro/Vel 三张 50s 三轴图
 
 如果后续要继续扩展，应优先扩训练与评估链、求解器接口与最小 replay 验证，
 而不是重新打开旧阶段的大型验证壳层。

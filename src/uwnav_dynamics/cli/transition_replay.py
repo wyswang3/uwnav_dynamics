@@ -10,6 +10,7 @@
 2. 加载训练后模型与 run-scoped split/scaler artifact，构造状态求解器。
 3. 基于 `processed dataset + base_csv` 执行长序列 replay 验证。
 4. 将数值结果落盘到 `replay_<split>/` 目录，包含 step-wise 长线 artifact，供后续图表与筛选复用。
+5. 支持用秒数指定 replay 长度，避免把 `50 steps` 误认为 `50s`。
 
 数据流：
 train yaml + ckpt
@@ -41,6 +42,7 @@ from uwnav_dynamics.experiment.layout import run_layout_from_train_yaml
 from uwnav_dynamics.solver.replay import (
     ReplayThresholdSpec,
     load_replay_dataset,
+    resolve_replay_step_count,
     run_transition_replay,
     write_replay_outputs,
 )
@@ -56,8 +58,11 @@ def main() -> int:
     ap.add_argument("--device", type=str, default=None)
     ap.add_argument("--out_dir", type=str, default=None)
     ap.add_argument("--min_steps", type=int, default=50)
+    ap.add_argument("--min_seconds", type=float, default=None, help="minimum replay segment length in seconds")
+    ap.add_argument("--dt", type=float, default=0.01, help="sample period used when converting seconds to steps")
     ap.add_argument("--max_segments", type=int, default=None)
     ap.add_argument("--max_steps_per_segment", type=int, default=None)
+    ap.add_argument("--max_seconds_per_segment", type=float, default=None)
     ap.add_argument("--save_samples", type=int, default=8)
     ap.add_argument("--rmse_threshold", type=float, default=0.05)
     ap.add_argument("--abs_error_threshold", type=float, default=0.10)
@@ -74,14 +79,30 @@ def main() -> int:
         device=args.device,
     )
     replay_dataset = load_replay_dataset(loaded.cfg_train.data.data_dir)
+    min_steps = resolve_replay_step_count(
+        steps=int(args.min_steps),
+        seconds=args.min_seconds,
+        dt_s=float(args.dt),
+        default_steps=50,
+    )
+    max_steps_per_segment = (
+        resolve_replay_step_count(
+            steps=args.max_steps_per_segment,
+            seconds=args.max_seconds_per_segment,
+            dt_s=float(args.dt),
+            default_steps=min_steps,
+        )
+        if args.max_steps_per_segment is not None or args.max_seconds_per_segment is not None
+        else None
+    )
     replay_result = run_transition_replay(
         replay_dataset=replay_dataset,
         split_indices_path=loaded.run_layout.split_indices_path,
         split_name=str(args.split),
         solver=loaded.solver,
-        min_steps=int(args.min_steps),
+        min_steps=int(min_steps),
         max_segments=args.max_segments,
-        max_steps_per_segment=args.max_steps_per_segment,
+        max_steps_per_segment=max_steps_per_segment,
         save_samples=int(args.save_samples),
         thresholds=ReplayThresholdSpec(
             rmse_threshold=float(args.rmse_threshold),
@@ -95,9 +116,12 @@ def main() -> int:
         "device": str(args.device or loaded.cfg_train.run.device),
         "data_dir": loaded.cfg_train.data.data_dir,
         "split_indices_path": loaded.run_layout.split_indices_path,
-        "min_steps": int(args.min_steps),
+        "dt_s": float(args.dt),
+        "min_seconds": args.min_seconds,
+        "min_steps": int(min_steps),
         "max_segments": args.max_segments,
-        "max_steps_per_segment": args.max_steps_per_segment,
+        "max_seconds_per_segment": args.max_seconds_per_segment,
+        "max_steps_per_segment": max_steps_per_segment,
         "save_samples": int(args.save_samples),
         "rmse_threshold": float(args.rmse_threshold),
         "abs_error_threshold": float(args.abs_error_threshold),

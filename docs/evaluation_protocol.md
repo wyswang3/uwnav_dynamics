@@ -598,6 +598,11 @@ work_dir/
 
 - 手写 launcher 配置可以继续使用 repo-root 相对路径
   - 例如 `configs/train/...`、`out/replay_matrix/...`
+- 长时长 replay 优先使用秒级字段：
+  - `min_seconds: 50`
+  - `max_seconds_per_segment: 50`
+  - `dt_s: 0.01`
+- 不要用 `min_steps: 50` 表达 50 秒；在 100 Hz 数据中这只表示 0.5 秒
 - 由 `server_pipeline` 自动生成的 replay matrix 配置，
   允许使用相对“该配置文件所在目录”的 `../..` 路径
 - 运行时必须兼容这两类来源

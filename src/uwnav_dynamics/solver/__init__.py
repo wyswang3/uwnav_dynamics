@@ -39,6 +39,8 @@ from .replay import (
     ReplaySegment,
     build_replay_segments,
     load_replay_dataset,
+    replay_seconds_to_steps,
+    resolve_replay_step_count,
     run_transition_replay,
     write_replay_outputs,
 )
@@ -64,6 +66,8 @@ __all__ = [
     "load_replay_dataset",
     "load_trained_transition_solver",
     "replay_ranking_protocol",
+    "replay_seconds_to_steps",
+    "resolve_replay_step_count",
     "run_transition_replay",
     "write_replay_outputs",
 ]

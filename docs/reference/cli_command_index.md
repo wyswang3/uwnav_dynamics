@@ -151,7 +151,9 @@ python -m uwnav_dynamics.cli.pipeline \
 python -m uwnav_dynamics.cli.transition_replay \
   -y configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml \
   --split test \
-  --min_steps 50
+  --min_seconds 50 \
+  --max_seconds_per_segment 50 \
+  --dt 0.01
 ```
 
 ### 5.2 多模型 replay matrix
