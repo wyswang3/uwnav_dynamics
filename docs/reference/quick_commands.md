@@ -384,7 +384,8 @@ PYTHONPATH=src python -m uwnav_dynamics.viz.eval.plot_paper_ablation_summary \
   --csv out/server_pipeline/pooltest02_kf_full_7gpu_v2/final_selection.csv \
   --mode final_selection_replay \
   --route-suite \
-  --scope quality_v3_replay quality_step_v1_replay
+  --scope quality_v3_replay quality_step_v1_replay \
+  --route-name "KF Route" "Step Route"
 ```
 
 ### 9.2 当前更推荐的 8 卡训练顺序

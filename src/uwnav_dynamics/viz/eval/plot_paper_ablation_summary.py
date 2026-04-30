@@ -45,9 +45,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from uwnav_dynamics.viz.style.sci_style import (
-    add_figure_legend,
     apply_axes_style,
+    apply_minimal_legend,
     get_figure_size,
+    get_style,
     get_model_role_styles,
     infer_model_role,
     normalize_model_label,
@@ -261,6 +262,7 @@ def build_paper_ablation_summary_figure(
     *,
     rows: Sequence[dict[str, str]],
     mode: str,
+    title: str | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """构建论文用控制相关指标 dot-plot。"""
     if mode not in _METRIC_MODES:
@@ -287,7 +289,9 @@ def build_paper_ablation_summary_figure(
     )
     norm_values = np.vstack([_normalize_metric(values[:, j]) for j in range(values.shape[1])]).T
 
-    fig, ax = plt.subplots(figsize=get_figure_size("single"))
+    fig_w, _ = get_figure_size("wide")
+    fig_h = max(3.45, 0.58 * float(len(metric_specs)) + 0.55)
+    fig, ax = plt.subplots(figsize=(fig_w + 0.55, fig_h))
     y_base = np.arange(len(metric_specs), dtype=float)[::-1]
     offsets = np.linspace(-0.24, 0.24, num=max(len(enriched), 2), dtype=float)
     if len(enriched) == 1:
@@ -300,11 +304,11 @@ def build_paper_ablation_summary_figure(
         if not np.any(valid):
             continue
         for xv, yv in zip(x[valid], y[valid]):
-            ax.hlines(yv, xmin=min(1.0, float(xv)), xmax=max(1.0, float(xv)), color=style.color, alpha=0.24, lw=1.1)
+            ax.hlines(yv, xmin=min(1.0, float(xv)), xmax=max(1.0, float(xv)), color=style.color, alpha=0.20, lw=1.0)
         ax.scatter(
             x[valid],
             y[valid],
-            s=34.0,
+            s=40.0,
             color=style.color,
             alpha=style.alpha,
             zorder=style.zorder,
@@ -313,9 +317,12 @@ def build_paper_ablation_summary_figure(
 
     ax.axvline(1.0, color="#B8C4CF", linestyle="--", linewidth=1.0, zorder=1)
     ax.set_yticks(y_base, metric_labels)
-    ax.set_xlabel("Relative metric to best (=1.0, lower is better)")
+    ax.set_xlabel("Relative metric to best (=1.0)")
     ax.set_xlim(left=0.92, right=max(1.05, float(np.nanmax(norm_values[np.isfinite(norm_values)]) * 1.06)))
     apply_axes_style(ax, grid=False)
+    ax.tick_params(axis="y", pad=6.0)
+    if title is not None and str(title).strip() != "":
+        ax.set_title(str(title).strip(), pad=10.0)
 
     handles, labels = ax.get_legend_handles_labels()
     seen: set[str] = set()
@@ -328,8 +335,22 @@ def build_paper_ablation_summary_figure(
         uniq_handles.append(handle)
         uniq_labels.append(label)
 
-    fig.subplots_adjust(top=0.82, bottom=0.16, left=0.31, right=0.98)
-    add_figure_legend(fig, uniq_handles, uniq_labels, ncol=min(len(uniq_labels), 4), y=0.98)
+    style = get_style("paper")
+    if len(uniq_handles) > 0:
+        legend = ax.legend(
+            uniq_handles,
+            uniq_labels,
+            loc="center left",
+            bbox_to_anchor=(1.01, 0.5),
+            ncol=1,
+            frameon=True,
+            handlelength=style.legend_handlelength,
+            columnspacing=style.legend_columnspacing,
+            borderaxespad=0.0,
+        )
+        apply_minimal_legend(legend)
+
+    fig.subplots_adjust(left=0.31, right=0.78, bottom=0.18, top=0.86)
     return fig, ax
 
 
@@ -392,7 +413,11 @@ def plot_route_comparison_suite(
         route_rows = _clone_rows_for_route_scope(rows, scope=scope)
         if len(route_rows) == 0:
             raise ValueError(f"No rows selected for route scope: {scope}")
-        fig, _ = build_paper_ablation_summary_figure(rows=route_rows, mode=mode)
+        fig, _ = build_paper_ablation_summary_figure(
+            rows=route_rows,
+            mode=mode,
+            title=f"{alias} Module Comparison",
+        )
         out_stem = out_dir / f"route_{_slugify_name(alias)}_module_compare_{mode}"
         save_figure(fig, out_stem, fmt=fmt)
         plt.close(fig)
@@ -401,7 +426,11 @@ def plot_route_comparison_suite(
     winner_rows = _clone_rows_for_route_winners(rows, scope_alias_pairs=scope_alias_pairs)
     if len(winner_rows) == 0:
         raise ValueError("No scope winners found for cross-route comparison")
-    fig, _ = build_paper_ablation_summary_figure(rows=winner_rows, mode=mode)
+    fig, _ = build_paper_ablation_summary_figure(
+        rows=winner_rows,
+        mode=mode,
+        title="Route Winner Comparison",
+    )
     winner_out_stem = out_dir / f"route_winner_compare_{mode}"
     save_figure(fig, winner_out_stem, fmt=fmt)
     plt.close(fig)

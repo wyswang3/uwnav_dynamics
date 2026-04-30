@@ -35,6 +35,9 @@ summary_jobs:
     kind: route_comparison_suite
     csv: auto_final_selection
     mode: final_selection_replay
+    names:
+      - KF Route
+      - Step Route
     scopes:
       - quality_v3_replay
       - quality_step_v1_replay
