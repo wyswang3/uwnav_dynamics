@@ -27,7 +27,9 @@ _TIME_CANDIDATES: Tuple[str, ...] = ("EstS", "MonoS", "EstNS", "MonoNS")
 # 通道/电机相关常数
 N_MOTORS: int = 8
 N_CHANNELS: int = 16
-NOMINAL_VOLTAGE_V: float = 12.0
+# 论文与当前工程默认把母线电压近似视为 24 V。
+# 若后续要切回真实逐时电压测量，应在此处替换为显式电压通道解析。
+NOMINAL_VOLTAGE_V: float = 24.0
 CURRENT_GAIN: float = 40.0
 # 硬件通道 -> 逻辑电机顺序 的重排：
 #   - 1 号电机 ← 原 motor_idx 4 （第 5 组，CH8/CH9）

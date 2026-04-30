@@ -8,7 +8,7 @@
 主要功能：
 1. 提供 3 行传感器图的固定画布、边距与刻度策略。
 2. 提供稳健的 y 轴 “nice ticks” 规则。
-3. 提供 X/Y/Z 三轴折线与单次 legend 的布局辅助函数。
+3. 提供 X/Y/Z 三轴折线与单次 legend 的布局辅助函数，并对单点/空序列给出统一提示。
 
 数据流：
 plot 模块准备时间轴与传感器数组
@@ -43,6 +43,8 @@ from uwnav_dynamics.viz.style.sci_style import (
     apply_shared_xlabels,
     get_figure_size,
     get_style,
+    plot_or_record_series,
+    SparsePlotRecorder,
     get_xyz_styles,
 )
 
@@ -200,30 +202,48 @@ def plot_xyz_lines(
     xyz: np.ndarray,
     *,
     linewidth: float,
+    panel: str = "XYZ panel",
+    recorder: Optional[SparsePlotRecorder] = None,
+    skip_message: str = "Sparse XYZ series skipped",
     colors: Tuple[str, str, str] = IMU_AXIS_COLORS,
-) -> Tuple[plt.Line2D, plt.Line2D, plt.Line2D]:
+) -> Tuple[Optional[plt.Line2D], Optional[plt.Line2D], Optional[plt.Line2D]]:
     """在单个坐标轴上绘制三轴时序曲线。"""
     x = np.asarray(xyz, dtype=float)
     if x.ndim != 2 or x.shape[1] != 3:
         raise ValueError(f"xyz must be (N,3), got {x.shape}")
-    l1, = ax.plot(t_s, x[:, 0], linewidth=linewidth, color=colors[0])
-    l2, = ax.plot(t_s, x[:, 1], linewidth=linewidth, color=colors[1])
-    l3, = ax.plot(t_s, x[:, 2], linewidth=linewidth, color=colors[2])
-    return l1, l2, l3
+    lines = []
+    for idx, axis_name in enumerate(("X", "Y", "Z")):
+        plotted = plot_or_record_series(
+            ax,
+            t_s,
+            x[:, idx],
+            panel=panel,
+            series=f"{axis_name} axis",
+            color=colors[idx],
+            recorder=recorder,
+            skip_message=skip_message,
+            linewidth=linewidth,
+        )
+        lines.append(plotted[0] if len(plotted) > 0 else None)
+    return lines[0], lines[1], lines[2]
 
 
 def add_xyz_legend(
     ax: plt.Axes,
-    lines: Tuple[plt.Line2D, plt.Line2D, plt.Line2D],
+    lines: Tuple[Optional[plt.Line2D], Optional[plt.Line2D], Optional[plt.Line2D]],
     layout: Imu3RowLayout,
     *,
     labels: Tuple[str, str, str] = IMU_AXIS_LABELS,
     loc: str = "lower right",
 ) -> None:
     """为三轴曲线添加一次性 legend。"""
+    valid_pairs = [(line, label) for line, label in zip(lines, labels) if line is not None]
+    if len(valid_pairs) == 0:
+        return
+    handles, legend_labels = zip(*valid_pairs)
     leg = ax.legend(
-        list(lines),
-        list(labels),
+        list(handles),
+        list(legend_labels),
         loc=loc,
         bbox_to_anchor=(1.0, 1.02),
         frameon=False,

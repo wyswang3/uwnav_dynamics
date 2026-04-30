@@ -5,8 +5,9 @@ apps/dev/test_power_plots.py
 
 功能：
   1) 从 dataset yaml 中读取 Volt32/motor 电机功率日志；
-  2) 使用统一风格绘制 8 个电机电流曲线（4×2 子图）；
-  3) 导出 8 路电机瞬时电功率数据 P = V * I 到 out/aux_power 下：
+  2) 生成论文主图所需的“总功率 + 8 电机功率”同步观测图；
+  3) 可选保留 8 个电机电流曲线（4×2 子图）作为 QA 图；
+  4) 导出 8 路电机瞬时电功率数据 P = V * I 到 out/aux_power 下：
         - 尽可能完整保留原始时间戳列（MonoNS/EstNS/MonoS/EstS）
         - 额外提供统一的 t_s（秒）
         - 再附加 P0_W ~ P7_W 作为辅助学习数据集。
@@ -22,7 +23,11 @@ import pandas as pd
 
 from uwnav_dynamics.io.dataset_spec import DatasetSpec
 from uwnav_dynamics.io.readers.power_reader import read_power_csv
-from uwnav_dynamics.viz.plots.power_plots import save_power_currents_8motors
+from uwnav_dynamics.viz.plots.power_plots import (
+    resolve_power_time_window,
+    save_power_currents_8motors,
+    save_power_sync_overview_8motors,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -46,6 +51,36 @@ def _parse_args() -> argparse.Namespace:
         "--rel-time",
         action="store_true",
         help="Use relative time (t - t0) on plots.",
+    )
+    ap.add_argument(
+        "--t-start",
+        type=float,
+        default=None,
+        help="Explicit window start time in the power log timebase.",
+    )
+    ap.add_argument(
+        "--t-end",
+        type=float,
+        default=None,
+        help="Explicit window end time in the power log timebase.",
+    )
+    ap.add_argument(
+        "--window-s",
+        type=float,
+        default=60.0,
+        help="Window length for auto excerpt selection in seconds (default: 60).",
+    )
+    ap.add_argument(
+        "--window-mode",
+        type=str,
+        default="peak_total_power",
+        choices=["full", "peak_total_power"],
+        help="How to choose the overview figure window when --t-start/--t-end are not given.",
+    )
+    ap.add_argument(
+        "--keep-current-qa",
+        action="store_true",
+        help="Also export the legacy current-only 4x2 QA panel.",
     )
     return ap.parse_args()
 
@@ -86,14 +121,37 @@ def main() -> int:
     print(f"[TEST] PowerFrame    : N={n}, time_col={power.time_col}")
     print(f"[TEST] t_s range     : {power.t_s[0]:.3f} ~ {power.t_s[-1]:.3f} s")
 
-    # ------------------ 2) 绘制 8 个电机电流 ------------------
+    # ------------------ 2) 生成论文主图：总功率 + 8 电机功率 ------------------
     out_root = Path(args.out_root).expanduser().resolve()
-    currents_png = save_power_currents_8motors(
+    win_lo, win_hi = resolve_power_time_window(
+        power,
+        t_start=args.t_start,
+        t_end=args.t_end,
+        window_s=float(args.window_s),
+        window_mode=str(args.window_mode),
+    )
+    overview_png = save_power_sync_overview_8motors(
         power,
         out_root=out_root / "power_plots",
         use_rel_time=args.rel_time,
+        t_start=win_lo,
+        t_end=win_hi,
     )
-    print(f"[TEST] power currents plot saved:\n       - {currents_png}")
+    print(
+        "[TEST] selected overview window:\n"
+        f"       - start={win_lo:.6f}\n"
+        f"       - end  ={win_hi:.6f}\n"
+        f"       - dur  ={(win_hi - win_lo):.3f} s"
+    )
+    print(f"[TEST] power overview plot saved:\n       - {overview_png}")
+
+    if args.keep_current_qa:
+        currents_png = save_power_currents_8motors(
+            power,
+            out_root=out_root / "power_plots",
+            use_rel_time=args.rel_time,
+        )
+        print(f"[TEST] power current QA plot saved:\n       - {currents_png}")
 
     # ------------------ 3) 使用 reader 中的 power_motors ------------------
     # volt_motors / curr_motors / power_motors 都已经在 reader 中准备好了

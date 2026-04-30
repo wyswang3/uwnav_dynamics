@@ -9,6 +9,7 @@
 1. 从训练基础表读取原始 IMU / DVL 与 KF 代理状态列。
 2. 生成 Acc / Gyro / Vel 三行对照图，说明噪声抑制与速度稠密化效果。
 3. 将图像输出到论文文档可直接引用的路径。
+4. 对单点/空序列跳过折线绘制，并输出 sidecar 记录。
 
 数据流：
 train_base_kf_v2.csv
@@ -42,7 +43,14 @@ import numpy as np
 import pandas as pd
 
 from uwnav_dynamics.viz.style.imu_style import Imu3RowLayout, finalize_imu_axes, make_imu_3rows_canvas
-from uwnav_dynamics.viz.style.sci_style import add_axes_legend, align_ylabels, apply_axes_style, setup_mpl
+from uwnav_dynamics.viz.style.sci_style import (
+    add_axes_legend,
+    align_ylabels,
+    apply_axes_style,
+    plot_or_record_series,
+    setup_mpl,
+    SparsePlotRecorder,
+)
 
 
 def _safe_norm3(df: pd.DataFrame, cols: Sequence[str]) -> np.ndarray:
@@ -90,6 +98,8 @@ def save_proxy_state_comparison_figure(
     csv_path = Path(csv_path).expanduser().resolve()
     out_png = Path(out_png).expanduser().resolve()
     out_png.parent.mkdir(parents=True, exist_ok=True)
+    warnings_txt = out_png.with_suffix(".plot_warnings.txt")
+    recorder = SparsePlotRecorder()
 
     df = pd.read_csv(csv_path)
     required = [
@@ -136,15 +146,77 @@ def save_proxy_state_comparison_figure(
     lw_raw = 1.05
     lw_kf = 1.55
 
-    axes[0].plot(t_plot, acc_raw, color="#2F3B52", linewidth=lw_raw, alpha=0.92, label="Raw IMU norm")
-    axes[0].plot(t_plot, acc_kf, color="#2C7FB8", linewidth=lw_kf, alpha=0.98, linestyle="--", label="KF proxy norm")
+    plot_or_record_series(
+        axes[0],
+        t_plot,
+        acc_raw,
+        panel="Proxy state excerpt / acc",
+        series="raw imu norm",
+        color="#2F3B52",
+        recorder=recorder,
+        skip_message="Acc raw skipped: fewer than 2 samples",
+        linewidth=lw_raw,
+        alpha=0.92,
+        label="Raw IMU norm",
+    )
+    plot_or_record_series(
+        axes[0],
+        t_plot,
+        acc_kf,
+        panel="Proxy state excerpt / acc",
+        series="kf proxy norm",
+        color="#2C7FB8",
+        recorder=recorder,
+        skip_message="Acc KF skipped: fewer than 2 samples",
+        linewidth=lw_kf,
+        alpha=0.98,
+        linestyle="--",
+        label="KF proxy norm",
+    )
     axes[0].set_ylabel(r"$||a_b||$ (m/s$^2$)")
 
-    axes[1].plot(t_plot, gyro_raw, color="#2F3B52", linewidth=lw_raw, alpha=0.92, label="Raw IMU norm")
-    axes[1].plot(t_plot, gyro_kf, color="#E76F51", linewidth=lw_kf, alpha=0.98, linestyle="--", label="KF proxy norm")
+    plot_or_record_series(
+        axes[1],
+        t_plot,
+        gyro_raw,
+        panel="Proxy state excerpt / gyro",
+        series="raw imu norm",
+        color="#2F3B52",
+        recorder=recorder,
+        skip_message="Gyro raw skipped: fewer than 2 samples",
+        linewidth=lw_raw,
+        alpha=0.92,
+        label="Raw IMU norm",
+    )
+    plot_or_record_series(
+        axes[1],
+        t_plot,
+        gyro_kf,
+        panel="Proxy state excerpt / gyro",
+        series="kf proxy norm",
+        color="#E76F51",
+        recorder=recorder,
+        skip_message="Gyro KF skipped: fewer than 2 samples",
+        linewidth=lw_kf,
+        alpha=0.98,
+        linestyle="--",
+        label="KF proxy norm",
+    )
     axes[1].set_ylabel(r"$||\omega_b||$ (rad/s)")
 
-    axes[2].plot(t_plot, vel_kf, color="#1B9E77", linewidth=lw_kf, alpha=0.98, label="KF dense velocity")
+    plot_or_record_series(
+        axes[2],
+        t_plot,
+        vel_kf,
+        panel="Proxy state excerpt / velocity",
+        series="kf dense velocity",
+        color="#1B9E77",
+        recorder=recorder,
+        skip_message="KF dense velocity skipped: fewer than 2 samples",
+        linewidth=lw_kf,
+        alpha=0.98,
+        label="KF dense velocity",
+    )
     axes[2].scatter(
         t_plot[has_dvl],
         vel_dvl[has_dvl],
@@ -167,6 +239,7 @@ def save_proxy_state_comparison_figure(
 
     fig.savefig(out_png)
     plt.close(fig)
+    recorder.write_text(warnings_txt)
     return out_png
 
 
@@ -190,6 +263,8 @@ def save_proxy_state_fullrun_figure(
     csv_path = Path(csv_path).expanduser().resolve()
     out_png = Path(out_png).expanduser().resolve()
     out_png.parent.mkdir(parents=True, exist_ok=True)
+    warnings_txt = out_png.with_suffix(".plot_warnings.txt")
+    recorder = SparsePlotRecorder()
 
     df = pd.read_csv(csv_path)
     required = [
@@ -253,21 +328,108 @@ def save_proxy_state_fullrun_figure(
         gridspec_kw={"hspace": 0.18},
     )
 
-    axes[0].plot(t_plot, acc_raw, color="#2F3B52", linewidth=0.95, alpha=0.80, label="Raw IMU norm")
-    axes[0].plot(t_plot, acc_kf, color="#2C7FB8", linewidth=1.25, alpha=0.98, linestyle="--", label="KF proxy norm")
+    plot_or_record_series(
+        axes[0],
+        t_plot,
+        acc_raw,
+        panel="Proxy state fullrun / acc",
+        series="raw imu norm",
+        color="#2F3B52",
+        recorder=recorder,
+        skip_message="Acc raw skipped: fewer than 2 samples",
+        linewidth=0.95,
+        alpha=0.80,
+        label="Raw IMU norm",
+    )
+    plot_or_record_series(
+        axes[0],
+        t_plot,
+        acc_kf,
+        panel="Proxy state fullrun / acc",
+        series="kf proxy norm",
+        color="#2C7FB8",
+        recorder=recorder,
+        skip_message="Acc KF skipped: fewer than 2 samples",
+        linewidth=1.25,
+        alpha=0.98,
+        linestyle="--",
+        label="KF proxy norm",
+    )
     axes[0].set_ylabel(r"$||a_b||$")
 
-    axes[1].plot(t_plot, gyro_raw, color="#2F3B52", linewidth=0.95, alpha=0.80, label="Raw IMU norm")
-    axes[1].plot(t_plot, gyro_kf, color="#E76F51", linewidth=1.25, alpha=0.98, linestyle="--", label="KF proxy norm")
+    plot_or_record_series(
+        axes[1],
+        t_plot,
+        gyro_raw,
+        panel="Proxy state fullrun / gyro",
+        series="raw imu norm",
+        color="#2F3B52",
+        recorder=recorder,
+        skip_message="Gyro raw skipped: fewer than 2 samples",
+        linewidth=0.95,
+        alpha=0.80,
+        label="Raw IMU norm",
+    )
+    plot_or_record_series(
+        axes[1],
+        t_plot,
+        gyro_kf,
+        panel="Proxy state fullrun / gyro",
+        series="kf proxy norm",
+        color="#E76F51",
+        recorder=recorder,
+        skip_message="Gyro KF skipped: fewer than 2 samples",
+        linewidth=1.25,
+        alpha=0.98,
+        linestyle="--",
+        label="KF proxy norm",
+    )
     axes[1].set_ylabel(r"$||\omega_b||$")
 
-    axes[2].plot(t_plot, vel_kf, color="#1B9E77", linewidth=1.25, alpha=0.98, label="KF dense velocity")
+    plot_or_record_series(
+        axes[2],
+        t_plot,
+        vel_kf,
+        panel="Proxy state fullrun / velocity",
+        series="kf dense velocity",
+        color="#1B9E77",
+        recorder=recorder,
+        skip_message="KF dense velocity skipped: fewer than 2 samples",
+        linewidth=1.25,
+        alpha=0.98,
+        label="KF dense velocity",
+    )
     axes[2].scatter(t_plot[has_meas], vel_dvl[has_meas], s=5.0, color="#D4A72C", alpha=0.55, edgecolors="none", label="DVL measurement")
     axes[2].scatter(t_plot[has_update], vel_dvl[has_update], s=7.0, color="#C8553D", alpha=0.80, edgecolors="none", label="Accepted update")
     axes[2].set_ylabel(r"$||v_b||$")
 
-    axes[3].plot(t_plot, dt_since_dvl, color="#5C6BC0", linewidth=1.05, alpha=0.96, label=r"$\Delta t$ since DVL")
-    axes[3].plot(t_plot, vel_var, color="#7A8CA3", linewidth=1.00, alpha=0.90, linestyle="--", label="Velocity variance proxy")
+    plot_or_record_series(
+        axes[3],
+        t_plot,
+        dt_since_dvl,
+        panel="Proxy state fullrun / quality",
+        series="dt since dvl",
+        color="#5C6BC0",
+        recorder=recorder,
+        skip_message="DVL freshness skipped: fewer than 2 samples",
+        linewidth=1.05,
+        alpha=0.96,
+        label=r"$\Delta t$ since DVL",
+    )
+    plot_or_record_series(
+        axes[3],
+        t_plot,
+        vel_var,
+        panel="Proxy state fullrun / quality",
+        series="velocity variance proxy",
+        color="#7A8CA3",
+        recorder=recorder,
+        skip_message="Velocity variance skipped: fewer than 2 samples",
+        linewidth=1.00,
+        alpha=0.90,
+        linestyle="--",
+        label="Velocity variance proxy",
+    )
     axes[3].set_ylabel("Quality")
     axes[3].set_xlabel("Time (s)")
 
@@ -282,4 +444,5 @@ def save_proxy_state_fullrun_figure(
     fig.subplots_adjust(left=0.12, right=0.98, bottom=0.10, top=0.98)
     fig.savefig(out_png)
     plt.close(fig)
+    recorder.write_text(warnings_txt)
     return out_png

@@ -68,14 +68,17 @@ out/dvl_plots_proc/dvl_nav_state_tb_20260110_193538_proc/plots/dvl_proc_BI_BE_BD
 
 ```bash
 PYTHONPATH=src python apps/dev/test_power_plots.py \
-  -y configs/dataset/pooltest02.yaml
+  -y configs/dataset/pooltest02.yaml \
+  --rel-time \
+  --window-mode peak_total_power \
+  --window-s 60
 ```
 
 主要产物：
 
 ```text
 out/aux_power/motor_data_20260110_193455_power8.csv
-out/power_plots/motor_data_20260110_193455/plots/power_currents_8motors.png
+out/power_plots/motor_data_20260110_193455/plots/power_sync_overview_8motors.png
 ```
 
 ## 4. 多源时间对齐，生成 train_base.csv
@@ -336,7 +339,36 @@ out/server_pipeline/pooltest02_kf_full_7gpu_v2/final_selection.csv
 out/server_pipeline/pooltest02_kf_full_7gpu_v2/paper_artifact_manifest.yaml
 ```
 
-### 9.1 当前更推荐的 8 卡训练顺序
+### 9.1 论文结果一键包
+
+如果希望从原始观测预处理/观测图开始，一直收口到训练示例、模块对比图、路线对比图和 compare 导出，直接执行：
+
+```bash
+bash scripts/run_paper_results_bundle.sh
+```
+
+如果要显式指定配置，执行：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.paper_results_bundle \
+  -c configs/launch/pooltest02_paper_results_bundle_7gpu_v1.yaml
+```
+
+主要产物：
+
+```text
+out/paper_results_bundle/pooltest02_7gpu_v1/paper_results_bundle_manifest.yaml
+out/paper_results_bundle/pooltest02_7gpu_v1/figures/sensors/
+out/paper_results_bundle/pooltest02_7gpu_v1/figures/training_examples/
+out/paper_results_bundle/pooltest02_7gpu_v1/figures/summaries/
+out/paper_results_bundle/pooltest02_7gpu_v1/compare_exports/
+out/paper_results_bundle/pooltest02_7gpu_v1/plot_warning_summary.yaml
+out/paper_results_bundle/pooltest02_7gpu_v1/plot_warning_summary.txt
+```
+
+其中 `plot_warning_summary.*` 会汇总所有“单点/稀疏序列未绘制折线”的 sidecar 记录，便于后续集中排查。
+
+### 9.2 当前更推荐的 8 卡训练顺序
 
 当前阶段更推荐先跑单步状态转移主线，再决定是否补跑长期拟合主线：
 
@@ -352,14 +384,14 @@ PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml
 ```
 
-### 9.2 7 卡回退矩阵
+### 9.3 7 卡回退矩阵
 
 ```bash
 PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
 ```
 
-### 9.3 单步实验线 7 卡矩阵
+### 9.4 单步实验线 7 卡矩阵
 
 ```bash
 PYTHONPATH=src python -m uwnav_dynamics.cli.train_matrix \

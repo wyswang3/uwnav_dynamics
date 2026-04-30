@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -101,6 +101,64 @@ class SeriesStyle:
     linewidth: float = 1.2
     alpha: float = 1.0
     zorder: float = 3.0
+
+
+@dataclass(frozen=True)
+class SparsePlotRecord:
+    """记录被跳过的稀疏时序曲线信息。"""
+    panel: str
+    series: str
+    reason: str
+    finite_points: int
+    total_points: int
+
+
+@dataclass
+class SparsePlotRecorder:
+    """收集单点/空序列跳过记录，并写出 sidecar 文本。"""
+    entries: List[SparsePlotRecord] = field(default_factory=list)
+
+    def add(
+        self,
+        *,
+        panel: str,
+        series: str,
+        reason: str,
+        finite_points: int,
+        total_points: int,
+    ) -> None:
+        self.entries.append(
+            SparsePlotRecord(
+                panel=str(panel),
+                series=str(series),
+                reason=str(reason),
+                finite_points=int(finite_points),
+                total_points=int(total_points),
+            )
+        )
+
+    def write_text(self, path: str | Path) -> Optional[Path]:
+        out_path = Path(path).expanduser().resolve()
+        if len(self.entries) == 0:
+            if out_path.exists():
+                out_path.unlink()
+            return None
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Sparse plot skip records",
+            "# Series with fewer than 2 finite samples were not rendered as lines.",
+            "",
+        ]
+        for item in self.entries:
+            lines.append(
+                (
+                    f"panel={item.panel} | series={item.series} | reason={item.reason} | "
+                    f"finite_points={item.finite_points} | total_points={item.total_points}"
+                )
+            )
+        out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return out_path
 
 
 @dataclass(frozen=True)
@@ -544,6 +602,89 @@ def plot_visible_series(
             }
         )
     return ax.plot(x, y, **kwargs)
+
+
+def inspect_series_density(x, y, *, min_finite_points: int = 2) -> tuple[bool, int, int, str]:
+    """
+    判断时序曲线是否稀疏到不适合用折线绘制。
+
+    返回 `(should_skip, finite_points, total_points, reason)`。
+    """
+    x_arr = np.asarray(x, dtype=float).reshape(-1)
+    y_arr = np.asarray(y, dtype=float).reshape(-1)
+    total_points = int(min(x_arr.size, y_arr.size))
+    if total_points == 0:
+        return True, 0, 0, "empty series"
+
+    finite_mask = np.isfinite(x_arr[:total_points]) & np.isfinite(y_arr[:total_points])
+    finite_points = int(np.count_nonzero(finite_mask))
+    if finite_points >= int(min_finite_points):
+        return False, finite_points, total_points, ""
+    if finite_points == 0:
+        return True, 0, total_points, "no finite samples"
+    return True, finite_points, total_points, f"only {finite_points} finite sample"
+
+
+def annotate_sparse_axis(ax: plt.Axes, message: str = "Sparse series skipped") -> None:
+    """在坐标轴内给出统一的稀疏序列提示，避免导出空白图。"""
+    if getattr(ax, "_uwnav_sparse_note_drawn", False):
+        return
+    ax.text(
+        0.5,
+        0.5,
+        str(message),
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        fontsize=9,
+        color="#7A8CA3",
+        bbox={
+            "boxstyle": "round,pad=0.24",
+            "facecolor": "#F7FAFC",
+            "edgecolor": "#D9E2EC",
+            "linewidth": 0.7,
+            "alpha": 0.98,
+        },
+        zorder=20,
+    )
+    setattr(ax, "_uwnav_sparse_note_drawn", True)
+
+
+def plot_or_record_series(
+    ax: plt.Axes,
+    x,
+    y,
+    *,
+    panel: str,
+    series: str,
+    color: str,
+    recorder: Optional[SparsePlotRecorder] = None,
+    skip_message: str = "Sparse series skipped",
+    min_finite_points: int = 2,
+    annotate_on_skip: bool = True,
+    **plot_kwargs,
+) -> list[plt.Line2D]:
+    """
+    绘制普通折线；若有效点数不足以形成线段，则跳过绘制并记录原因。
+    """
+    should_skip, finite_points, total_points, reason = inspect_series_density(
+        x,
+        y,
+        min_finite_points=min_finite_points,
+    )
+    if should_skip:
+        if recorder is not None:
+            recorder.add(
+                panel=panel,
+                series=series,
+                reason=reason,
+                finite_points=finite_points,
+                total_points=total_points,
+            )
+        if annotate_on_skip:
+            annotate_sparse_axis(ax, skip_message)
+        return []
+    return ax.plot(x, y, color=color, **plot_kwargs)
 
 
 def apply_shared_xlabels(axes: Sequence[plt.Axes], xlabel: str) -> None:

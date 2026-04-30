@@ -9,6 +9,7 @@
 1. 读取 `ImuFrame` 中的原始 9 轴数据并输出三行图。
 2. 从预处理后的 IMU CSV 中提取体坐标加速度、角速度与姿态并输出三行图。
 3. 输出 IMU 采样间隔 `Δt` 图，用于诊断时间戳稳定性。
+4. 对单点/空序列跳过折线绘制，并输出 sidecar 记录。
 
 数据流：
 ImuFrame 或 *_proc.csv
@@ -52,6 +53,7 @@ from uwnav_dynamics.viz.style.imu_style import (
     set_y_ticks_pretty_3,
 )
 from uwnav_dynamics.viz.style.sci_style import apply_axes_style, get_figure_size, setup_mpl
+from uwnav_dynamics.viz.style.sci_style import plot_or_record_series, SparsePlotRecorder
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,8 @@ class ImuPlotPaths:
     plots_dir: Path
     imu_raw_9axis_png: Path
     imu_dt_png: Path
+    imu_raw_9axis_warnings_txt: Path
+    imu_dt_warnings_txt: Path
 
 
 def _resolve_out_dirs(imu: ImuFrame, out_root: str | Path) -> ImuPlotPaths:
@@ -73,6 +77,8 @@ def _resolve_out_dirs(imu: ImuFrame, out_root: str | Path) -> ImuPlotPaths:
         plots_dir=plots_dir,
         imu_raw_9axis_png=plots_dir / "imu_raw_9axis.png",
         imu_dt_png=plots_dir / "imu_dt.png",
+        imu_raw_9axis_warnings_txt=plots_dir / "imu_raw_9axis.plot_warnings.txt",
+        imu_dt_warnings_txt=plots_dir / "imu_dt.plot_warnings.txt",
     )
 
 
@@ -90,15 +96,16 @@ def save_imu_raw_9axis(
     t = imu.t_rel_s if use_rel_time else imu.t_s
     fig, axes, layout = make_imu_3rows_canvas(layout)
     lw = layout.lw()
+    recorder = SparsePlotRecorder()
 
-    lines_acc = plot_xyz_lines(axes[0], t, imu.acc_g, linewidth=lw)
+    lines_acc = plot_xyz_lines(axes[0], t, imu.acc_g, linewidth=lw, panel="IMU raw / Acc", recorder=recorder)
     axes[0].set_ylabel("Acc (g)")
     add_xyz_legend(axes[0], lines_acc, layout)
 
-    plot_xyz_lines(axes[1], t, imu.gyro_deg_s, linewidth=lw)
+    plot_xyz_lines(axes[1], t, imu.gyro_deg_s, linewidth=lw, panel="IMU raw / Gyro", recorder=recorder)
     axes[1].set_ylabel("Gyro (deg/s)")
 
-    plot_xyz_lines(axes[2], t, imu.ang_deg, linewidth=lw)
+    plot_xyz_lines(axes[2], t, imu.ang_deg, linewidth=lw, panel="IMU raw / Att", recorder=recorder)
     axes[2].set_ylabel("Att (deg)")
 
     for ax in axes:
@@ -107,6 +114,7 @@ def save_imu_raw_9axis(
     finalize_imu_axes(axes, y_pad_frac=layout.y_pad_frac)
     fig.savefig(paths.imu_raw_9axis_png)
     plt.close(fig)
+    recorder.write_text(paths.imu_raw_9axis_warnings_txt)
     return paths.imu_raw_9axis_png
 
 
@@ -124,9 +132,20 @@ def save_imu_dt(
     xlab = "Time (s)"
     t_mid = 0.5 * (t[1:] + t[:-1])
     dt = imu.dt_s
+    recorder = SparsePlotRecorder()
 
     fig, ax = plt.subplots(1, 1, figsize=get_figure_size("single"))
-    ax.plot(t_mid, dt, linewidth=1.0, color="#30343A")
+    plot_or_record_series(
+        ax,
+        t_mid,
+        dt,
+        panel="IMU dt",
+        series="delta_t",
+        color="#30343A",
+        recorder=recorder,
+        skip_message="IMU dt skipped: fewer than 2 intervals",
+        linewidth=1.0,
+    )
     ax.set_xlabel(xlab)
     ax.set_ylabel(r"$\Delta t$ (s)")
     ax.xaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
@@ -136,6 +155,7 @@ def save_imu_dt(
     fig.subplots_adjust(left=0.16, right=0.98, bottom=0.20, top=0.98)
     fig.savefig(paths.imu_dt_png)
     plt.close(fig)
+    recorder.write_text(paths.imu_dt_warnings_txt)
     return paths.imu_dt_png
 
 
@@ -184,6 +204,7 @@ def save_imu_proc_3rows_from_csv(
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     out_png = plots_dir / "imu_proc_3rows.png"
+    warnings_txt = plots_dir / "imu_proc_3rows.plot_warnings.txt"
 
     df = pd.read_csv(proc_path)
     if "t_s" not in df.columns:
@@ -228,15 +249,16 @@ def save_imu_proc_3rows_from_csv(
 
     fig, axes, layout = make_imu_3rows_canvas(layout)
     lw = layout.lw()
+    recorder = SparsePlotRecorder()
 
-    lines_acc = plot_xyz_lines(axes[0], t_plot, acc_body, linewidth=lw)
+    lines_acc = plot_xyz_lines(axes[0], t_plot, acc_body, linewidth=lw, panel="IMU proc / Acc", recorder=recorder)
     axes[0].set_ylabel(r"Acc (m/s$^2$)")
     add_xyz_legend(axes[0], lines_acc, layout)
 
-    plot_xyz_lines(axes[1], t_plot, gyro_body, linewidth=lw)
+    plot_xyz_lines(axes[1], t_plot, gyro_body, linewidth=lw, panel="IMU proc / Gyro", recorder=recorder)
     axes[1].set_ylabel("Gyro (rad/s)")
 
-    plot_xyz_lines(axes[2], t_plot, att_deg, linewidth=lw)
+    plot_xyz_lines(axes[2], t_plot, att_deg, linewidth=lw, panel="IMU proc / Att", recorder=recorder)
     axes[2].set_ylabel("Att (deg)")
 
     for ax in axes:
@@ -245,4 +267,5 @@ def save_imu_proc_3rows_from_csv(
     finalize_imu_axes(axes, y_pad_frac=layout.y_pad_frac)
     fig.savefig(out_png)
     plt.close(fig)
+    recorder.write_text(warnings_txt)
     return out_png

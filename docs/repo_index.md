@@ -18,7 +18,7 @@
 |---|---|---|
 | `src/uwnav_dynamics/cli/train.py` | 训练 CLI 包装器，解析命令行并转发到 `uwnav_dynamics.train.run_train`。 | 输入：`--yaml` 与可选覆盖参数（device/epochs/batch_size/data_dir）；输出：触发训练进程、终端打印预期 run 目录。 |
 | `src/uwnav_dynamics/train/run_train.py` | 训练主入口：加载 YAML 配置、构建数据加载器/模型/损失并调用 `fit`。 | 输入：train YAML、`features.npz/labels.npz`；输出：`best.pth`、`last.pth`、`train_summary.yaml`、`train_history.csv`、`train_plots/*`。 |
-| `src/uwnav_dynamics/viz/train/plot_training_history.py` | 训练历史绘图模块：读取 `train_history.csv` 并导出训练曲线与 dashboard。 | 输入：`train_history.csv`、可选 `train_summary.yaml`；输出：`train_plots/training_dashboard.png`、`training_loss_curve.png` 等。 |
+| `src/uwnav_dynamics/viz/train/plot_training_history.py` | 训练历史绘图模块：读取 `train_history.csv` 并导出训练曲线、dashboard 与稀疏绘图 warning sidecar。 | 输入：`train_history.csv`、可选 `train_summary.yaml`；输出：`train_plots/training_dashboard.png`、`training_loss_curve.png`、`training_plots.plot_warnings.txt` 等。 |
 | `src/uwnav_dynamics/cli/pipeline.py` | 一键流水线入口，串联“训练 -> 选 ckpt -> 评估（可选画图）”。 | 输入：train YAML 与训练/评估参数；输出：训练 ckpt + 评估产物目录（含 metrics/plots）。 |
 
 ## 2) 评估入口脚本
@@ -30,6 +30,8 @@
 | `src/uwnav_dynamics/cli/transition_replay.py` | 状态求解器 replay CLI 入口，执行长序列 autoregressive 重放验证。 | 输入：train YAML + ckpt + split；输出：`replay_<split>/metrics.yaml`、`segment_metrics.csv`、`step_metrics.csv`、`pred_samples.npz`、`resolved_replay.yaml`。 |
 | `src/uwnav_dynamics/cli/transition_replay_matrix.py` | 多候选 replay 批量评估入口，统一写 `manifest.yaml / summary.csv / ranking.csv`。 | 输入：replay matrix YAML；输出：多方案 replay 汇总表、排行表和各候选独立 replay 目录。 |
 | `src/uwnav_dynamics/cli/server_pipeline.py` | 服务器全流程总控入口，串联 preprocess、smoke、多卡矩阵训练与 replay 排名。 | 输入：server pipeline YAML；输出：`manifest.yaml`、`phase_status.csv`、阶段日志与最终结果目录。 |
+| `src/uwnav_dynamics/cli/paper_results_bundle.py` | 论文结果一键打包入口，串联传感器预处理/观测图、server pipeline、论文汇总图与绘图 warning 汇总导出。 | 输入：paper bundle YAML；输出：`paper_results_bundle_manifest.yaml`、传感器图、训练示例图、模块/路线汇总图、`plot_warning_summary.yaml/txt`。 |
+| `scripts/run_paper_results_bundle.sh` | 服务器侧论文结果一键启动脚本，默认调用 bundle 示例配置。 | 输入：可选 bundle YAML 路径；输出：触发 `paper_results_bundle` 全流程。 |
 | `src/uwnav_dynamics/experiment/final_selection.py` | 合并训练矩阵与 replay 排名，输出最终选模表与论文产物清单。 | 输入：`summary.csv + ranking.csv`；输出：`final_selection.csv`、`paper_artifact_manifest.yaml`。 |
 | `src/uwnav_dynamics/experiment/representative.py` | 代表性样例选择工具，供 eval 与 replay 统一挑选 best/median/worst 样例。 | 输入：样例级指标 rows；输出：带 `representative_*` 元信息的 rows。 |
 
@@ -45,7 +47,7 @@
 | `src/uwnav_dynamics/preprocess/imu/pipeline.py` | IMU 总管线（transform->gravity->bias->filter）并支持 CSV 入口。 | 输入：原始 IMU CSV 或数组 + `ImuPreprocessConfig`；输出：`*_proc.csv`、`ImuPreprocessDiag`。 |
 | `src/uwnav_dynamics/preprocess/dvl/pipeline.py` | DVL 总管线（时间列/速度列选择、单位统一、有效性与附加列导出）。 | 输入：原始 DVL CSV + `DvlPreprocessConfig`；输出：`*_proc.csv`、`DvlPreprocessDiag`。 |
 | `src/uwnav_dynamics/preprocess/power/pipeline.py` | 根据 `DatasetSpec` 读取 Volt 日志并生成 8 路功率辅助数据。 | 输入：dataset spec（含 volt 路径）；输出：`out/.../aux_power/*_power8.csv`。 |
-| `apps/tools/pwm_preprocess_and_plot.py` | 工具脚本：PWM 对时导出 `cmd` 对齐 CSV，并画 8 通道命令图。 | 输入：dataset YAML + PWM 原始 CSV；输出：`*_cmd_aligned.csv`、`*_cmd_8ch.png`。 |
+| `apps/tools/pwm_preprocess_and_plot.py` | 工具脚本：PWM 对时导出 `cmd` 对齐 CSV，并画 8 通道命令图。 | 输入：dataset YAML + PWM 原始 CSV；输出：`*_cmd_aligned.csv`、`*_cmd_8ch.png`、`*.plot_warnings.txt`。 |
 
 ## 4) 模型定义文件（models/）
 
@@ -74,6 +76,7 @@
 | `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml` | 当前 KF 主线训练配置，启用 grouped head、transition_balance 与 `val_transition_score`。 | 输入：被 `train/config.py` 读取；输出：驱动当前长期拟合训练主线。 |
 | `configs/launch/replay_matrix_example.yaml` | replay 批量评估示例配置，演示如何比较 step 与 horizon 两类候选。 | 输入：被 `cli.transition_replay_matrix` 读取；输出：驱动 `summary.csv / ranking.csv` 生成。 |
 | `configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml` | 当前推荐的 7 GPU 服务器全流程配置，串联 fusion、dataset、smoke、train_matrix 与 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
+| `configs/launch/pooltest02_paper_results_bundle_7gpu_v1.yaml` | 论文结果一键包示例配置，串联传感器预处理/观测图、server pipeline 与论文汇总图导出。 | 输入：被 `cli.paper_results_bundle` 读取；输出：`out/paper_results_bundle/...`。 |
 | `configs/dataset/pooltest02.yaml` | 原始数据集规格（传感器文件选择、pwm_timebase、valid_window）。 | 输入：被 `DatasetSpec.load` 读取；输出：解析后的传感器路径与 reader kwargs。 |
 | `configs/dataset/pooltest02_s1.yaml` | 数据集构建配置（base_table + sliding_window + output）。 | 输入：被 `build_dataset.py` 读取；输出：决定 `features/labels/meta` 生成方式。 |
 | `configs/dataset/pooltest02_s1_kf_ctx_v2.yaml` | KF 融合状态代理量数据集配置（29 维输入、9 维 KF target）。 | 输入：被 `build_dataset.py` 读取；输出：`data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2`。 |
@@ -111,17 +114,18 @@
 | `src/uwnav_dynamics/viz/eval/plot_prediction_trace.py` | 画 50s 长时序预测-目标三轴对比图。 | 输入：`pred_trace.npz`，旧 artifact 可 fallback 到 `pred_samples.npz` + `pred_context.npz`；输出：`prediction_trace_acc_axes.png/pdf`、`prediction_trace_gyro_axes.png/pdf`、`prediction_trace_vel_axes.png/pdf`，可选 `prediction_trace_group_norm.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_rollout_samples.py` | 画 rollout 样例时域对比图，并可标出 masked-out 目标位置。 | 输入：`pred_samples.npz` 与可选 `pred_context.npz["target_mask"]`；输出：`rollout_sample_*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_model_compare.py` | 画多模型 horizon 比较图。 | 输入：多个评估目录；输出：dense compare 图与可选 `*_masked.png/pdf`。 |
-| `src/uwnav_dynamics/viz/plots/imu_plot.py` | 原始/预处理 IMU 绘图模块。 | 输入：`ImuFrame` 或 `*_proc.csv`；输出：`imu_raw_9axis.png`、`imu_dt.png`、`imu_proc_3rows.png`。 |
-| `src/uwnav_dynamics/viz/plots/dvl_plots.py` | DVL 原始与预处理绘图模块。 | 输入：`DvlFrame` 或 DVL processed CSV；输出：`dvl_vel_BI_BE.png`、`dvl_proc_BI_BE_BD.png`。 |
-| `src/uwnav_dynamics/viz/plots/power_plots.py` | 8 电机电流绘图模块。 | 输入：`PowerFrame`；输出：`power_currents_8motors.png`。 |
-| `src/uwnav_dynamics/viz/style/sci_style.py` | 全局科学绘图样式与常用绘图辅助函数。 | 输入：matplotlib `Axes/Figure`；输出：统一风格图面。 |
-| `src/uwnav_dynamics/viz/style/imu_style.py` | IMU/DVL 图布局与 tick/legend 策略。 | 输入：layout 参数与坐标轴对象；输出：标准化画布与线条样式。 |
+| `src/uwnav_dynamics/viz/eval/plot_paper_ablation_summary.py` | 画论文用控制相关指标紧凑对比图。 | 输入：`summary.csv / ranking.csv / final_selection.csv`；输出：`paper_ablation_summary_*.png/pdf`。 |
+| `src/uwnav_dynamics/viz/plots/imu_plot.py` | 原始/预处理 IMU 绘图模块。 | 输入：`ImuFrame` 或 `*_proc.csv`；输出：`imu_raw_9axis.png`、`imu_dt.png`、`imu_proc_3rows.png` 及对应 `*.plot_warnings.txt`。 |
+| `src/uwnav_dynamics/viz/plots/dvl_plots.py` | DVL 原始与预处理绘图模块。 | 输入：`DvlFrame` 或 DVL processed CSV；输出：`dvl_vel_BI_BE.png`、`dvl_proc_BI_BE_BD.png` 及对应 `*.plot_warnings.txt`。 |
+| `src/uwnav_dynamics/viz/plots/power_plots.py` | Power 论文主图与 QA 图绘图模块。 | 输入：`PowerFrame`；输出：`power_sync_overview_8motors.png`、可选 `power_currents_8motors.png` 及对应 `*.plot_warnings.txt`。 |
+| `src/uwnav_dynamics/viz/style/sci_style.py` | 全局科学绘图样式与常用绘图辅助函数。 | 输入：matplotlib `Axes/Figure`；输出：统一风格图面，以及稀疏序列跳过记录 helper。 |
+| `src/uwnav_dynamics/viz/style/imu_style.py` | IMU/DVL 图布局与 tick/legend 策略。 | 输入：layout 参数与坐标轴对象；输出：标准化画布、线条样式与三轴稀疏绘图兜底。 |
 | `apps/dev/test_imu_pipeline.py` | 开发脚本：贯通 IMU 读取、统计、预处理与绘图。 | 输入：dataset YAML 与 IMU CSV；输出：`out/imu_stats/*`、`out/imu_plots/*`、`out/imu_proc/*`。 |
 | `apps/dev/test_dvl_plots.py` | 开发脚本：DVL 读取、预处理与绘图联调。 | 输入：dataset YAML 与 DVL CSV；输出：`out/dvl_proc/*`、`out/dvl_plots*/*`。 |
-| `apps/dev/test_power_plots.py` | 开发脚本：Power 读取、绘图并导出 8 路功率数据。 | 输入：dataset YAML 与 volt CSV；输出：`out/power_plots/*`、`out/aux_power/*_power8.csv`。 |
-| `apps/tools/pwm_preprocess_and_plot.py` | 工具脚本：PWM 对齐与 8 通道命令图绘制。 | 输入：dataset YAML 与 PWM CSV；输出：`*_cmd_aligned.csv`、`*_cmd_8ch.png`。 |
+| `apps/dev/test_power_plots.py` | 开发脚本：Power 读取、生成论文主图并导出 8 路功率数据。 | 输入：dataset YAML 与 volt CSV；输出：`out/power_plots/*`、`out/aux_power/*_power8.csv`。 |
+| `apps/tools/pwm_preprocess_and_plot.py` | 工具脚本：PWM 对齐与 8 通道命令图绘制。 | 输入：dataset YAML 与 PWM CSV；输出：`*_cmd_aligned.csv`、`*_cmd_8ch.png`、`*.plot_warnings.txt`。 |
 
 ## 8) 备注
 
 - `configs/model/s1_u1_hyrossm.yaml` 与 `configs/dataset/pooltest01.yaml` 当前为空（0 字节）。
-- `scripts/` 目录当前未发现可执行入口脚本（主要入口位于 `src/uwnav_dynamics/cli` 与 `apps/`）。
+- `scripts/run_paper_results_bundle.sh` 是当前推荐的服务器侧论文结果一键启动脚本。

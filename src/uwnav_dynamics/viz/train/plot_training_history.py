@@ -10,6 +10,7 @@
 2. 绘制 monitor 曲线，区分 `val_loss` 与 `val_transition_score` 等验证监控量。
 3. 绘制 z-space `RMSE / MAE` 与学习率变化曲线。
 4. 导出单图与 2×2 dashboard，供训练主流程自动生成 artifact。
+5. 对单点/空序列跳过折线绘制，并记录到 sidecar 文件。
 
 数据流：
 train_history.csv + optional train_summary.yaml
@@ -48,7 +49,9 @@ from uwnav_dynamics.viz.style.sci_style import (
     add_axes_legend,
     apply_axes_style,
     get_figure_size,
+    plot_or_record_series,
     save_figure,
+    SparsePlotRecorder,
     setup_mpl,
 )
 
@@ -127,6 +130,7 @@ def build_training_dashboard_figure(
     history_rows: Sequence[dict[str, str]],
     *,
     summary: dict[str, Any] | None = None,
+    recorder: SparsePlotRecorder | None = None,
 ) -> tuple[plt.Figure, np.ndarray]:
     """构建训练过程的 2×2 dashboard。"""
     setup_mpl()
@@ -144,9 +148,32 @@ def build_training_dashboard_figure(
     fig, axes = plt.subplots(2, 2, figsize=get_figure_size("dashboard_2x2_compact"))
     ax_loss, ax_monitor, ax_metric, ax_lr = axes.ravel()
 
-    ax_loss.plot(epochs, train_loss, color="#2C7FB8", linewidth=1.8, label="Train")
+    plot_or_record_series(
+        ax_loss,
+        epochs,
+        train_loss,
+        panel="Training dashboard / loss",
+        series="train loss",
+        color="#2C7FB8",
+        recorder=recorder,
+        skip_message="Train loss skipped: fewer than 2 epochs",
+        linewidth=1.8,
+        label="Train",
+    )
     if np.any(np.isfinite(val_loss)):
-        ax_loss.plot(epochs, val_loss, color="#E76F51", linewidth=1.6, linestyle="--", label="Val")
+        plot_or_record_series(
+            ax_loss,
+            epochs,
+            val_loss,
+            panel="Training dashboard / loss",
+            series="val loss",
+            color="#E76F51",
+            recorder=recorder,
+            skip_message="Val loss skipped: fewer than 2 epochs",
+            linewidth=1.6,
+            linestyle="--",
+            label="Val",
+        )
         _marker_epoch(ax_loss, best_epoch, val_loss, epochs)
     ax_loss.set_xlabel("Epoch")
     ax_loss.set_ylabel("Loss")
@@ -154,7 +181,18 @@ def build_training_dashboard_figure(
     apply_axes_style(ax_loss, grid=False)
     add_axes_legend(ax_loss, loc="upper right")
 
-    ax_monitor.plot(epochs, monitor, color="#1B9E77", linewidth=1.8, label=monitor_name)
+    plot_or_record_series(
+        ax_monitor,
+        epochs,
+        monitor,
+        panel="Training dashboard / monitor",
+        series=monitor_name,
+        color="#1B9E77",
+        recorder=recorder,
+        skip_message="Validation monitor skipped: fewer than 2 epochs",
+        linewidth=1.8,
+        label=monitor_name,
+    )
     _marker_epoch(ax_monitor, best_epoch, monitor, epochs)
     ax_monitor.set_xlabel("Epoch")
     ax_monitor.set_ylabel("Monitor")
@@ -163,10 +201,33 @@ def build_training_dashboard_figure(
     add_axes_legend(ax_monitor, loc="upper right")
 
     if np.any(np.isfinite(val_rmse)):
-        ax_metric.plot(epochs, val_rmse, color="#2C7FB8", linewidth=1.7, label="Val RMSE (z)")
+        plot_or_record_series(
+            ax_metric,
+            epochs,
+            val_rmse,
+            panel="Training dashboard / metric",
+            series="val rmse z",
+            color="#2C7FB8",
+            recorder=recorder,
+            skip_message="Val RMSE skipped: fewer than 2 epochs",
+            linewidth=1.7,
+            label="Val RMSE (z)",
+        )
         _marker_epoch(ax_metric, best_epoch, val_rmse, epochs)
     if np.any(np.isfinite(val_mae)):
-        ax_metric.plot(epochs, val_mae, color="#E76F51", linewidth=1.5, linestyle="--", label="Val MAE (z)")
+        plot_or_record_series(
+            ax_metric,
+            epochs,
+            val_mae,
+            panel="Training dashboard / metric",
+            series="val mae z",
+            color="#E76F51",
+            recorder=recorder,
+            skip_message="Val MAE skipped: fewer than 2 epochs",
+            linewidth=1.5,
+            linestyle="--",
+            label="Val MAE (z)",
+        )
         _marker_epoch(ax_metric, best_epoch, val_mae, epochs)
     ax_metric.set_xlabel("Epoch")
     ax_metric.set_ylabel("z-space error")
@@ -174,7 +235,17 @@ def build_training_dashboard_figure(
     apply_axes_style(ax_metric, grid=False)
     add_axes_legend(ax_metric, loc="upper right")
 
-    ax_lr.plot(epochs, lr, color="#5C6BC0", linewidth=1.7)
+    plot_or_record_series(
+        ax_lr,
+        epochs,
+        lr,
+        panel="Training dashboard / learning rate",
+        series="learning rate",
+        color="#5C6BC0",
+        recorder=recorder,
+        skip_message="Learning rate skipped: fewer than 2 epochs",
+        linewidth=1.7,
+    )
     ax_lr.set_xlabel("Epoch")
     ax_lr.set_ylabel("Learning rate")
     ax_lr.set_title("Learning Rate")
@@ -194,12 +265,25 @@ def _build_single_curve(
     ylabel: str,
     best_epoch: int | None,
     marker_series_index: int = 0,
+    recorder: SparsePlotRecorder | None = None,
 ) -> plt.Figure:
     fig, ax = plt.subplots(1, 1, figsize=get_figure_size("single"))
     for label, series, color, linestyle in series_list:
         if not np.any(np.isfinite(series)):
             continue
-        ax.plot(epochs, series, label=label, color=color, linewidth=1.7, linestyle=linestyle)
+        plot_or_record_series(
+            ax,
+            epochs,
+            series,
+            panel=title,
+            series=label,
+            color=color,
+            recorder=recorder,
+            skip_message=f"{label} skipped: fewer than 2 epochs",
+            linewidth=1.7,
+            linestyle=linestyle,
+            label=label,
+        )
     if len(series_list) > 0:
         marker_idx = max(0, min(int(marker_series_index), len(series_list) - 1))
         _marker_epoch(ax, best_epoch, series_list[marker_idx][1], epochs)
@@ -226,6 +310,7 @@ def plot_training_artifacts(
     if len(rows) == 0:
         raise ValueError(f"train history is empty: {history_csv}")
     summary = _load_summary(summary_yaml)
+    recorder = SparsePlotRecorder()
     epochs = _history_epochs(rows)
     train_loss = _history_series(rows, "train_loss")
     val_loss = _history_series(rows, "val_loss")
@@ -236,7 +321,7 @@ def plot_training_artifacts(
     monitor_name = str(rows[-1].get("monitor_name", "monitor")) if rows else "monitor"
     best_epoch = _best_epoch(rows, summary)
 
-    fig_dashboard, _ = build_training_dashboard_figure(rows, summary=summary)
+    fig_dashboard, _ = build_training_dashboard_figure(rows, summary=summary, recorder=recorder)
     save_figure(fig_dashboard, out_dir / "training_dashboard", fmt=cfg.fmt)
     plt.close(fig_dashboard)
 
@@ -250,6 +335,7 @@ def plot_training_artifacts(
         ylabel="Loss",
         best_epoch=best_epoch,
         marker_series_index=1,
+        recorder=recorder,
     )
     save_figure(fig_loss, out_dir / "training_loss_curve", fmt=cfg.fmt)
     plt.close(fig_loss)
@@ -260,6 +346,7 @@ def plot_training_artifacts(
         title="Validation Monitor Curve",
         ylabel="Monitor",
         best_epoch=best_epoch,
+        recorder=recorder,
     )
     save_figure(fig_monitor, out_dir / "validation_monitor_curve", fmt=cfg.fmt)
     plt.close(fig_monitor)
@@ -274,12 +361,23 @@ def plot_training_artifacts(
         ylabel="z-space error",
         best_epoch=best_epoch,
         marker_series_index=0,
+        recorder=recorder,
     )
     save_figure(fig_metric, out_dir / "validation_error_curve", fmt=cfg.fmt)
     plt.close(fig_metric)
 
     fig_lr, ax_lr = plt.subplots(1, 1, figsize=get_figure_size("single"))
-    ax_lr.plot(epochs, lr, color="#5C6BC0", linewidth=1.7)
+    plot_or_record_series(
+        ax_lr,
+        epochs,
+        lr,
+        panel="Learning Rate Curve",
+        series="learning rate",
+        color="#5C6BC0",
+        recorder=recorder,
+        skip_message="Learning rate skipped: fewer than 2 epochs",
+        linewidth=1.7,
+    )
     ax_lr.set_xlabel("Epoch")
     ax_lr.set_ylabel("Learning rate")
     ax_lr.set_title("Learning Rate Curve")
@@ -290,6 +388,7 @@ def plot_training_artifacts(
     fig_lr.subplots_adjust(left=0.16, right=0.98, top=0.93, bottom=0.15)
     save_figure(fig_lr, out_dir / "learning_rate_curve", fmt=cfg.fmt)
     plt.close(fig_lr)
+    recorder.write_text(out_dir / "training_plots.plot_warnings.txt")
 
 
 def main() -> int:

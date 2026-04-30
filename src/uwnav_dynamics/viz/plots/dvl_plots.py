@@ -8,7 +8,7 @@
 主要功能：
 1. 为原始 DVL 的 BI / BE 速度生成 2 行共享 x 轴图。
 2. 为预处理后的 DVL CSV 生成 3 行共享 x 轴图，覆盖体速度、垂向速度与深度。
-3. 对缺失字段的面板使用最小轴内文本提示，而不是标题或多重 legend。
+3. 对缺失字段或单点稀疏序列的面板使用最小轴内文本提示，而不是标题或多重 legend。
 
 数据流：
 DvlFrame 或 dvl_proc.csv
@@ -50,6 +50,7 @@ from uwnav_dynamics.viz.style.imu_style import (
     set_y_ticks_pretty_3,
 )
 from uwnav_dynamics.viz.style.sci_style import align_ylabels, apply_axes_style, get_figure_size, setup_mpl
+from uwnav_dynamics.viz.style.sci_style import plot_or_record_series, SparsePlotRecorder
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class DvlPlotPaths:
     run_dir: Path
     plots_dir: Path
     dvl_vel_png: Path
+    dvl_vel_warnings_txt: Path
 
 
 def _resolve_out_dirs(dvl: DvlFrame, out_root: str | Path) -> DvlPlotPaths:
@@ -65,7 +67,12 @@ def _resolve_out_dirs(dvl: DvlFrame, out_root: str | Path) -> DvlPlotPaths:
     run_dir = out_root / dvl.path.stem
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    return DvlPlotPaths(run_dir=run_dir, plots_dir=plots_dir, dvl_vel_png=plots_dir / "dvl_vel_BI_BE.png")
+    return DvlPlotPaths(
+        run_dir=run_dir,
+        plots_dir=plots_dir,
+        dvl_vel_png=plots_dir / "dvl_vel_BI_BE.png",
+        dvl_vel_warnings_txt=plots_dir / "dvl_vel_BI_BE.plot_warnings.txt",
+    )
 
 
 def save_dvl_bi_be_vel_2rows(
@@ -84,6 +91,7 @@ def save_dvl_bi_be_vel_2rows(
 
     fig, axes = plt.subplots(2, 1, sharex=True, figsize=get_figure_size("sensor_2row"), dpi=layout.dpi)
     ax1, ax2 = axes
+    recorder = SparsePlotRecorder()
 
     for ax in axes:
         ax.tick_params(
@@ -106,7 +114,14 @@ def save_dvl_bi_be_vel_2rows(
 
     if bi.t_s.size > 0 and bi.v_body_mps is not None:
         t_bi = bi.t_s - float(bi.t_s[0]) if use_rel_time else bi.t_s
-        lines = plot_xyz_lines(ax1, t_bi, np.asarray(bi.v_body_mps, dtype=float), linewidth=layout.lw())
+        lines = plot_xyz_lines(
+            ax1,
+            t_bi,
+            np.asarray(bi.v_body_mps, dtype=float),
+            linewidth=layout.lw(),
+            panel="DVL raw / body velocity",
+            recorder=recorder,
+        )
         add_xyz_legend(ax1, lines, layout)
     else:
         ax1.text(0.5, 0.5, "Body velocity missing", transform=ax1.transAxes, ha="center", va="center")
@@ -116,7 +131,14 @@ def save_dvl_bi_be_vel_2rows(
 
     if be.t_s.size > 0 and be.v_enu_mps is not None:
         t_be = be.t_s - float(be.t_s[0]) if use_rel_time else be.t_s
-        plot_xyz_lines(ax2, t_be, np.asarray(be.v_enu_mps, dtype=float), linewidth=layout.lw())
+        plot_xyz_lines(
+            ax2,
+            t_be,
+            np.asarray(be.v_enu_mps, dtype=float),
+            linewidth=layout.lw(),
+            panel="DVL raw / ENU velocity",
+            recorder=recorder,
+        )
     else:
         ax2.text(0.5, 0.5, "ENU velocity missing", transform=ax2.transAxes, ha="center", va="center")
 
@@ -128,6 +150,7 @@ def save_dvl_bi_be_vel_2rows(
     fig.subplots_adjust(left=layout.left, right=layout.right, bottom=layout.bottom, top=layout.top, hspace=0.18)
     fig.savefig(paths.dvl_vel_png)
     plt.close(fig)
+    recorder.write_text(paths.dvl_vel_warnings_txt)
     return paths.dvl_vel_png
 
 
@@ -137,6 +160,7 @@ class DvlProcPlotPaths:
     run_dir: Path
     plots_dir: Path
     combined_png: Path
+    combined_warnings_txt: Path
 
 
 def _resolve_proc_out_dirs(proc_csv: str | Path, out_root: str | Path) -> DvlProcPlotPaths:
@@ -145,7 +169,12 @@ def _resolve_proc_out_dirs(proc_csv: str | Path, out_root: str | Path) -> DvlPro
     run_dir = out_root / proc_csv.stem
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    return DvlProcPlotPaths(run_dir=run_dir, plots_dir=plots_dir, combined_png=plots_dir / "dvl_proc_BI_BE_BD.png")
+    return DvlProcPlotPaths(
+        run_dir=run_dir,
+        plots_dir=plots_dir,
+        combined_png=plots_dir / "dvl_proc_BI_BE_BD.png",
+        combined_warnings_txt=plots_dir / "dvl_proc_BI_BE_BD.plot_warnings.txt",
+    )
 
 
 def save_dvl_proc_figures(
@@ -170,6 +199,7 @@ def save_dvl_proc_figures(
     layout = Imu3RowLayout()
     fig, axes = plt.subplots(3, 1, sharex=True, figsize=get_figure_size("sensor_3row"), dpi=layout.dpi)
     ax_bi, ax_be, ax_bd = axes
+    recorder = SparsePlotRecorder()
 
     for ax in axes:
         ax.tick_params(
@@ -193,7 +223,15 @@ def save_dvl_proc_figures(
     bi_cols = ("VelBx_body_mps", "VelBy_body_mps", "VelBz_body_mps")
     if all(c in df.columns for c in bi_cols):
         v_body = df[list(bi_cols)].to_numpy(dtype=float)
-        lines = plot_xyz_lines(ax_bi, t_plot, v_body, linewidth=layout.lw(), colors=IMU_AXIS_COLORS)
+        lines = plot_xyz_lines(
+            ax_bi,
+            t_plot,
+            v_body,
+            linewidth=layout.lw(),
+            panel="DVL proc / body velocity",
+            recorder=recorder,
+            colors=IMU_AXIS_COLORS,
+        )
         add_xyz_legend(ax_bi, lines, layout, labels=("Vx", "Vy", "Vz"))
     else:
         ax_bi.text(0.5, 0.5, "Body velocity missing", transform=ax_bi.transAxes, ha="center", va="center")
@@ -202,7 +240,17 @@ def save_dvl_proc_figures(
 
     be_col = "VelU_enu_mps"
     if be_col in df.columns:
-        ax_be.plot(t_plot, df[be_col].to_numpy(dtype=float), color="#30343A", linewidth=layout.lw())
+        plot_or_record_series(
+            ax_be,
+            t_plot,
+            df[be_col].to_numpy(dtype=float),
+            panel="DVL proc / vertical velocity",
+            series="vertical velocity",
+            color="#30343A",
+            recorder=recorder,
+            skip_message="Vertical velocity skipped: fewer than 2 samples",
+            linewidth=layout.lw(),
+        )
     else:
         ax_be.text(0.5, 0.5, "Vertical velocity missing", transform=ax_be.transAxes, ha="center", va="center")
     ax_be.set_ylabel("Vertical vel (m/s)")
@@ -210,7 +258,17 @@ def save_dvl_proc_figures(
 
     depth_col = "Depth_m"
     if depth_col in df.columns:
-        ax_bd.plot(t_plot, df[depth_col].to_numpy(dtype=float), color="#4C78A8", linewidth=layout.lw())
+        plot_or_record_series(
+            ax_bd,
+            t_plot,
+            df[depth_col].to_numpy(dtype=float),
+            panel="DVL proc / depth",
+            series="depth",
+            color="#4C78A8",
+            recorder=recorder,
+            skip_message="Depth skipped: fewer than 2 samples",
+            linewidth=layout.lw(),
+        )
     else:
         ax_bd.text(0.5, 0.5, "Depth missing", transform=ax_bd.transAxes, ha="center", va="center")
     ax_bd.set_ylabel("Depth (m)")
@@ -221,4 +279,5 @@ def save_dvl_proc_figures(
     fig.subplots_adjust(left=layout.left, right=layout.right, bottom=layout.bottom, top=layout.top, hspace=0.20)
     fig.savefig(paths.combined_png)
     plt.close(fig)
+    recorder.write_text(paths.combined_warnings_txt)
     return paths.combined_png

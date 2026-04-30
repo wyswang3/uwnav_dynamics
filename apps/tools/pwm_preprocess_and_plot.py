@@ -1,5 +1,36 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+模块名称：PWM 预处理与命令绘图脚本
+
+模块职责：
+读取数据集约定下的 PWM CSV，导出对齐后的命令序列，并生成 8 通道命令面板图。
+
+主要功能：
+1. 加载数据集配置并读取 PWM 数据。
+2. 导出只保留时间列和 8 路命令列的对齐 CSV。
+3. 绘制 4×2 的 8 通道 PWM 命令图，并对单点/空序列写出 sidecar 记录。
+
+数据流：
+dataset yaml
+    ↓
+read_pwm_csv
+    ↓
+对齐后的 PWM DataFrame
+    ↓
+cmd-only CSV + 8 通道命令图 + 稀疏绘图记录
+
+依赖模块：
+- numpy
+- pandas
+- matplotlib
+- uwnav_dynamics.io.dataset_spec
+- uwnav_dynamics.io.readers.pwm_reader
+- uwnav_dynamics.viz.style.sci_style
+
+备注：
+- 该脚本定位为轻量工具，不承担长期论文主图职责。
+"""
 
 from __future__ import annotations
 
@@ -22,7 +53,12 @@ from uwnav_dynamics.io.dataset_spec import DatasetSpec
 from uwnav_dynamics.io.readers.pwm_reader import read_pwm_csv
 
 # 复用统一绘图风格（你需要在 uwnav_dynamics/viz/style.py 里提供同名函数）
-from uwnav_dynamics.viz.style.sci_style import setup_mpl, apply_axes_2d
+from uwnav_dynamics.viz.style.sci_style import (
+    apply_axes_2d,
+    plot_or_record_series,
+    setup_mpl,
+    SparsePlotRecorder,
+)
 
 
 _CMD_COLS = [f"ch{i}_cmd" for i in range(1, 9)]
@@ -57,7 +93,7 @@ def plot_pwm_8ch_cmd_only(
     out_png: Path,
     *,
     max_points: int = 40000,
-) -> None:
+) -> Path | None:
     """
     Plot 8 channels cmd only, 4 rows x 2 cols.
     Minimal figure:
@@ -76,6 +112,8 @@ def plot_pwm_8ch_cmd_only(
     idx = _downsample_idx(n, max_points)
     t = est_s[idx]
     cmd_d = cmd[idx, :]
+    warnings_txt = out_png.with_suffix(".plot_warnings.txt")
+    recorder = SparsePlotRecorder()
 
     fig, axes = plt.subplots(4, 2, figsize=(7.2, 8.6), sharex=True)
     axes = axes.reshape(-1)
@@ -83,7 +121,16 @@ def plot_pwm_8ch_cmd_only(
     for i in range(8):
         ax = axes[i]
         apply_axes_2d(ax)
-        ax.plot(t, cmd_d[:, i], color=colors[i])
+        plot_or_record_series(
+            ax,
+            t,
+            cmd_d[:, i],
+            panel=f"PWM command / CH{i + 1}",
+            series=f"channel {i + 1} command",
+            color=colors[i],
+            recorder=recorder,
+            skip_message=f"CH{i + 1} skipped: fewer than 2 samples",
+        )
         ax.set_title(f"CH{i+1}")
 
         # No y-axis label to avoid repetitive info
@@ -100,6 +147,7 @@ def plot_pwm_8ch_cmd_only(
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=300)
     plt.close(fig)
+    return recorder.write_text(warnings_txt)
 
 def main() -> int:
     ap = argparse.ArgumentParser(
@@ -140,7 +188,7 @@ def main() -> int:
     print(f"[PWM] wrote cmd-only aligned csv: {out_csv}")
 
     # ---- plot (cmd only, no legend) ----
-    plot_pwm_8ch_cmd_only(
+    warnings_txt = plot_pwm_8ch_cmd_only(
         df_out["EstS"].to_numpy(dtype=float),
         df_out[_CMD_COLS].to_numpy(dtype=float),
         out_png,
@@ -148,6 +196,8 @@ def main() -> int:
     )
 
     print(f"[PWM] wrote plot: {out_png}")
+    if warnings_txt is not None:
+        print(f"[PWM] wrote sparse-plot warnings: {warnings_txt}")
 
     return 0
 
