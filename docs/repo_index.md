@@ -30,7 +30,7 @@
 | `src/uwnav_dynamics/cli/transition_replay.py` | 状态求解器 replay CLI 入口，执行长序列 autoregressive 重放验证。 | 输入：train YAML + ckpt + split；输出：`replay_<split>/metrics.yaml`、`segment_metrics.csv`、`step_metrics.csv`、`pred_samples.npz`、`resolved_replay.yaml`。 |
 | `src/uwnav_dynamics/cli/transition_replay_matrix.py` | 多候选 replay 批量评估入口，统一写 `manifest.yaml / summary.csv / ranking.csv`。 | 输入：replay matrix YAML；输出：多方案 replay 汇总表、排行表和各候选独立 replay 目录。 |
 | `src/uwnav_dynamics/cli/server_pipeline.py` | 服务器全流程总控入口，串联 preprocess、smoke、多卡矩阵训练与 replay 排名。 | 输入：server pipeline YAML；输出：`manifest.yaml`、`phase_status.csv`、阶段日志与最终结果目录。 |
-| `src/uwnav_dynamics/cli/paper_results_bundle.py` | 论文结果一键打包入口，串联传感器预处理/观测图、server pipeline、论文汇总图与绘图 warning 汇总导出。 | 输入：paper bundle YAML；输出：`paper_results_bundle_manifest.yaml`、传感器图、训练示例图、模块/路线汇总图、`plot_warning_summary.yaml/txt`。 |
+| `src/uwnav_dynamics/cli/paper_results_bundle.py` | 论文结果一键打包入口，串联传感器预处理/观测图、server pipeline、论文汇总图与绘图 warning 汇总导出。 | 输入：paper bundle YAML；输出：`paper_results_bundle_manifest.yaml`、传感器图、训练示例图、模块/路线汇总图、路线套图、`plot_warning_summary.yaml/txt`。 |
 | `scripts/run_paper_results_bundle.sh` | 服务器侧论文结果一键启动脚本，默认调用 bundle 示例配置。 | 输入：可选 bundle YAML 路径；输出：触发 `paper_results_bundle` 全流程。 |
 | `src/uwnav_dynamics/experiment/final_selection.py` | 合并训练矩阵与 replay 排名，输出最终选模表与论文产物清单。 | 输入：`summary.csv + ranking.csv`；输出：`final_selection.csv`、`paper_artifact_manifest.yaml`。 |
 | `src/uwnav_dynamics/experiment/representative.py` | 代表性样例选择工具，供 eval 与 replay 统一挑选 best/median/worst 样例。 | 输入：样例级指标 rows；输出：带 `representative_*` 元信息的 rows。 |
@@ -114,7 +114,7 @@
 | `src/uwnav_dynamics/viz/eval/plot_prediction_trace.py` | 画 50s 长时序预测-目标三轴对比图。 | 输入：`pred_trace.npz`，旧 artifact 可 fallback 到 `pred_samples.npz` + `pred_context.npz`；输出：`prediction_trace_acc_axes.png/pdf`、`prediction_trace_gyro_axes.png/pdf`、`prediction_trace_vel_axes.png/pdf`，可选 `prediction_trace_group_norm.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_rollout_samples.py` | 画 rollout 样例时域对比图，并可标出 masked-out 目标位置。 | 输入：`pred_samples.npz` 与可选 `pred_context.npz["target_mask"]`；输出：`rollout_sample_*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/eval/plot_model_compare.py` | 画多模型 horizon 比较图。 | 输入：多个评估目录；输出：dense compare 图与可选 `*_masked.png/pdf`。 |
-| `src/uwnav_dynamics/viz/eval/plot_paper_ablation_summary.py` | 画论文用控制相关指标紧凑对比图。 | 输入：`summary.csv / ranking.csv / final_selection.csv`；输出：`paper_ablation_summary_*.png/pdf`。 |
+| `src/uwnav_dynamics/viz/eval/plot_paper_ablation_summary.py` | 画论文用控制相关指标紧凑对比图，并可生成“路线内选优 + 跨路线赢家对比”套图。 | 输入：`summary.csv / ranking.csv / final_selection.csv`；输出：`paper_ablation_summary_*.png/pdf` 或 `route_*_module_compare_*.png/pdf`。 |
 | `src/uwnav_dynamics/viz/plots/imu_plot.py` | 原始/预处理 IMU 绘图模块。 | 输入：`ImuFrame` 或 `*_proc.csv`；输出：`imu_raw_9axis.png`、`imu_dt.png`、`imu_proc_3rows.png` 及对应 `*.plot_warnings.txt`。 |
 | `src/uwnav_dynamics/viz/plots/dvl_plots.py` | DVL 原始与预处理绘图模块。 | 输入：`DvlFrame` 或 DVL processed CSV；输出：`dvl_vel_BI_BE.png`、`dvl_proc_BI_BE_BD.png` 及对应 `*.plot_warnings.txt`。 |
 | `src/uwnav_dynamics/viz/plots/power_plots.py` | Power 论文主图与 QA 图绘图模块。 | 输入：`PowerFrame`；输出：`power_sync_overview_8motors.png`、可选 `power_currents_8motors.png` 及对应 `*.plot_warnings.txt`。 |

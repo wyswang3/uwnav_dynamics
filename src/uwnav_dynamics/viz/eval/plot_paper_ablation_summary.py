@@ -11,6 +11,7 @@
 2. 提取 MAE、末步误差、尾部误差、误差增长与最坏偏差等控制相关指标。
 3. 将不同指标归一化到“best = 1.0”坐标系，生成横向 dot-plot。
 4. 复用仓库统一的 primary / ablation / baseline 视觉层级。
+5. 支持按技术路线导出“路线内最优模块图 + 跨路线赢家对比图”套图。
 
 数据流：
 summary.csv / ranking.csv / final_selection.csv
@@ -61,6 +62,13 @@ class MetricSpec:
 
     field: str
     label: str
+
+
+@dataclass(frozen=True)
+class RouteComparisonSuitePaths:
+    """技术路线对比套图的产物路径集合。"""
+    route_plot_paths: tuple[Path, ...]
+    winner_compare_path: Path
 
 
 _METRIC_MODES: dict[str, tuple[MetricSpec, ...]] = {
@@ -166,6 +174,87 @@ def _normalize_metric(values: np.ndarray) -> np.ndarray:
         out[np.isfinite(values) & (values == 0.0)] = 1.0
         return out
     return values / best
+
+
+def _slugify_name(text: str) -> str:
+    raw = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(text).strip())
+    while "__" in raw:
+        raw = raw.replace("__", "_")
+    return raw.strip("_") or "unnamed"
+
+
+def _truthy_flag(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes"}
+
+
+def _scope_alias_map(
+    *,
+    rows: Sequence[dict[str, str]],
+    route_scopes: Sequence[str] | None,
+    route_names: Sequence[str] | None,
+) -> list[tuple[str, str]]:
+    if route_scopes and len(route_scopes) > 0:
+        scopes = [str(item).strip() for item in route_scopes if str(item).strip()]
+    else:
+        scopes = []
+        for row in rows:
+            scope = str(row.get("selection_scope", "")).strip()
+            if scope and scope not in scopes:
+                scopes.append(scope)
+    names = [str(item).strip() for item in (route_names or []) if str(item).strip()]
+    pairs: list[tuple[str, str]] = []
+    for idx, scope in enumerate(scopes):
+        alias = names[idx] if idx < len(names) else scope.replace("_", " ")
+        pairs.append((scope, alias))
+    return pairs
+
+
+def _clone_rows_for_route_scope(
+    rows: Sequence[dict[str, str]],
+    *,
+    scope: str,
+) -> list[dict[str, str]]:
+    selected = _filter_rows(
+        rows,
+        include_labels=None,
+        include_names=None,
+        include_scopes=[scope],
+        winner_only=False,
+    )
+    cloned: list[dict[str, str]] = []
+    for row in selected:
+        item = dict(row)
+        label = _pick_display_label(item)
+        if _truthy_flag(item.get("is_scope_winner", "")):
+            item["label"] = f"{label} (winner)"
+        else:
+            item["label"] = label
+        cloned.append(item)
+    return cloned
+
+
+def _clone_rows_for_route_winners(
+    rows: Sequence[dict[str, str]],
+    *,
+    scope_alias_pairs: Sequence[tuple[str, str]],
+) -> list[dict[str, str]]:
+    alias_by_scope = {scope: alias for scope, alias in scope_alias_pairs}
+    winner_rows = _filter_rows(
+        rows,
+        include_labels=None,
+        include_names=None,
+        include_scopes=list(alias_by_scope.keys()),
+        winner_only=True,
+    )
+    cloned: list[dict[str, str]] = []
+    for row in winner_rows:
+        item = dict(row)
+        label = _pick_display_label(item)
+        scope = str(item.get("selection_scope", "")).strip()
+        alias = alias_by_scope.get(scope, scope)
+        item["label"] = f"{alias}: {label}"
+        cloned.append(item)
+    return cloned
 
 
 def build_paper_ablation_summary_figure(
@@ -274,6 +363,55 @@ def plot_paper_ablation_summary(
     return out_stem.with_suffix(".png")
 
 
+def plot_route_comparison_suite(
+    *,
+    csv_path: Path,
+    out_dir: Path,
+    mode: str,
+    route_scopes: Sequence[str] | None = None,
+    route_names: Sequence[str] | None = None,
+    fmt: str = "png",
+) -> RouteComparisonSuitePaths:
+    """
+    导出技术路线对比套图：
+    1. 每条路线内部的模块对比图；
+    2. 各路线 scope winner 的跨路线对比图。
+    """
+    rows = _read_rows(csv_path)
+    scope_alias_pairs = _scope_alias_map(
+        rows=rows,
+        route_scopes=route_scopes,
+        route_names=route_names,
+    )
+    if len(scope_alias_pairs) == 0:
+        raise ValueError(f"No route scopes resolved from {csv_path}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    route_paths: list[Path] = []
+    for scope, alias in scope_alias_pairs:
+        route_rows = _clone_rows_for_route_scope(rows, scope=scope)
+        if len(route_rows) == 0:
+            raise ValueError(f"No rows selected for route scope: {scope}")
+        fig, _ = build_paper_ablation_summary_figure(rows=route_rows, mode=mode)
+        out_stem = out_dir / f"route_{_slugify_name(alias)}_module_compare_{mode}"
+        save_figure(fig, out_stem, fmt=fmt)
+        plt.close(fig)
+        route_paths.append(out_stem.with_suffix(".png"))
+
+    winner_rows = _clone_rows_for_route_winners(rows, scope_alias_pairs=scope_alias_pairs)
+    if len(winner_rows) == 0:
+        raise ValueError("No scope winners found for cross-route comparison")
+    fig, _ = build_paper_ablation_summary_figure(rows=winner_rows, mode=mode)
+    winner_out_stem = out_dir / f"route_winner_compare_{mode}"
+    save_figure(fig, winner_out_stem, fmt=fmt)
+    plt.close(fig)
+
+    return RouteComparisonSuitePaths(
+        route_plot_paths=tuple(route_paths),
+        winner_compare_path=winner_out_stem.with_suffix(".png"),
+    )
+
+
 def main() -> int:
     """论文用消融/路线汇总图命令行入口。"""
     ap = argparse.ArgumentParser("uwnav_dynamics.viz.eval.plot_paper_ablation_summary")
@@ -290,22 +428,40 @@ def main() -> int:
     ap.add_argument("--name", type=str, nargs="*", default=None, help="optional name filter")
     ap.add_argument("--scope", type=str, nargs="*", default=None, help="optional selection_scope filter")
     ap.add_argument("--winner_only", action="store_true", help="only keep final_selection scope winners")
+    ap.add_argument(
+        "--route-suite",
+        action="store_true",
+        help="export one within-route plot per selection_scope plus one cross-route winner compare plot",
+    )
+    ap.add_argument("--route-name", type=str, nargs="*", default=None, help="optional display names for route scopes")
     ap.add_argument("--fmt", type=str, default="png", choices=["png", "pdf", "both"])
     args = ap.parse_args()
 
     csv_path = Path(args.csv).expanduser().resolve()
     out_dir = Path(args.out_dir).expanduser().resolve() if args.out_dir else (csv_path.parent / "plots").resolve()
-    out_path = plot_paper_ablation_summary(
-        csv_path=csv_path,
-        out_dir=out_dir,
-        mode=str(args.mode),
-        include_labels=args.label,
-        include_names=args.name,
-        include_scopes=args.scope,
-        winner_only=bool(args.winner_only),
-        fmt=str(args.fmt),
-    )
-    print(f"[VIZ] wrote paper ablation summary to: {out_path}")
+    if bool(args.route_suite):
+        suite = plot_route_comparison_suite(
+            csv_path=csv_path,
+            out_dir=out_dir,
+            mode=str(args.mode),
+            route_scopes=args.scope,
+            route_names=args.route_name,
+            fmt=str(args.fmt),
+        )
+        print(f"[VIZ] wrote route plots to: {[str(p) for p in suite.route_plot_paths]}")
+        print(f"[VIZ] wrote cross-route winner compare to: {suite.winner_compare_path}")
+    else:
+        out_path = plot_paper_ablation_summary(
+            csv_path=csv_path,
+            out_dir=out_dir,
+            mode=str(args.mode),
+            include_labels=args.label,
+            include_names=args.name,
+            include_scopes=args.scope,
+            winner_only=bool(args.winner_only),
+            fmt=str(args.fmt),
+        )
+        print(f"[VIZ] wrote paper ablation summary to: {out_path}")
     return 0
 
 

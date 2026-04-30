@@ -368,6 +368,25 @@ out/paper_results_bundle/pooltest02_7gpu_v1/plot_warning_summary.txt
 
 其中 `plot_warning_summary.*` 会汇总所有“单点/稀疏序列未绘制折线”的 sidecar 记录，便于后续集中排查。
 
+当前默认 bundle 还会额外生成一组“路线内选优 + 跨路线赢家对比”图：
+
+```text
+out/paper_results_bundle/pooltest02_7gpu_v1/figures/summaries/route_comparison_suite/
+  route_<scope_a>_module_compare_final_selection_replay.png
+  route_<scope_b>_module_compare_final_selection_replay.png
+  route_winner_compare_final_selection_replay.png
+```
+
+如果只想单独重画这组三图，可直接执行：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.viz.eval.plot_paper_ablation_summary \
+  --csv out/server_pipeline/pooltest02_kf_full_7gpu_v2/final_selection.csv \
+  --mode final_selection_replay \
+  --route-suite \
+  --scope quality_v3_replay quality_step_v1_replay
+```
+
 ### 9.2 当前更推荐的 8 卡训练顺序
 
 当前阶段更推荐先跑单步状态转移主线，再决定是否补跑长期拟合主线：

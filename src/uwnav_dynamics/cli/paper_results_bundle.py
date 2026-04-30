@@ -65,6 +65,7 @@ from uwnav_dynamics.preprocess.dvl.pipeline import DvlPreprocessConfig, run_dvl_
 from uwnav_dynamics.preprocess.imu.pipeline import ImuPreprocessConfig, run_imu_preprocess_csv
 from uwnav_dynamics.preprocess.power.pipeline import PowerPreprocessConfig, build_aux_power_from_dataset
 from uwnav_dynamics.viz.eval.plot_paper_ablation_summary import plot_paper_ablation_summary
+from uwnav_dynamics.viz.eval.plot_paper_ablation_summary import plot_route_comparison_suite
 from uwnav_dynamics.viz.plots.dvl_plots import save_dvl_bi_be_vel_2rows, save_dvl_proc_figures
 from uwnav_dynamics.viz.plots.imu_plot import save_imu_proc_3rows_from_csv, save_imu_raw_figures
 from uwnav_dynamics.viz.plots.power_plots import (
@@ -97,6 +98,7 @@ class SummaryFigureJob:
     name: str
     csv: str
     mode: str
+    kind: str = "single_summary"
     labels: tuple[str, ...] = ()
     names: tuple[str, ...] = ()
     scopes: tuple[str, ...] = ()
@@ -324,6 +326,7 @@ def load_paper_results_bundle_config(path: str | Path) -> PaperResultsBundleConf
                 name=name,
                 csv=csv_path,
                 mode=mode,
+                kind=str(entry.get("kind", "single_summary")).strip() or "single_summary",
                 labels=tuple(str(v) for v in entry.get("labels", []) or []),
                 names=tuple(str(v) for v in entry.get("names", []) or []),
                 scopes=tuple(str(v) for v in entry.get("scopes", []) or []),
@@ -625,17 +628,29 @@ def run_paper_results_bundle(cfg: PaperResultsBundleConfig, *, repo_root: Path) 
         else:
             csv_path = _resolve_repo_path(repo_root, Path(job.csv), config_dir=config_dir)
         out_dir = work_dir / "figures" / "summaries" / job.name
-        out_path = plot_paper_ablation_summary(
-            csv_path=csv_path,
-            out_dir=out_dir,
-            mode=job.mode,
-            include_labels=job.labels,
-            include_names=job.names,
-            include_scopes=job.scopes,
-            winner_only=job.winner_only,
-            fmt=cfg.plot_fmt,
-        )
-        summary_outputs.append(str(out_path))
+        if job.kind == "route_comparison_suite":
+            suite = plot_route_comparison_suite(
+                csv_path=csv_path,
+                out_dir=out_dir,
+                mode=job.mode,
+                route_scopes=job.scopes,
+                route_names=job.names,
+                fmt=cfg.plot_fmt,
+            )
+            summary_outputs.extend(str(p) for p in suite.route_plot_paths)
+            summary_outputs.append(str(suite.winner_compare_path))
+        else:
+            out_path = plot_paper_ablation_summary(
+                csv_path=csv_path,
+                out_dir=out_dir,
+                mode=job.mode,
+                include_labels=job.labels,
+                include_names=job.names,
+                include_scopes=job.scopes,
+                winner_only=job.winner_only,
+                fmt=cfg.plot_fmt,
+            )
+            summary_outputs.append(str(out_path))
 
     training_examples, training_warning_files = _collect_training_examples(
         server_cfg_path=server_cfg_path,

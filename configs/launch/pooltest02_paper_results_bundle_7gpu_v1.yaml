@@ -30,3 +30,11 @@ summary_jobs:
     csv: auto_final_selection
     mode: final_selection_replay
     winner_only: true
+
+  - name: route_comparison_suite
+    kind: route_comparison_suite
+    csv: auto_final_selection
+    mode: final_selection_replay
+    scopes:
+      - quality_v3_replay
+      - quality_step_v1_replay

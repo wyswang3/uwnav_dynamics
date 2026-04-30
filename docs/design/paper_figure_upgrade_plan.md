@@ -133,6 +133,7 @@ PYTHONPATH=src python -m uwnav_dynamics.viz.eval.plot_model_compare \
 
 - 使用新增 [src/uwnav_dynamics/viz/eval/plot_paper_ablation_summary.py](/home/wys/uwnav_dynamics/src/uwnav_dynamics/viz/eval/plot_paper_ablation_summary.py)
 - 直接消费 `summary.csv`、`ranking.csv` 或 `final_selection.csv`
+- 对于“先路线内选优，再跨路线比较”的论文证据链，使用 `--route-suite` 一次生成三张图
 
 运行命令：
 
@@ -152,6 +153,29 @@ PYTHONPATH=src python -m uwnav_dynamics.viz.eval.plot_paper_ablation_summary \
 风险点：
 
 - 如果输入 CSV 中 `label / role` 不规范，图例与视觉层级会受到影响
+
+推荐的路线对比套图命令：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.viz.eval.plot_paper_ablation_summary \
+  --csv out/server_pipeline/<variant>/final_selection.csv \
+  --mode final_selection_replay \
+  --route-suite \
+  --scope <route_scope_a> <route_scope_b>
+```
+
+预期产物：
+
+```text
+plots/route_<route_scope_a>_module_compare_final_selection_replay.png
+plots/route_<route_scope_b>_module_compare_final_selection_replay.png
+plots/route_winner_compare_final_selection_replay.png
+```
+
+图像解释：
+
+- 前两张图分别回答“每条技术路线内部哪个模块最优”
+- 最后一张图回答“各路线赢家之间，最终哪条路线更优”
 
 ### 3.4 Replay / long-horizon compare
 
@@ -233,3 +257,9 @@ out/paper_results_bundle/<variant>/plot_warning_summary.txt
 - 传感器主图中的单点/稀疏序列跳过记录
 - 训练示例图中的稀疏绘图记录
 - compare 导出目录下被复制过来的 `*.plot_warnings.txt`
+
+当前默认 bundle 配置还会自动生成一组路线对比套图：
+
+```text
+out/paper_results_bundle/<variant>/figures/summaries/route_comparison_suite/
+```
