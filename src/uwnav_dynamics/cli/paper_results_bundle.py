@@ -56,7 +56,7 @@ from uwnav_dynamics.analysis.imu_stats import analyze_imu, save_imu_stats_txt
 from uwnav_dynamics.cli.server_pipeline import load_server_pipeline_config, run_server_pipeline
 from uwnav_dynamics.cli.utils import resolve_run_out_dir
 from uwnav_dynamics.experiment.layout import load_yaml_dict
-from uwnav_dynamics.experiment.paths import relative_path_str, resolve_config_path
+from uwnav_dynamics.experiment.paths import infer_repo_root, relative_path_str, resolve_config_path, resolve_repo_output_path
 from uwnav_dynamics.io.dataset_spec import DatasetSpec
 from uwnav_dynamics.io.readers.dvl_reader import read_dvl_csv
 from uwnav_dynamics.io.readers.imu_reader import read_imu_csv
@@ -591,7 +591,12 @@ def _collect_compare_dirs(
 def run_paper_results_bundle(cfg: PaperResultsBundleConfig, *, repo_root: Path) -> Path:
     """执行论文结果一键打包流程，并返回 manifest 路径。"""
     config_dir = cfg.config_path.parent
-    work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir)
+    work_dir = resolve_repo_output_path(
+        cfg.work_dir,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="launcher.work_dir",
+    )
     logs_dir = work_dir / "logs"
     work_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -612,7 +617,12 @@ def run_paper_results_bundle(cfg: PaperResultsBundleConfig, *, repo_root: Path) 
     if cfg.server_pipeline_config is not None:
         server_cfg_path = _resolve_repo_path(repo_root, cfg.server_pipeline_config, config_dir=config_dir)
         server_cfg = load_server_pipeline_config(server_cfg_path)
-        server_work_dir = _resolve_repo_path(repo_root, server_cfg.work_dir, config_dir=server_cfg.config_path.parent)
+        server_work_dir = resolve_repo_output_path(
+            server_cfg.work_dir,
+            repo_root=repo_root,
+            config_dir=server_cfg.config_path.parent,
+            field_name="server_pipeline.work_dir",
+        )
         if cfg.run_server_pipeline:
             server_phase_status = run_server_pipeline(server_cfg, repo_root=repo_root)
         else:
@@ -713,7 +723,7 @@ def main() -> int:
     ap.add_argument("-c", "--config", type=str, required=True, help="paper results bundle yaml")
     args = ap.parse_args()
 
-    repo_root = Path.cwd()
+    repo_root = infer_repo_root(Path(args.config))
     cfg = load_paper_results_bundle_config(args.config)
     manifest_path = run_paper_results_bundle(cfg, repo_root=repo_root)
     print(f"[PAPER_BUNDLE] manifest written to: {manifest_path}")

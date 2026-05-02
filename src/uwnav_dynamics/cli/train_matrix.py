@@ -53,7 +53,12 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from uwnav_dynamics.experiment.layout import RunLayout, load_yaml_dict
-from uwnav_dynamics.experiment.paths import relative_path_str, resolve_config_path
+from uwnav_dynamics.experiment.paths import (
+    infer_repo_root,
+    relative_path_str,
+    resolve_config_path,
+    resolve_repo_output_path,
+)
 from uwnav_dynamics.experiment.reporting import (
     EVAL_SUMMARY_FIELDS,
     TRAIN_SUMMARY_FIELDS,
@@ -301,7 +306,12 @@ def prepare_matrix_runs(cfg: MatrixLauncherConfig, *, repo_root: Path) -> list[P
     base_yaml_path = _resolve_repo_path(repo_root, cfg.base_train_yaml, config_dir=config_dir)
     base_yaml = load_yaml_dict(base_yaml_path)
 
-    resolved_work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir)
+    resolved_work_dir = resolve_repo_output_path(
+        cfg.work_dir,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="launcher.work_dir",
+    )
     generated_dir = _resolve_generated_train_dir(cfg, repo_root=repo_root)
     logs_dir = resolved_work_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -316,10 +326,11 @@ def prepare_matrix_runs(cfg: MatrixLauncherConfig, *, repo_root: Path) -> list[P
         merged = _default_run_config(merged=merged, spec=spec, launcher_cfg=cfg)
 
         run_d = _require_mapping(merged.get("run", {}), where="merged.run")
-        resolved_run_out_dir = _resolve_repo_path(
-            repo_root,
+        resolved_run_out_dir = resolve_repo_output_path(
             Path(str(run_d["out_dir"])),
+            repo_root=repo_root,
             config_dir=config_dir,
+            field_name=f"run[{spec.name}].out_dir",
         )
         run_d["out_dir"] = relative_path_str(resolved_run_out_dir, base_dir=generated_dir)
         layout = RunLayout(
@@ -573,7 +584,12 @@ def _generate_compare_outputs(
 
 def run_matrix_launcher(cfg: MatrixLauncherConfig, *, repo_root: Path) -> int:
     """按 GPU 池调度整个实验矩阵，并汇总 summary/compare 产物。"""
-    resolved_work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=cfg.config_path.parent)
+    resolved_work_dir = resolve_repo_output_path(
+        cfg.work_dir,
+        repo_root=repo_root,
+        config_dir=cfg.config_path.parent,
+        field_name="launcher.work_dir",
+    )
     prepared_runs = prepare_matrix_runs(cfg, repo_root=repo_root)
     _write_manifest(
         cfg=cfg,
@@ -716,7 +732,7 @@ def main() -> int:
     ap.add_argument("-c", "--config", type=str, required=True, help="matrix launcher yaml")
     args = ap.parse_args()
 
-    repo_root = Path.cwd()
+    repo_root = infer_repo_root(Path(args.config))
     cfg = load_matrix_launcher_config(Path(args.config))
     return run_matrix_launcher(cfg, repo_root=repo_root)
 

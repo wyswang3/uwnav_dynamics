@@ -17,6 +17,7 @@ import argparse
 from pathlib import Path
 import yaml
 
+from uwnav_dynamics.experiment.paths import infer_repo_root, resolve_config_path, resolve_repo_output_path
 from uwnav_dynamics.preprocess.align.aligner import (
     AlignConfig,
     save_training_table_imu_main,
@@ -36,16 +37,31 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg_path = Path(args.yaml).expanduser().resolve()
+    repo_root = infer_repo_root(cfg_path)
+    config_dir = cfg_path.parent
     with open(cfg_path, "r", encoding="utf-8") as f:
         cfg_raw = yaml.safe_load(f)
 
     a = cfg_raw["align"]
 
-    imu_csv = a["imu_proc_csv"]
-    pwm_csv = a["pwm_csv"]
-    dvl_csv = a.get("dvl_proc_csv")
-    power_csv = a.get("power_csv")
-    out_csv = a["out_csv"]
+    imu_csv = resolve_config_path(Path(str(a["imu_proc_csv"])), repo_root=repo_root, config_dir=config_dir)
+    pwm_csv = resolve_config_path(Path(str(a["pwm_csv"])), repo_root=repo_root, config_dir=config_dir)
+    dvl_csv = (
+        resolve_config_path(Path(str(a.get("dvl_proc_csv"))), repo_root=repo_root, config_dir=config_dir)
+        if a.get("dvl_proc_csv") not in (None, "")
+        else None
+    )
+    power_csv = (
+        resolve_config_path(Path(str(a.get("power_csv"))), repo_root=repo_root, config_dir=config_dir)
+        if a.get("power_csv") not in (None, "")
+        else None
+    )
+    out_csv = resolve_repo_output_path(
+        Path(str(a["out_csv"])),
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="align.out_csv",
+    )
 
     align_cfg = AlignConfig(
         dt_main_s=float(a.get("dt_main_s", 0.02)),

@@ -35,13 +35,15 @@ features.npz / labels.npz / meta.yaml
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
 import yaml
+
+from uwnav_dynamics.experiment.paths import infer_repo_root, resolve_config_path, resolve_repo_output_path
 
 from uwnav_dynamics.preprocess.qa import (
     assert_train_base_qa_pass,
@@ -125,6 +127,8 @@ def _build_mask_windows_from_idx0(
 def load_dataset_config(yaml_path: Path) -> DatasetConfig:
     """从 dataset YAML 读取并构造数据集构建配置。"""
     yaml_path = yaml_path.expanduser().resolve()
+    repo_root = infer_repo_root(yaml_path)
+    config_dir = yaml_path.parent
     with open(yaml_path, "r", encoding="utf-8") as f:
         cfg_raw = yaml.safe_load(f)
 
@@ -135,14 +139,23 @@ def load_dataset_config(yaml_path: Path) -> DatasetConfig:
     name = str(dset.get("name", "unnamed_dataset"))
 
     base_tbl = dset["base_table"]
-    base_csv = Path(base_tbl["csv"]).expanduser().resolve()
+    base_csv = resolve_config_path(
+        Path(base_tbl["csv"]),
+        repo_root=repo_root,
+        config_dir=config_dir,
+    )
     time_col = str(base_tbl.get("time_col", "t_s"))
 
     sw_dict = dset["sliding_window"]
     sliding_cfg = sliding_config_from_dict(sw_dict)
 
     out_dict = dset["output"]
-    out_dir = Path(out_dict["dir"]).expanduser().resolve()
+    out_dir = resolve_repo_output_path(
+        Path(out_dict["dir"]),
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="dataset.output.dir",
+    )
     normalize = str(out_dict.get("normalize", "standard")).lower()
     if normalize not in ("standard", "none"):
         raise ValueError(f"output.normalize must be 'standard' or 'none', got {normalize!r}")
@@ -387,6 +400,19 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg = load_dataset_config(Path(args.yaml))
+    repo_root = infer_repo_root(Path(args.yaml))
+    cfg = replace(
+        cfg,
+        output=DatasetOutputConfig(
+            dir=resolve_repo_output_path(
+                cfg.output.dir,
+                repo_root=repo_root,
+                config_dir=Path(args.yaml).expanduser().resolve().parent,
+                field_name="dataset.output.dir",
+            ),
+            normalize=cfg.output.normalize,
+        ),
+    )
     build_dataset_from_config(cfg)
     return 0
 

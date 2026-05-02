@@ -50,6 +50,29 @@ def relative_path_str(path: str | Path, *, base_dir: str | Path) -> str:
     return Path(rel).as_posix()
 
 
+def infer_repo_root(anchor: str | Path) -> Path:
+    """
+    从配置文件或源码路径推断当前运行使用的仓库根目录。
+
+    优先查找显式仓库标记；若未命中，则对常见 `configs/`、`src/`
+    目录结构做保守回退，最后退化为 anchor 所在目录。
+    """
+    p = Path(anchor).expanduser().resolve()
+    start_dir = p if p.is_dir() else p.parent
+
+    for cand in (start_dir, *start_dir.parents):
+        if (cand / "AGENTS.md").exists() or (cand / ".git").exists():
+            return cand
+
+    for marker in ("configs", "src"):
+        if marker in start_dir.parts:
+            idx = len(start_dir.parts) - 1 - list(reversed(start_dir.parts)).index(marker)
+            if idx > 0:
+                return Path(*start_dir.parts[:idx]).resolve()
+
+    return start_dir
+
+
 def looks_repo_relative_path(path: str | Path) -> bool:
     """判断一个相对路径是否明显在表达 repo-root 语义。"""
     p = Path(path)
@@ -99,6 +122,50 @@ def resolve_config_path(
     if looks_repo_relative_path(raw):
         return repo_candidate
     return config_candidate
+
+
+def ensure_path_within_repo_root(
+    path: str | Path,
+    *,
+    repo_root: str | Path,
+    field_name: str,
+) -> Path:
+    """确认运行期路径位于推断出的仓库根目录内。"""
+    resolved = Path(path).expanduser().resolve()
+    root = Path(repo_root).expanduser().resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"{field_name} resolves outside inferred repo root: path={resolved} repo_root={root}"
+        ) from exc
+    return resolved
+
+
+def resolve_repo_output_path(
+    path: str | Path,
+    *,
+    repo_root: str | Path,
+    field_name: str,
+    config_dir: str | Path | None = None,
+) -> Path:
+    """
+    解析输出路径，并强制它最终位于推断出的仓库根目录内。
+
+    该函数同时兼容：
+    - repo-root 相对路径（如 `out/...`）
+    - 相对配置文件目录的 `../..` 路径
+    - 位于仓库根目录内的绝对路径
+    """
+    raw = Path(path)
+    if config_dir is None:
+        config_dir = repo_root
+    resolved = resolve_config_path(raw, repo_root=repo_root, config_dir=config_dir)
+    return ensure_path_within_repo_root(
+        resolved,
+        repo_root=repo_root,
+        field_name=field_name,
+    )
 
 
 def to_snapshot_value(value: Any, *, base_dir: str | Path) -> Any:

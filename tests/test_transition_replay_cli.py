@@ -24,6 +24,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
 import torch
 import yaml
 
@@ -229,3 +230,32 @@ def test_transition_replay_cli_writes_autoregressive_replay_artifacts(tmp_path, 
     with np.load(out_dir / "pred_samples.npz", allow_pickle=False) as pred_npz:
         assert pred_npz["y_hat"].shape[0] == 1
         assert pred_npz["valid_mask"].all()
+
+
+def test_transition_replay_cli_rejects_out_dir_outside_inferred_repo_root(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    train_yaml = _write_train_yaml(tmp_path, data_dir)
+    ckpt = tmp_path / "dummy_best.pth"
+    ckpt.write_bytes(b"ckpt")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "uwnav_dynamics.cli.transition_replay",
+            "-y",
+            str(train_yaml),
+            "--ckpt",
+            str(ckpt),
+            "--split",
+            "test",
+            "--device",
+            "cpu",
+            "--out_dir",
+            str(tmp_path.parent / "outside_replay"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="outside inferred repo root"):
+        transition_replay.main()

@@ -56,7 +56,13 @@ from uwnav_dynamics.experiment.final_selection import (
     write_paper_artifact_manifest,
 )
 from uwnav_dynamics.experiment.layout import load_yaml_dict
-from uwnav_dynamics.experiment.paths import relative_path_str, resolve_config_path, to_snapshot_value
+from uwnav_dynamics.experiment.paths import (
+    infer_repo_root,
+    relative_path_str,
+    resolve_config_path,
+    resolve_repo_output_path,
+    to_snapshot_value,
+)
 
 
 @dataclass(frozen=True)
@@ -262,7 +268,12 @@ def _write_manifest(*, cfg: ServerPipelineConfig, repo_root: Path, path: Path) -
                 {
                     "name": item.name,
                     "source_summary_csv": _resolve_repo_path(repo_root, item.source_summary_csv, config_dir=config_dir),
-                    "work_dir": _resolve_repo_path(repo_root, item.work_dir, config_dir=config_dir),
+                    "work_dir": resolve_repo_output_path(
+                        item.work_dir,
+                        repo_root=repo_root,
+                        config_dir=config_dir,
+                        field_name=f"replay[{item.name}].work_dir",
+                    ),
                     "split": item.split,
                     "device": item.device,
                     "min_steps": item.min_steps,
@@ -372,7 +383,12 @@ def _build_generated_replay_config(
     payload = {
         "launcher": {
             "work_dir": relative_path_str(
-                _resolve_repo_path(repo_root, spec.work_dir, config_dir=config_dir),
+                resolve_repo_output_path(
+                    spec.work_dir,
+                    repo_root=repo_root,
+                    config_dir=config_dir,
+                    field_name=f"replay[{spec.name}].work_dir",
+                ),
                 base_dir=generated_dir,
             ),
             "split": spec.split,
@@ -403,7 +419,12 @@ def _build_generated_replay_config(
 def run_server_pipeline(cfg: ServerPipelineConfig, *, repo_root: Path) -> Path:
     """执行服务器全流程编排，并返回 phase_status.csv 路径。"""
     config_dir = cfg.config_path.parent
-    work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir)
+    work_dir = resolve_repo_output_path(
+        cfg.work_dir,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="launcher.work_dir",
+    )
     logs_dir = work_dir / "logs"
     generated_dir = work_dir / "generated_replay_matrix"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -518,7 +539,12 @@ def run_server_pipeline(cfg: ServerPipelineConfig, *, repo_root: Path) -> Path:
     replay_ranking_paths: list[Path] = []
     for item in cfg.replay_jobs:
         train_summary_csv = _resolve_repo_path(repo_root, item.source_summary_csv, config_dir=config_dir)
-        replay_ranking_csv = _resolve_repo_path(repo_root, item.work_dir, config_dir=config_dir) / "ranking.csv"
+        replay_ranking_csv = resolve_repo_output_path(
+            item.work_dir,
+            repo_root=repo_root,
+            config_dir=config_dir,
+            field_name=f"replay[{item.name}].work_dir",
+        ) / "ranking.csv"
         if not train_summary_csv.exists() or not replay_ranking_csv.exists():
             continue
         train_summary_paths.append(train_summary_csv)
@@ -557,7 +583,7 @@ def main() -> int:
     ap.add_argument("-c", "--config", type=str, required=True, help="server pipeline yaml")
     args = ap.parse_args()
 
-    repo_root = Path.cwd()
+    repo_root = infer_repo_root(Path(args.config))
     cfg = load_server_pipeline_config(Path(args.config))
     status_path = run_server_pipeline(cfg, repo_root=repo_root)
     print(f"[SERVER_PIPELINE] phase status written to: {status_path}")

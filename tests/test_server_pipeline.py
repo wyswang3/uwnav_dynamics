@@ -24,6 +24,7 @@ import csv
 from pathlib import Path
 import sys
 
+import pytest
 import yaml
 
 from uwnav_dynamics.cli import server_pipeline
@@ -156,7 +157,7 @@ def test_server_pipeline_orchestrates_phases_and_generates_replay_config(tmp_pat
 
 
 def test_server_pipeline_resolves_relative_workdirs_from_config_dir(tmp_path, monkeypatch):
-    config_root = tmp_path / "nested" / "configs"
+    config_root = tmp_path / "configs"
     config_root.mkdir(parents=True, exist_ok=True)
     artifacts_root = tmp_path / "artifacts"
     matrix_dir = artifacts_root / "train_matrix"
@@ -187,7 +188,7 @@ def test_server_pipeline_resolves_relative_workdirs_from_config_dir(tmp_path, mo
         yaml.safe_dump(
             {
                 "launcher": {
-                    "work_dir": "../../artifacts/server_out",
+                    "work_dir": "../artifacts/server_out",
                     "fail_fast": False,
                 },
                 "preprocess": {
@@ -206,8 +207,8 @@ def test_server_pipeline_resolves_relative_workdirs_from_config_dir(tmp_path, mo
                 "replay": [
                     {
                         "name": "matrix_replay",
-                        "source_summary_csv": "../../artifacts/train_matrix/summary.csv",
-                        "work_dir": "../../artifacts/replay_out",
+                        "source_summary_csv": "../artifacts/train_matrix/summary.csv",
+                        "work_dir": "../artifacts/replay_out",
                         "split": "test",
                         "device": "cpu",
                         "min_steps": 3,
@@ -248,3 +249,53 @@ def test_server_pipeline_resolves_relative_workdirs_from_config_dir(tmp_path, mo
     gen = yaml.safe_load(generated_cfg.read_text(encoding="utf-8"))
     assert gen["launcher"]["work_dir"] == "../../replay_out"
     assert gen["runs"][0]["train_yaml"] == "../../candidate.yaml"
+
+
+def test_server_pipeline_rejects_workdir_outside_inferred_repo_root(tmp_path, monkeypatch):
+    config_root = tmp_path / "configs"
+    config_root.mkdir(parents=True, exist_ok=True)
+    summary_csv = tmp_path / "summary.csv"
+    summary_csv.write_text("name,label,role,status,yaml_path\n", encoding="utf-8")
+
+    cfg_path = config_root / "server_pipeline_outside.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "launcher": {
+                    "work_dir": "../../outside/server_out",
+                    "fail_fast": False,
+                },
+                "preprocess": {},
+                "smoke": [],
+                "train_matrix": [],
+                "replay": [
+                    {
+                        "name": "matrix_replay",
+                        "source_summary_csv": str(summary_csv),
+                        "work_dir": "../../outside/replay_out",
+                        "split": "test",
+                        "device": "cpu",
+                        "min_steps": 3,
+                        "save_samples": 2,
+                        "include_statuses": ["ok"],
+                    }
+                ],
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "uwnav_dynamics.cli.server_pipeline",
+            "-c",
+            str(cfg_path),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="outside inferred repo root"):
+        server_pipeline.main()

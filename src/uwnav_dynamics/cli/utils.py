@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from uwnav_dynamics.experiment.layout import load_yaml_dict, run_layout_from_train_yaml
+from uwnav_dynamics.experiment.paths import infer_repo_root, ensure_path_within_repo_root, resolve_repo_output_path
 
 
 def load_yaml(path: Path) -> Dict[str, Any]:
@@ -65,7 +66,15 @@ def resolve_run_out_dir(train_yaml: Path) -> Tuple[Path, str]:
     仍保持“从 train yaml 推导默认 run_dir”的约定不变。
     """
     layout = run_layout_from_train_yaml(train_yaml)
-    return layout.out_dir, layout.variant
+    repo_root = infer_repo_root(train_yaml)
+    config_dir = Path(train_yaml).expanduser().resolve().parent
+    resolved_out_dir = resolve_repo_output_path(
+        layout.out_dir,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="run.out_dir",
+    )
+    return resolved_out_dir, layout.variant
 
 
 def resolve_eval_out_dir(
@@ -75,10 +84,27 @@ def resolve_eval_out_dir(
     out_dir_override: Path | None,
 ) -> Path:
     """解析评估输出目录；若显式指定则直接复用，否则走 RunLayout 默认约定。"""
+    repo_root = infer_repo_root(train_yaml)
+    config_dir = Path(train_yaml).expanduser().resolve().parent
     if out_dir_override is not None:
-        return Path(out_dir_override)
+        return resolve_repo_output_path(
+            out_dir_override,
+            repo_root=repo_root,
+            config_dir=config_dir,
+            field_name="eval.out_dir",
+        )
     layout = run_layout_from_train_yaml(train_yaml)
-    return layout.eval_dir(split)
+    resolved_run_out_dir = resolve_repo_output_path(
+        layout.out_dir,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="run.out_dir",
+    )
+    return ensure_path_within_repo_root(
+        resolved_run_out_dir / layout.variant / f"eval_{split}",
+        repo_root=repo_root,
+        field_name="eval.out_dir",
+    )
 
 
 def resolve_eval_plots_dir(eval_out_dir: Path) -> Path:

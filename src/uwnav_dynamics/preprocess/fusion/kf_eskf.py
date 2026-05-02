@@ -46,6 +46,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from uwnav_dynamics.experiment.paths import infer_repo_root, resolve_config_path, resolve_repo_output_path
 from uwnav_dynamics.preprocess.qa import (
     assert_train_base_qa_pass,
     render_train_base_qa,
@@ -129,14 +130,21 @@ def _as_diag3(values: Sequence[Any], *, name: str) -> np.ndarray:
 def load_fusion_config(yaml_path: str | Path) -> tuple[KfEskfFusionConfig, Path, Path, Path]:
     """从 fusion YAML 读取配置与关键路径。"""
     path = Path(yaml_path).expanduser().resolve()
+    repo_root = infer_repo_root(path)
+    config_dir = path.parent
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     if "fusion" not in raw:
         raise KeyError(f"YAML {path} missing top-level 'fusion' key")
     sec = raw["fusion"]
-    base_csv = Path(str(sec["base_csv"])).expanduser().resolve()
-    imu_proc_csv = Path(str(sec["imu_proc_csv"])).expanduser().resolve()
-    out_csv = Path(str(sec["out_csv"])).expanduser().resolve()
+    base_csv = resolve_config_path(Path(str(sec["base_csv"])), repo_root=repo_root, config_dir=config_dir)
+    imu_proc_csv = resolve_config_path(Path(str(sec["imu_proc_csv"])), repo_root=repo_root, config_dir=config_dir)
+    out_csv = resolve_repo_output_path(
+        Path(str(sec["out_csv"])),
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="fusion.out_csv",
+    )
     cfg = KfEskfFusionConfig(
         mode=str(sec.get("mode", "eskf")).lower(),
         default_dt_s=float(sec.get("default_dt_s", 0.01)),

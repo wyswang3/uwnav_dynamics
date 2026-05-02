@@ -39,6 +39,7 @@ from pathlib import Path
 
 from uwnav_dynamics.cli.utils import pick_ckpt
 from uwnav_dynamics.experiment.layout import run_layout_from_train_yaml
+from uwnav_dynamics.experiment.paths import infer_repo_root, ensure_path_within_repo_root, resolve_repo_output_path
 from uwnav_dynamics.solver.replay import (
     ReplayThresholdSpec,
     load_replay_dataset,
@@ -69,9 +70,29 @@ def main() -> int:
     args = ap.parse_args()
 
     train_yaml = Path(args.yaml)
+    repo_root = infer_repo_root(train_yaml)
     run_layout = run_layout_from_train_yaml(train_yaml)
+    resolved_run_out_dir = resolve_repo_output_path(
+        run_layout.out_dir,
+        repo_root=repo_root,
+        config_dir=train_yaml.expanduser().resolve().parent,
+        field_name="run.out_dir",
+    )
+    run_layout = run_layout.__class__(out_dir=resolved_run_out_dir, variant=run_layout.variant)
     ckpt_path = pick_ckpt(Path(args.ckpt)) if args.ckpt is not None else pick_ckpt(run_layout.run_dir)
-    out_dir = Path(args.out_dir) if args.out_dir is not None else (run_layout.run_dir / f"replay_{args.split}")
+    if args.out_dir is not None:
+        out_dir = resolve_repo_output_path(
+            args.out_dir,
+            repo_root=repo_root,
+            config_dir=train_yaml.expanduser().resolve().parent,
+            field_name="replay.out_dir",
+        )
+    else:
+        out_dir = ensure_path_within_repo_root(
+            run_layout.run_dir / f"replay_{args.split}",
+            repo_root=repo_root,
+            field_name="replay.out_dir",
+        )
 
     loaded = load_trained_transition_solver(
         train_yaml=train_yaml,
@@ -130,7 +151,7 @@ def main() -> int:
         out_dir=out_dir,
         replay_result=replay_result,
         cfg_snapshot=cfg_snapshot,
-        path_root=Path.cwd(),
+        path_root=repo_root,
     )
 
     print(f"[REPLAY] ckpt={ckpt_path}")

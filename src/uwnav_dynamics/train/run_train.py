@@ -58,7 +58,7 @@ import torch
 import yaml
 
 from uwnav_dynamics.experiment.layout import RunLayout
-from uwnav_dynamics.experiment.paths import relative_path_str
+from uwnav_dynamics.experiment.paths import infer_repo_root, relative_path_str, resolve_repo_output_path
 from uwnav_dynamics.train.config import load_train_config
 from uwnav_dynamics.train.data_pipeline import prepare_train_data
 from uwnav_dynamics.train.runtime import (
@@ -556,6 +556,19 @@ def main() -> int:
         cli_overrides,
     )
 
+    repo_root = infer_repo_root(Path(args.yaml))
+    resolved_run_out_dir = resolve_repo_output_path(
+        cfg.run.out_dir,
+        repo_root=repo_root,
+        config_dir=Path(args.yaml).expanduser().resolve().parent,
+        field_name="run.out_dir",
+    )
+    cfg = replace(
+        cfg,
+        run=replace(cfg.run, out_dir=resolved_run_out_dir),
+        train=replace(cfg.train, out_dir=resolved_run_out_dir),
+    )
+
     # ------------------------------
     # Resolve run_dir = out_dir/variant
     # ------------------------------
@@ -600,7 +613,7 @@ def main() -> int:
         source_snapshot_path=source_snapshot_path,
         split_sizes=prepared.split_sizes,
         dropped_window_count=prepared.dropped_window_count,
-        path_root=Path.cwd(),
+        path_root=repo_root,
     )
 
     model = S1Predictor(cfg)
@@ -665,7 +678,7 @@ def main() -> int:
         prepared=prepared,
         run_dir=run_dir,
         source_snapshot_path=source_snapshot_path,
-        path_root=Path.cwd(),
+        path_root=repo_root,
     )
     plot_training_artifacts(
         history_csv=run_dir / "train_history.csv",

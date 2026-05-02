@@ -74,7 +74,7 @@ from uwnav_dynamics.dataset.normalize import inverse_transform, load_scaler, tra
 from uwnav_dynamics.dataset.split import load_split_indices
 from uwnav_dynamics.eval.config import EvalConfig, build_eval_config
 from uwnav_dynamics.experiment.representative import RepresentativeRule, select_representative_rows
-from uwnav_dynamics.experiment.paths import relative_path_str, to_snapshot_value
+from uwnav_dynamics.experiment.paths import infer_repo_root, relative_path_str, to_snapshot_value
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor, S1PredictorConfig
 from uwnav_dynamics.models.utils.execution_layout import (
     build_execution_layout_metadata,
@@ -1301,6 +1301,7 @@ def main() -> int:
 
     _ensure_dir(cfg_eval.out_dir)
     res = evaluate_once(cfg_eval=cfg_eval, cfg_model=cfg_model)
+    repo_root = infer_repo_root(Path(args.yaml))
     write_eval_outputs(
         out_dir=cfg_eval.out_dir,
         res=res,
@@ -1325,7 +1326,7 @@ def main() -> int:
                 "ckpt": cfg_eval.ckpt,
             },
         },
-        path_root=Path.cwd(),
+        path_root=repo_root,
     )
 
     print(f"[EVAL] split={res['split']}  n_eval={res['n_eval']}")

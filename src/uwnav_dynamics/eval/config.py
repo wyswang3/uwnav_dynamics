@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Tuple
 
 from uwnav_dynamics.experiment.layout import RunLayout
+from uwnav_dynamics.experiment.paths import infer_repo_root, ensure_path_within_repo_root, resolve_repo_output_path
 from uwnav_dynamics.models.nets.s1_predictor import S1PredictorConfig
 from uwnav_dynamics.train.config import load_train_config
 
@@ -88,9 +89,30 @@ def build_eval_config(
       - rollout semantics
       - model topology
     """
-    cfg_train = load_train_config(Path(train_yaml))
-    layout = RunLayout(out_dir=Path(cfg_train.run.out_dir), variant=str(cfg_train.run.variant))
-    resolved_out_dir = Path(out_dir) if out_dir is not None else layout.eval_dir(split)
+    train_yaml_path = Path(train_yaml).expanduser().resolve()
+    cfg_train = load_train_config(train_yaml_path)
+    repo_root = infer_repo_root(train_yaml_path)
+    config_dir = train_yaml_path.parent
+    resolved_run_out_dir = resolve_repo_output_path(
+        cfg_train.run.out_dir,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="run.out_dir",
+    )
+    layout = RunLayout(out_dir=resolved_run_out_dir, variant=str(cfg_train.run.variant))
+    if out_dir is not None:
+        resolved_out_dir = resolve_repo_output_path(
+            out_dir,
+            repo_root=repo_root,
+            config_dir=config_dir,
+            field_name="eval.out_dir",
+        )
+    else:
+        resolved_out_dir = ensure_path_within_repo_root(
+            layout.eval_dir(split),
+            repo_root=repo_root,
+            field_name="eval.out_dir",
+        )
     if not layout.split_indices_path.exists():
         raise FileNotFoundError(f"Missing split indices: {layout.split_indices_path}")
     if not layout.x_scaler_path.exists() or not layout.y_scaler_path.exists():

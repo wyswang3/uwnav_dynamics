@@ -56,8 +56,10 @@ import yaml
 
 from uwnav_dynamics.experiment.layout import load_yaml_dict
 from uwnav_dynamics.experiment.paths import (
+    infer_repo_root,
     relative_path_str,
     resolve_config_path,
+    resolve_repo_output_path,
     to_snapshot_value,
 )
 from uwnav_dynamics.solver.replay import (
@@ -448,7 +450,12 @@ def _generate_compare_outputs(*, cfg: ReplayMatrixConfig, rows: Sequence[dict[st
 def run_transition_replay_matrix(cfg: ReplayMatrixConfig, *, repo_root: Path) -> tuple[Path, Path]:
     """按统一协议执行多个候选模型的长序列 replay，并写出 summary/ranking。"""
     config_dir = cfg.config_path.parent
-    work_dir = _resolve_repo_path(repo_root, cfg.work_dir, config_dir=config_dir)
+    work_dir = resolve_repo_output_path(
+        cfg.work_dir,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name="launcher.work_dir",
+    )
     work_dir.mkdir(parents=True, exist_ok=True)
     _write_manifest(cfg=cfg, path=work_dir / "manifest.yaml", repo_root=repo_root)
 
@@ -591,7 +598,7 @@ def main() -> int:
     ap.add_argument("-c", "--config", type=str, required=True, help="replay matrix yaml")
     args = ap.parse_args()
 
-    repo_root = Path.cwd()
+    repo_root = infer_repo_root(Path(args.config))
     cfg = load_replay_matrix_config(Path(args.config))
     summary_path, ranking_path = run_transition_replay_matrix(cfg, repo_root=repo_root)
     print(f"[REPLAY_MATRIX] summary written to: {summary_path}")
