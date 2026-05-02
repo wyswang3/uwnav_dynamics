@@ -343,6 +343,46 @@ def _smoke_cmd(spec: SmokeTrainSpec) -> list[str]:
     return cmd
 
 
+def _pick_replay_ckpt(run_dir: Path) -> Path | None:
+    """从已有训练 run_dir 中选择 replay 默认 checkpoint。"""
+    for name in ("best.pth", "best.pt", "last.pth", "last.pt"):
+        cand = run_dir / name
+        if cand.exists():
+            return cand
+    return None
+
+
+def _write_replay_train_yaml_snapshot(
+    *,
+    source_yaml: Path,
+    run_dir: Path,
+    out_dir: Path,
+    name: str,
+) -> Path:
+    """
+    为 replay 阶段写出稳定 train yaml 快照。
+
+    train_matrix 的 `summary.csv` 会记录候选的 `run_dir`，而原始 generated
+    train yaml 可能位于临时目录或携带相对配置目录的 `run.out_dir`。replay 阶段
+    只需要复用模型结构、数据契约和已有 artifact，因此这里把 `run.out_dir /
+    run.variant` 固定到 summary 指向的实际训练目录，避免 checkpoint/scaler 路径漂移。
+    """
+    payload = load_yaml_dict(source_yaml)
+    run_cfg = _require_mapping(payload.get("run", {}), where=f"{source_yaml}.run")
+    payload = dict(payload)
+    rewritten_run_cfg = dict(run_cfg)
+    snapshot_dir = out_dir / "train_yamls"
+    rewritten_run_cfg["out_dir"] = relative_path_str(run_dir.parent.resolve(), base_dir=snapshot_dir)
+    rewritten_run_cfg["variant"] = run_dir.name
+    payload["run"] = rewritten_run_cfg
+
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    out_path = snapshot_dir / f"{name}.yaml"
+    with open(out_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(payload, f, sort_keys=False, allow_unicode=True)
+    return out_path
+
+
 def _build_generated_replay_config(
     *,
     spec: ReplayFromMatrixSpec,
@@ -353,6 +393,12 @@ def _build_generated_replay_config(
     summary_csv = _resolve_repo_path(repo_root, spec.source_summary_csv, config_dir=config_dir)
     if not summary_csv.exists():
         raise FileNotFoundError(f"replay source summary.csv not found: {summary_csv}")
+    resolved_replay_work_dir = resolve_repo_output_path(
+        spec.work_dir,
+        repo_root=repo_root,
+        config_dir=config_dir,
+        field_name=f"replay[{spec.name}].work_dir",
+    )
 
     runs: list[dict[str, Any]] = []
     with open(summary_csv, "r", encoding="utf-8", newline="") as f:
@@ -363,16 +409,38 @@ def _build_generated_replay_config(
             yaml_rel = str(row.get("yaml_path", "")).strip()
             if yaml_rel == "":
                 continue
+            run_name = str(row.get("name", "")).strip()
+            train_yaml_path = (summary_csv.parent / yaml_rel).resolve()
+            run_dir_rel = str(row.get("run_dir", "")).strip()
+            run_dir = (summary_csv.parent / run_dir_rel).resolve() if run_dir_rel else None
+            source_yaml = train_yaml_path
+            ckpt_path: Path | None = None
+            if run_dir is not None and run_dir.exists():
+                copied_source_yaml = run_dir / "source_train.yaml"
+                if copied_source_yaml.exists():
+                    source_yaml = copied_source_yaml
+                if source_yaml.exists():
+                    train_yaml_path = _write_replay_train_yaml_snapshot(
+                        source_yaml=source_yaml,
+                        run_dir=run_dir,
+                        out_dir=generated_dir,
+                        name=run_name,
+                    )
+                ckpt_path = _pick_replay_ckpt(run_dir)
+
+            replay_run: dict[str, Any] = {
+                "name": run_name,
+                "label": str(row.get("label", row.get("name", ""))).strip(),
+                "role": str(row.get("role", "")).strip() or None,
+                "train_yaml": relative_path_str(
+                    train_yaml_path,
+                    base_dir=generated_dir,
+                ),
+            }
+            if ckpt_path is not None:
+                replay_run["ckpt"] = relative_path_str(ckpt_path, base_dir=generated_dir)
             runs.append(
-                {
-                    "name": str(row.get("name", "")).strip(),
-                    "label": str(row.get("label", row.get("name", ""))).strip(),
-                    "role": str(row.get("role", "")).strip() or None,
-                    "train_yaml": relative_path_str(
-                        (summary_csv.parent / yaml_rel).resolve(),
-                        base_dir=generated_dir,
-                    ),
-                }
+                replay_run
             )
 
     if spec.top_k is not None:
@@ -383,12 +451,7 @@ def _build_generated_replay_config(
     payload = {
         "launcher": {
             "work_dir": relative_path_str(
-                resolve_repo_output_path(
-                    spec.work_dir,
-                    repo_root=repo_root,
-                    config_dir=config_dir,
-                    field_name=f"replay[{spec.name}].work_dir",
-                ),
+                resolved_replay_work_dir,
                 base_dir=generated_dir,
             ),
             "split": spec.split,

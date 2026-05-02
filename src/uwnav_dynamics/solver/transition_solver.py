@@ -52,6 +52,7 @@ import torch
 from uwnav_dynamics.cli.utils import pick_ckpt
 from uwnav_dynamics.dataset.normalize import inverse_transform, load_scaler, transform
 from uwnav_dynamics.experiment.layout import RunLayout, run_layout_from_train_yaml
+from uwnav_dynamics.experiment.paths import infer_repo_root, resolve_repo_output_path
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor, S1PredictorConfig
 from uwnav_dynamics.models.utils.execution_layout import extract_y0_from_x_last
 from uwnav_dynamics.models.utils.rollout import rollout_from_delta
@@ -262,7 +263,15 @@ def load_trained_transition_solver(
     """
     train_yaml_path = Path(train_yaml)
     cfg_train = load_train_config(train_yaml_path)
-    run_layout = run_layout_from_train_yaml(train_yaml_path)
+    raw_layout = run_layout_from_train_yaml(train_yaml_path)
+    repo_root = infer_repo_root(train_yaml_path)
+    resolved_out_dir = resolve_repo_output_path(
+        raw_layout.out_dir,
+        repo_root=repo_root,
+        config_dir=train_yaml_path.expanduser().resolve().parent,
+        field_name="run.out_dir",
+    )
+    run_layout = RunLayout(out_dir=resolved_out_dir, variant=raw_layout.variant)
     ckpt_path = pick_ckpt(Path(ckpt)) if ckpt is not None else pick_ckpt(run_layout.run_dir)
 
     runtime_device = torch.device(device if device is not None else str(cfg_train.run.device))

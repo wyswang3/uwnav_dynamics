@@ -251,7 +251,111 @@ def test_server_pipeline_resolves_relative_workdirs_from_config_dir(tmp_path, mo
     assert gen["runs"][0]["train_yaml"] == "../../candidate.yaml"
 
 
+def test_server_pipeline_generates_stable_replay_train_yaml_from_run_dir(tmp_path, monkeypatch):
+    work_dir = tmp_path / "server_out"
+    matrix_dir = tmp_path / "train_matrix_out"
+    matrix_dir.mkdir(parents=True, exist_ok=True)
+
+    original_yaml = tmp_path / "configs" / "train" / "generated" / "demo" / "candidate.yaml"
+    original_yaml.parent.mkdir(parents=True, exist_ok=True)
+    original_yaml.write_text(
+        "run:\n"
+        "  name: candidate_a\n"
+        "  out_dir: ../../../../out/ckpts/demo\n"
+        "  variant: CandidateA\n"
+        "data:\n"
+        "  data_dir: data/demo\n"
+        "  batch_size: 1\n"
+        "  num_workers: 0\n"
+        "  pin_memory: false\n"
+        "  split:\n"
+        "    train_ratio: 0.7\n"
+        "    val_ratio: 0.15\n",
+        encoding="utf-8",
+    )
+    run_dir = tmp_path / "out" / "ckpts" / "demo" / "CandidateA"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "source_train.yaml").write_text(original_yaml.read_text(encoding="utf-8"), encoding="utf-8")
+    (run_dir / "best.pth").write_bytes(b"fake checkpoint")
+
+    summary_csv = matrix_dir / "summary.csv"
+    with summary_csv.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["name", "label", "role", "status", "yaml_path", "run_dir"],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "name": "candidate_a",
+                "label": "Candidate A",
+                "role": "primary",
+                "status": "ok",
+                "yaml_path": "../configs/train/generated/demo/candidate.yaml",
+                "run_dir": "../out/ckpts/demo/CandidateA",
+            }
+        )
+
+    cfg_path = tmp_path / "server_pipeline.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "launcher": {
+                    "work_dir": str(work_dir),
+                    "fail_fast": False,
+                },
+                "preprocess": {},
+                "smoke": [],
+                "train_matrix": [],
+                "replay": [
+                    {
+                        "name": "matrix_replay",
+                        "source_summary_csv": str(summary_csv),
+                        "work_dir": str(tmp_path / "replay_out"),
+                        "split": "test",
+                        "device": "cpu",
+                        "min_steps": 3,
+                        "include_statuses": ["ok"],
+                    }
+                ],
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_run(cmd, cwd=None, env=None, stdout=None, stderr=None, text=None):
+        class _Proc:
+            returncode = 0
+        return _Proc()
+
+    monkeypatch.setattr(server_pipeline.subprocess, "run", _fake_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "uwnav_dynamics.cli.server_pipeline",
+            "-c",
+            str(cfg_path),
+        ],
+    )
+
+    assert server_pipeline.main() == 0
+
+    generated_cfg = work_dir / "generated_replay_matrix" / "matrix_replay.yaml"
+    gen = yaml.safe_load(generated_cfg.read_text(encoding="utf-8"))
+    assert gen["runs"][0]["train_yaml"] == "train_yamls/candidate_a.yaml"
+    assert gen["runs"][0]["ckpt"] == "../../out/ckpts/demo/CandidateA/best.pth"
+
+    replay_train_yaml = work_dir / "generated_replay_matrix" / "train_yamls" / "candidate_a.yaml"
+    replay_train = yaml.safe_load(replay_train_yaml.read_text(encoding="utf-8"))
+    assert replay_train["run"]["variant"] == "CandidateA"
+    assert replay_train["run"]["out_dir"] == "../../../out/ckpts/demo"
+
+
 def test_server_pipeline_rejects_workdir_outside_inferred_repo_root(tmp_path, monkeypatch):
+    (tmp_path / "AGENTS.md").write_text("# test repo root\n", encoding="utf-8")
     config_root = tmp_path / "configs"
     config_root.mkdir(parents=True, exist_ok=True)
     summary_csv = tmp_path / "summary.csv"

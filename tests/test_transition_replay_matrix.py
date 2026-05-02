@@ -32,6 +32,7 @@ from uwnav_dynamics.cli import transition_replay_matrix
 from uwnav_dynamics.dataset.normalize import save_scaler
 from uwnav_dynamics.dataset.split import save_split_indices
 from uwnav_dynamics.models.nets.s1_predictor import S1Predictor
+from uwnav_dynamics.solver.transition_solver import load_trained_transition_solver
 from uwnav_dynamics.train.config import load_train_config
 
 
@@ -174,9 +175,9 @@ def _build_dataset(
     (data_dir / "meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
-def _prepare_run_artifacts(train_yaml: Path) -> Path:
+def _prepare_run_artifacts(train_yaml: Path, *, run_dir: Path | None = None) -> Path:
     cfg_train = load_train_config(train_yaml)
-    run_dir = Path(cfg_train.run.out_dir) / cfg_train.run.variant
+    run_dir = Path(cfg_train.run.out_dir) / cfg_train.run.variant if run_dir is None else run_dir
     run_dir.mkdir(parents=True, exist_ok=True)
     data_dir = Path(cfg_train.data.data_dir)
     with np.load(data_dir / "features.npz", allow_pickle=True) as feat_npz:
@@ -205,6 +206,32 @@ def _prepare_run_artifacts(train_yaml: Path) -> Path:
     ckpt = run_dir / "best.pth"
     torch.save({"model": model.state_dict()}, ckpt)
     return ckpt
+
+
+def test_load_trained_transition_solver_resolves_run_out_dir_relative_to_train_yaml_config_dir(tmp_path):
+    data_dir = tmp_path / "data" / "parent_hop_data"
+    _build_dataset(data_dir, target_value=5.0)
+
+    source_yaml = _write_train_yaml(tmp_path, name="parent_hop_run", data_dir=data_dir)
+    payload = yaml.safe_load(source_yaml.read_text(encoding="utf-8"))
+    payload["run"]["out_dir"] = "../../../../out/ckpts/parent_hop"
+
+    generated_dir = tmp_path / "configs" / "train" / "generated" / "parent_hop"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    train_yaml = generated_dir / "parent_hop_run.yaml"
+    train_yaml.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    run_dir = tmp_path / "out" / "ckpts" / "parent_hop" / "parent_hop_run"
+    ckpt = _prepare_run_artifacts(train_yaml, run_dir=run_dir)
+
+    loaded = load_trained_transition_solver(train_yaml=train_yaml, device="cpu")
+
+    assert loaded.ckpt_path == ckpt
+    assert loaded.run_layout.run_dir == run_dir
+    assert loaded.run_layout.split_indices_path == run_dir / "split_indices.npz"
 
 
 def test_transition_replay_matrix_writes_summary_and_ranking(tmp_path, monkeypatch):

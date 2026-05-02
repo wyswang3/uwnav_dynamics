@@ -1,0 +1,19 @@
+launcher:
+  work_dir: out/server_pipeline/replay_only_quality_step_8gpu_v2
+  fail_fast: false
+
+preprocess: {}
+smoke: []
+train_matrix: []
+
+replay:
+  - name: quality_step_v1_replay
+    source_summary_csv: out/train_matrix/pooltest02_s1_kf_quality_step_8gpu_v2/summary.csv
+    work_dir: out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed
+    split: test
+    device: cuda
+    min_seconds: 50
+    max_seconds_per_segment: 50
+    dt_s: 0.01
+    save_samples: 8
+    include_statuses: [ok]
