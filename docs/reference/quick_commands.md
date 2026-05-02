@@ -354,6 +354,14 @@ PYTHONPATH=src python -m uwnav_dynamics.cli.paper_results_bundle \
   -c configs/launch/pooltest02_paper_results_bundle_7gpu_v1.yaml
 ```
 
+如果希望把传感器预处理图、训练示例图、模块/路线对比图与 `8gpu_v2`
+服务器全流程一起收口，执行：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.paper_results_bundle \
+  -c configs/launch/pooltest02_paper_results_bundle_8gpu_v1.yaml
+```
+
 主要产物：
 
 ```text
@@ -364,6 +372,18 @@ out/paper_results_bundle/pooltest02_7gpu_v1/figures/summaries/
 out/paper_results_bundle/pooltest02_7gpu_v1/compare_exports/
 out/paper_results_bundle/pooltest02_7gpu_v1/plot_warning_summary.yaml
 out/paper_results_bundle/pooltest02_7gpu_v1/plot_warning_summary.txt
+```
+
+`8gpu` bundle 的对应产物路径为：
+
+```text
+out/paper_results_bundle/pooltest02_8gpu_v1/paper_results_bundle_manifest.yaml
+out/paper_results_bundle/pooltest02_8gpu_v1/figures/sensors/
+out/paper_results_bundle/pooltest02_8gpu_v1/figures/training_examples/
+out/paper_results_bundle/pooltest02_8gpu_v1/figures/summaries/
+out/paper_results_bundle/pooltest02_8gpu_v1/compare_exports/
+out/paper_results_bundle/pooltest02_8gpu_v1/plot_warning_summary.yaml
+out/paper_results_bundle/pooltest02_8gpu_v1/plot_warning_summary.txt
 ```
 
 其中 `plot_warning_summary.*` 会汇总所有“单点/稀疏序列未绘制折线”的 sidecar 记录，便于后续集中排查。

@@ -76,7 +76,8 @@
 | `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml` | 当前 KF 主线训练配置，启用 grouped head、transition_balance 与 `val_transition_score`。 | 输入：被 `train/config.py` 读取；输出：驱动当前长期拟合训练主线。 |
 | `configs/launch/replay_matrix_example.yaml` | replay 批量评估示例配置，演示如何比较 step 与 horizon 两类候选。 | 输入：被 `cli.transition_replay_matrix` 读取；输出：驱动 `summary.csv / ranking.csv` 生成。 |
 | `configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml` | 当前推荐的 7 GPU 服务器全流程配置，串联 fusion、dataset、smoke、train_matrix 与 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
-| `configs/launch/pooltest02_paper_results_bundle_7gpu_v1.yaml` | 论文结果一键包示例配置，串联传感器预处理/观测图、server pipeline 与论文汇总图导出。 | 输入：被 `cli.paper_results_bundle` 读取；输出：`out/paper_results_bundle/...`。 |
+| `configs/launch/pooltest02_paper_results_bundle_7gpu_v1.yaml` | 论文结果一键包 7 GPU 配置，串联传感器预处理/观测图、server pipeline 与论文汇总图导出。 | 输入：被 `cli.paper_results_bundle` 读取；输出：`out/paper_results_bundle/...`。 |
+| `configs/launch/pooltest02_paper_results_bundle_8gpu_v1.yaml` | 论文结果一键包 8 GPU 配置，复用 `8gpu_v2` 全流程并收口预处理图、训练图、路线对比图与 compare 导出。 | 输入：被 `cli.paper_results_bundle` 读取；输出：`out/paper_results_bundle/pooltest02_8gpu_v1/...`。 |
 | `configs/dataset/pooltest02.yaml` | 原始数据集规格（传感器文件选择、pwm_timebase、valid_window）。 | 输入：被 `DatasetSpec.load` 读取；输出：解析后的传感器路径与 reader kwargs。 |
 | `configs/dataset/pooltest02_s1.yaml` | 数据集构建配置（base_table + sliding_window + output）。 | 输入：被 `build_dataset.py` 读取；输出：决定 `features/labels/meta` 生成方式。 |
 | `configs/dataset/pooltest02_s1_kf_ctx_v2.yaml` | KF 融合状态代理量数据集配置（29 维输入、9 维 KF target）。 | 输入：被 `build_dataset.py` 读取；输出：`data/processed/2026-01-10_pooltest02_s1_kf_ctx_v2`。 |

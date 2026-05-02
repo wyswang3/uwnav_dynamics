@@ -1,0 +1,43 @@
+launcher:
+  work_dir: out/paper_results_bundle/pooltest02_8gpu_v1
+  plot_fmt: png
+  run_server_pipeline: true
+  copy_compare_dirs: true
+  server_pipeline_config: configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml
+
+preprocess:
+  dataset_yaml: configs/dataset/pooltest02.yaml
+  align_yaml: configs/align/pooltest02.yaml
+  use_rel_time: true
+  run_imu: true
+  run_dvl: true
+  run_pwm: true
+  run_power: true
+  power_window_mode: peak_total_power
+  power_window_s: 60
+  keep_power_current_qa: false
+
+summary_jobs:
+  - name: quality_route_module_summary
+    csv: out/train_matrix/pooltest02_s1_kf_quality_8gpu_v2/summary.csv
+    mode: train_masked
+
+  - name: step_route_module_summary
+    csv: out/train_matrix/pooltest02_s1_kf_quality_step_8gpu_v2/summary.csv
+    mode: train_masked
+
+  - name: route_winner_replay_summary
+    csv: auto_final_selection
+    mode: final_selection_replay
+    winner_only: true
+
+  - name: route_comparison_suite
+    kind: route_comparison_suite
+    csv: auto_final_selection
+    mode: final_selection_replay
+    names:
+      - KF Route
+      - Step Route
+    scopes:
+      - quality_v3_replay
+      - quality_step_v1_replay
