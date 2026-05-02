@@ -1,3 +1,8 @@
+> 历史说明：本文档记录旧 `B0 / B4 / U1 / B4+U1` 模块组合表，
+> 用于解释早期论文材料中的结构代号，不代表当前最终状态转移求解器。
+> 当前最终方案是 `StepBase s11 / step_b0_grouped_tb_seed11`，详见
+> [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
+
 下面这张表可直接用于论文或实验说明。命名依据主要来自 configs/launch/
   pooltest02_s1_8gpu_compare.yaml 和 configs/launch/
   pooltest02_s1_round5_finalconfirm_e120.yaml，共享基础配置见 configs/train/
@@ -15,7 +20,7 @@
 
   补充说明：
 
-  - B4+U1 当前就是“thruster_lag + hydro_ssm + uncertainty 三个模块同时开启”的组
+  - B4+U1 在旧阶段就是“thruster_lag + hydro_ssm + uncertainty 三个模块同时开启”的组
     合。
   - 这些变体里 DampingHead 没有被启用，见 configs/train/
     pooltest02_s1_lstm_v0.yaml:58。

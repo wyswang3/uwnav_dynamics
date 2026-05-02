@@ -1,6 +1,6 @@
 # 文档导航
 
-更新时间：2026-04-10
+更新时间：2026-05-02
 
 本文档只做一件事：告诉协作者现在应该先读什么、不同文档分别负责什么。
 
@@ -10,13 +10,15 @@
 
 1. [handover_guide.md](/home/wys/uwnav_dynamics/docs/handover_guide.md)
 2. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
-3. [data_management.md](/home/wys/uwnav_dynamics/docs/data_management.md)
-4. [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)
+3. [design/current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)
+4. [data_management.md](/home/wys/uwnav_dynamics/docs/data_management.md)
+5. [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)
 
 如果只是要开始执行命令，再看：
 
 - [reference/quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
 - [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
+- [design/current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)
 - [design/transition_solver_phase2_replay_upgrade.md](/home/wys/uwnav_dynamics/docs/design/transition_solver_phase2_replay_upgrade.md)
 - [evaluation_protocol.md](/home/wys/uwnav_dynamics/docs/evaluation_protocol.md)
 - [design/model_variant_aliases.md](/home/wys/uwnav_dynamics/docs/design/model_variant_aliases.md)
@@ -25,10 +27,12 @@
 
 - [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
 - [reference/quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
+- `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml`
 - `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
 
 如果目标是比较“过去主线 vs 当前主线”谁更适合状态转移求解器，优先看：
 
+- [design/current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)
 - [design/old_vs_current_transition_compare_v1.md](/home/wys/uwnav_dynamics/docs/design/old_vs_current_transition_compare_v1.md)
 - [evaluation_protocol.md](/home/wys/uwnav_dynamics/docs/evaluation_protocol.md)
 - [design/model_variant_aliases.md](/home/wys/uwnav_dynamics/docs/design/model_variant_aliases.md)
@@ -42,6 +46,7 @@
 - [data_management.md](/home/wys/uwnav_dynamics/docs/data_management.md)：数据目录与 git 入库规则
 - [config_contract.md](/home/wys/uwnav_dynamics/docs/config_contract.md)：训练/评估配置契约
 - [evaluation_protocol.md](/home/wys/uwnav_dynamics/docs/evaluation_protocol.md)：评估口径与 artifact 约定
+- [design/current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)：当前最终状态转移求解器选型
 - [engineering_roadmap.md](/home/wys/uwnav_dynamics/docs/engineering_roadmap.md)：工程升级路线
 - [modeling_roadmap.md](/home/wys/uwnav_dynamics/docs/modeling_roadmap.md)：建模路线
 - [repo_index.md](/home/wys/uwnav_dynamics/docs/repo_index.md)：关键文件定位索引
@@ -50,6 +55,7 @@
 ### 2.2 `design/`：设计说明与接口约束
 
 - 数据契约、绘图规范、阶段设计说明
+- [design/current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)：当前最终状态转移求解器方案、证据与复现命令
 - [design/model_variant_aliases.md](/home/wys/uwnav_dynamics/docs/design/model_variant_aliases.md)：网络方案简称规范
 
 ### 2.3 `reference/`：命令手册与执行参考

@@ -1,5 +1,10 @@
 # 第 4.3 节网络训练框架专项审查
 
+> 历史说明：本文档主要审查旧 `Vel_state / B4+U1` 论文阶段的网络训练框架，
+> 可作为历史方法学材料，不代表当前最终状态转移求解器。当前最终方案是
+> `StepBase s11 / step_b0_grouped_tb_seed11`，详见
+> [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
+
 ## 0. 审查范围与证据基础
 
 本文档仅审查当前仓库中**实际存在**的“用于多源传感器动力学辨识的网络训练框架”，不尝试寻找或对比不存在的“第一阶段网络训练代码”，也不构造“第一阶段 vs 第二阶段”的伪代码级分析。
@@ -522,7 +527,7 @@ h_k = \lambda \odot h_{k-1} + (1-\lambda)\odot \phi(W[u_k, y_k] + b)
 
 - `B0`：基线
 - `U1`：强对照/消融
-- `B4+U1`：当前主线 primary 候选结构
+- `B4+U1`：旧阶段 primary 候选结构
 
 证据：
 
@@ -538,7 +543,7 @@ h_k = \lambda \odot h_{k-1} + (1-\lambda)\odot \phi(W[u_k, y_k] + b)
 | B2 | 仅 `HydroSSM` | 早期消融 |
 | B4 | `ThrusterLag + HydroSSM` | 早期 primary / 中间候选 |
 | U1 | 专门化不确定度分支 | 当前强对照/消融 |
-| B4+U1 | `ThrusterLag + HydroSSM + UncertaintyHead` | 当前主线 primary 候选 |
+| B4+U1 | `ThrusterLag + HydroSSM + UncertaintyHead` | 旧阶段 primary 候选 |
 
 ### 6.3 哪些模块不应直接写成主实验事实
 

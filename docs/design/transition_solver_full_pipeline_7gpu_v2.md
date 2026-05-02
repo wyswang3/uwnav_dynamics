@@ -2,6 +2,11 @@
 
 更新时间：2026-04-11
 
+> 历史说明：本文档是 7 GPU 全流程设计记录，不是当前最终选型入口。
+> 2026-05-02 replay-only 复核后，当前默认状态转移求解器为
+> `StepBase s11 / step_b0_grouped_tb_seed11`，详见
+> [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
+
 ## 1. 阶段目标
 
 当前阶段的目标不是重新打开大规模结构搜索，而是在“只使用第 1 到第 7 张 GPU 卡”的资源约束下，跑通一条可复现的正式主线：

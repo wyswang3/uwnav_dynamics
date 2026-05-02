@@ -17,6 +17,11 @@
 
 # 论文图谱升级方案
 
+> 当前选型说明：2026-05-02 之后，状态转移求解器主结果图应优先围绕
+> `StepBase s11 / step_b0_grouped_tb_seed11` 和 50 秒 replay-only 产物组织。
+> 旧 `U1 / B4+U1 / StepDyn` 图组只能作为历史对照或附录材料。当前最终证据入口见
+> [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
+
 ## 1. 阶段目标
 
 当前项目需要从“单模块局部绘图”升级到“面向论文结构的证据图谱”。

@@ -2,6 +2,11 @@
 
 更新时间：2026-04-10
 
+> 历史说明：本文档用于设计“旧主线 vs 当前主线”的对照实验，
+> 其中的“当前主线候选”表述不代表 2026-05-02 之后的最终选型。
+> 当前最终状态转移求解器是 `StepBase s11 / step_b0_grouped_tb_seed11`，
+> 详见 [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
+
 ## 1. 目标
 
 本方案的目标不是重新打开全量结构搜索，
@@ -89,7 +94,7 @@
 训练组 B：当前主线
 
 - 使用当前 `quality_step_v1` 矩阵
-- 重点看 `StepBase` 与 `StepDyn`
+- 重点看 `StepBase`，并保留 `StepDelta / StepDyn` 作为对照
 
 ### 运行命令
 
@@ -110,7 +115,7 @@ cd /home/wys/uwnav_dynamics
 export PYTHONPATH=src
 
 python -m uwnav_dynamics.cli.train_matrix \
-  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v1.yaml
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml
 ```
 
 统一长期拟合比较：
@@ -163,7 +168,7 @@ python -m uwnav_dynamics.cli.transition_replay_matrix \
 
 如果统一 DVL 观测 replay 下出现下面结果，可以这样判读：
 
-1. 当前主线 `StepDyn` 的 `rmse_global / rmse_growth_p95 / tail_abs_p95_global`
+1. 当前最终候选 `StepBase s11` 的 `rmse_global / rmse_growth_p95 / tail_abs_p95_global`
    持续优于过去主线 `DynUnc`
    说明当前网络设计更适合作为状态转移求解器候选。
 

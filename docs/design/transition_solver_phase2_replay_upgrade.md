@@ -1,6 +1,11 @@
 # 状态求解器升级 Phase 2：一步求解与长序列 Replay
 
-更新时间：2026-04-20
+更新时间：2026-05-02
+
+当前 replay-only 验证已完成，最终默认候选为
+`StepBase s11 / step_b0_grouped_tb_seed11`。具体指标、图表和复现实验命令见
+[current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
+本文档继续作为 replay 协议与接口设计说明。
 
 ## 1. 阶段目标
 

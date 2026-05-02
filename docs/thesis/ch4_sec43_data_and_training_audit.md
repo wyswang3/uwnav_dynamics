@@ -2,15 +2,18 @@
 
 > 历史说明：本文档记录的是旧阶段 `B4+U1 / Vel_state / dvl_mask 稀疏速度监督` 方案，
 > 不是当前 `KF / ESKF 融合 + VelKf dense supervision` 主线的实现说明。
-> 当前训练主线请优先参考 `docs/design/kf_fusion_preprocess_training_v2.md`。
+> 当前训练主线请优先参考 `docs/design/kf_fusion_preprocess_training_v2.md`；
+> 当前最终状态转移求解器请以
+> [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)
+> 为准。
 
 ## 1. 审查结论先行
 
-围绕“当前主线实验（B4+U1）使用的数据预处理流程、样本构造与输入输出定义、真实采用的训练配置”三项问题，当前代码与配置可以归纳为以下三点：
+围绕“旧阶段主线实验（B4+U1）使用的数据预处理流程、样本构造与输入输出定义、真实采用的训练配置”三项问题，旧阶段代码与配置可以归纳为以下三点：
 
 1. 当前主线数据链路是：`IMU 原始日志 -> IMU 预处理 -> 与 PWM / DVL / Power 对齐成 train_base.csv -> 构造 Vel_state 状态代理量 -> 滑动窗口 -> 训练时再做 split/scaler/mask`。其中 IMU 在对齐阶段采用**线性插值**，PWM 采用 **hold-last**，Power 采用 **hold-last + max_dt gating**，DVL 采用**最近邻 sparse attach**。
 2. 当前样本定义不是“单步状态预测”，而是：用最近 `hist_len=100` 步历史，预测未来 `pred_len=10` 步、每步 `9` 维的观测状态代理量轨迹。输入 `X` 为 `(100,25)`，目标 `Y` 为 `(10,9)`。其中速度 3 维在张量里是**稠密状态代理量**，但在损失里只在 `dvl_mask=True` 的未来时刻参与监督。
-3. 当前论文应写入的正式主线训练配置，不应直接抄基础 `configs/train/pooltest02_s1_lstm_v0.yaml`，而应写成：`configs/launch/pooltest02_s1_round5_finalconfirm_e120.yaml` 的公共覆盖配置，加上 `configs/train/generated/pooltest02_s1_round5_finalconfirm_e120/b4u1_seed{6,7,8,9}.yaml` 的 B4+U1 结构开关。该配置使用 `AdamW + ReduceLROnPlateau + early stopping`，单卡单进程训练、8 卡并发矩阵调度，不是 DDP。
+3. 旧阶段论文材料若复用本审计，应写成：`configs/launch/pooltest02_s1_round5_finalconfirm_e120.yaml` 的公共覆盖配置，加上 `configs/train/generated/pooltest02_s1_round5_finalconfirm_e120/b4u1_seed{6,7,8,9}.yaml` 的 B4+U1 结构开关。该配置使用 `AdamW + ReduceLROnPlateau + early stopping`，单卡单进程训练、8 卡并发矩阵调度，不是 DDP。
 
 > 重要审计提醒  
 > 代码注释与配置文本多次把 DVL 描述为“BI 10 Hz 稀疏 attach”。但当前主线实际使用的 `out/dvl_proc/dvl_nav_state_tb_20260110_193538_proc.csv` 不含 `Src/kind/used` 过滤字段，而 `aligner.py` 只有在这些字段存在时才会重新筛选 BI 行。因此，若论文要写成“当前训练严格使用 BI 10 Hz DVL 速度监督”，这一句需要标注“需人工确认”。

@@ -1,6 +1,12 @@
 # 网络方案简称规范
 
-更新时间：2026-04-10
+更新时间：2026-05-02
+
+当前最终状态转移求解器以
+[current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)
+为准：`StepBase s11 / step_b0_grouped_tb_seed11` 是 2026-05-02
+50 秒 replay-only 验证后的默认方案。本文档只负责解释简称与 legacy 代号，
+不再把历史阶段的 `StepDyn / B4 / B4+U1` 结论作为当前最终选型。
 
 ## 1. 目的
 
@@ -43,9 +49,9 @@
 | `Unc` | `U1` | `UncertaintyHead` | 历史原始主线 | 专门化异方差不确定度分支 |
 | `DynUnc` | `B4+U1` / `B4U1` | `ThrusterLag + HydroSSM + UncertaintyHead` | 历史原始主线 | 动力学先验与不确定度联合增强 |
 | `StepNLL` | `STEP_A0` | `joint head + nll_diag` | 当前 step 主线 | 一步转移基线，偏对照用途 |
-| `StepBase` | `STEP_B0` | `grouped head + transition_balance` | 当前 step 主线 | 一步转移主线基线 |
+| `StepBase` | `STEP_B0` | `grouped head + transition_balance` | 当前 step 主线 | 当前最终默认求解器；`s11` 为 50 秒 replay-only 综合最优 |
 | `StepDelta` | `STEP_B2 strong-delta` | `StepBase + stronger delta loss` | 当前 step 主线 | 强化增量约束的消融分支 |
-| `StepDyn` | `STEP_B4` | `StepBase + ThrusterLag + HydroSSM` | 当前 step 主线 | 当前更接近状态转移求解器的主候选 |
+| `StepDyn` | `STEP_B4` | `StepBase + ThrusterLag + HydroSSM` | 当前 step 主线 | 历史候选；短窗口表现较好，但不是当前 replay-only 最终方案 |
 | `KFNLL` | `KF joint NLL` | KF dense + `joint head` | KF 主线 | KF 版一步 NLL 对照 |
 | `KFBase` | `KF grouped TB` | KF dense + `grouped head` | KF 主线 | KF 版 grouped baseline |
 | `KFDvlAux` | `KF grouped TB DVLaux` | `KFBase + dvl_obs aux` | KF 主线 | 带 DVL 辅助头的 KF 分支 |
@@ -70,12 +76,14 @@
 - `Unc`
 - `DynUnc`
 - `StepBase`
+- `StepDelta`
 - `StepDyn`
 
 示例：
 
 - `DynUnc s8`
-- `StepDyn s9`
+- `StepBase s11`
+- `StepDelta s11`
 - `Legacy-Unc s8`
 
 ### 3.2 配置与路径
@@ -103,6 +111,8 @@
 
 - 不再写 `STEP_B4`
 - 改写为 `StepDyn`
+- 当前最终方案写作 `StepBase s11`
+- 若讨论被 replay 淘汰或降级的动力学 block 候选，写作 `StepDyn`，并明确它不是当前最终方案
 
 ### 4.3 新旧主线对比
 
@@ -111,6 +121,7 @@
 - `Legacy-Unc`
 - `Legacy-DynUnc`
 - `StepBase`
+- `StepDelta`
 - `StepDyn`
 
 不推荐写法：

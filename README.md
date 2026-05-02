@@ -16,14 +16,19 @@
 - 学习模型能否更接近 `x_{t+1} = f(x_t, u_t, c_t)` 的一步状态转移算子。
 - 离线评估与长序列 replay 是否足以支撑“进入最小控制/仿真闭环前”的工程判断。
 
-截至 2026-04-20，本地已完成多轮 7/8 卡短 horizon 离线评估结果回收与评估链升级：
+截至 2026-05-02，已完成 `quality_step_v1` 8 GPU 候选的 50s 长序列 replay-only 复核：
 
-- 在当前短期 eval 指标上，`quality_step_v1` 的单步状态转移主线优于 `quality_v3` 10-step 主线；但这还不是 50s 级长时长 replay 结论
-- `B4 + blocks` 是当前最值得进入长时长 replay 验证的结构家族，但不同 seed 间仍有波动
-- 当前推荐默认 solver 候选为
-  `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B4_grouped_tb_blocks_seed10/eval_test`
+- `quality_step_v1` 是当前状态转移求解器主线。
+- 50s replay 综合排名显示，当前最适合作为默认 solver 候选的是
+  `StepBase s11 / step_b0_grouped_tb_seed11`。
+- 该候选是 `S1Predictor + grouped head + transition_balance` 的 StepBase 路线：
+  `thruster_lag / hydro_ssm / damping / uncertainty` blocks 均关闭。
+- `B4 / StepDyn` 曾在短 horizon eval 中领先，但在 50s autoregressive replay 中误差增长明显，不再作为当前默认 solver 路线。
 - 默认评估图包已从短 0.1s 样例转向 50s 长窗口 Acc/Gyro/Vel 三轴诊断图
 - 已新增 `step_with_feature_template()`，作为后续 controller / RL wrapper 的最小 step 边界
+
+当前最终选型、指标、图表位置与复现命令统一见：
+[current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
 
 ## 项目定位
 
@@ -126,23 +131,41 @@ Raw Logs
 
 这样更符合当前阶段目标，因为我们现在要验证的是“能否作为状态转移部件使用”，而不是只追求长 horizon 图更好看。
 
-当前已回收结果中，默认优先候选是：
+当前已完成 50s replay 复核后，默认 solver 候选是：
 
 ```text
 out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/
-  STEP_B4_grouped_tb_blocks_seed10/eval_test/
+  STEP_B0_grouped_tb_seed11/
 ```
 
-关键指标：
+对应训练和 replay 产物：
 
-- `rmse_global_masked = 0.0341668`
-- `mae_global_masked = 0.0064416`
-- `tail_p95_masked = 0.0198636`
-- `tail_p99_masked = 0.1422205`
+- 训练配置快照：`out/server_pipeline/replay_only_quality_step_8gpu_v2/generated_replay_matrix/train_yamls/step_b0_grouped_tb_seed11.yaml`
+- checkpoint：`out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B0_grouped_tb_seed11/best.pth`
+- replay 指标：`out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/runs/step_b0_grouped_tb_seed11/metrics.yaml`
+- replay 汇总：`out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/summary.csv`
+- replay 排名：`out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/ranking.csv`
 
-这些指标只支持“短期 eval 下的下一阶段候选优先级”判断。
-它们不能回答 50s / 100s 长时长自由递推中哪套方案最稳定；
-下一轮 8 卡训练后必须用 autoregressive replay matrix 重新排序。
+50s replay 关键指标：
+
+- `overall_rank = 1`
+- `overall_rank_score = 1.823529`
+- `rmse_global = 0.251959`
+- `mae_global = 0.116145`
+- `final_step_rmse_global_mean = 0.187319`
+- `rmse_growth_p95 = 131.043153`
+- `tail_abs_p95_global = 0.495928`
+- `tail_abs_p99_global = 1.167350`
+- `worst_abs_bias = 0.088167`
+- `nonfinite_trigger_count = 0`
+
+对比图位置：
+
+- `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_model_compare.png`
+- `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_long_horizon_curves.png`
+
+说明：`StepDelta s11` 的全局误差更低，但 `rmse_growth_p95 = 316.213403`，
+长时增长风险高于 `StepBase s11`，因此综合 ranking 未胜出。
 
 ## 核心数学原理
 
@@ -313,6 +336,13 @@ replay 与 eval artifact 中的配置快照应保持相对路径，避免绑定�
 注意：在 100 Hz 数据上，`50 steps` 只有 `0.5s`。
 长时长验证必须使用 `--min_seconds 50` 或 replay matrix 中的 `min_seconds: 50`。
 
+若已有训练矩阵产物，只需执行 replay-only 配置，不必重跑预处理和训练：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml
+```
+
 ## 当前评估口径
 
 当前推荐的 run 级判断口径至少包括：
@@ -327,7 +357,7 @@ replay 与 eval artifact 中的配置快照应保持相对路径，避免绑定�
 - 50s 长窗口 Acc/Gyro/Vel 三轴图是否非空、无遮挡、信息不过密
 - replay / eval 配置快照是否保持相对路径
 
-下一轮 8 卡服务器训练后的核心选模口径应改为长时长 replay：
+当前服务器训练后的核心选模口径已经改为长时长 replay；后续复核仍应优先检查：
 
 - `out/replay_matrix/*/ranking.csv`
 - `segment_count / total_steps`
@@ -350,7 +380,8 @@ replay 与 eval artifact 中的配置快照应保持相对路径，避免绑定�
 - KF 输出是状态代理量，不是高保真物理真值
 - `S1Predictor` 仍是当前默认主模型 family
 - 多步主线仍是“历史窗 -> 固定未来块输出”，主要用于对照
-- 单步主线已有 solver step 接口，但当前最优结论仍来自短期 eval；长时长 replay ranking 尚未完成
+- 单步主线已有 solver step 接口；当前默认候选已由 50s replay ranking 收口为
+  `StepBase s11 / step_b0_grouped_tb_seed11`
 - 离线指标和 replay 结果只能证明控制前筛查价值，不能直接等价于闭环可用性证明
 
 ## 文档入口

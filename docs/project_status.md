@@ -1,12 +1,17 @@
 # 项目当前状态
 
-更新时间：2026-04-20
+更新时间：2026-05-02
 
 ## 1. 当前阶段
 
 项目当前处于：
 
-**`状态转移求解器升级已进入长序列 replay 与 RL-ready 基础接口阶段；当前推荐候选收口为 quality_step_8gpu_v2 的 B4+blocks 单步模型`**
+**`状态转移求解器升级已完成 50s replay-only 复核；当前推荐候选收口为 quality_step_8gpu_v2 的 StepBase s11 单步模型`**
+
+当前最终选型说明以
+[current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)
+为准。历史文档中的 `B4+U1`、`StepDyn / B4 blocks` 结论只作为阶段性证据，
+不再作为当前默认 solver 结论。
 
 当前主目标是：
 
@@ -104,11 +109,11 @@
   - 两条矩阵都已有有效结果；
   - 但因部分候选失败，`server_pipeline` 中对应 phase 被记为 `failed`，不代表整批不可用。
 
-当前离线最优候选：
+当时离线最优候选：
 
 - `quality_v3` 最优：
   - `out/train_matrix/pooltest02_s1_kf_quality_7gpu_v2/summary.csv`
-  - 当前最优 run：`QV3_B4_grouped_tb_blocks_seed8`
+  - 当时最优 run：`QV3_B4_grouped_tb_blocks_seed8`
   - 关键指标：
     - `rmse_global = 0.05492`
     - `mae_global = 0.01779`
@@ -116,7 +121,7 @@
     - `tail_abs_p99_dense = 0.26575`
 - `quality_step_v1` 最优：
   - `out/train_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/summary.csv`
-  - 当前最优 run：`STEP_B4_grouped_tb_blocks_seed9`
+  - 当时最优 run：`STEP_B4_grouped_tb_blocks_seed9`
   - 关键指标：
     - `rmse_global = 0.03635`
     - `mae_global = 0.00690`
@@ -125,25 +130,68 @@
 
 2026-04-20 本地 `out/ckpts` 多轮结果补充比较：
 
-- 当前更推荐的默认 solver 候选：
+- 当时基于短 horizon eval 推荐进入长时 replay 的候选：
   - `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B4_grouped_tb_blocks_seed10/eval_test`
   - `rmse_global_masked = 0.0341668`
   - `mae_global_masked = 0.0064416`
   - `tail_p95_masked = 0.0198636`
   - `tail_p99_masked = 0.1422205`
   - `worst_bias_masked = 0.0016737`
-- 当前组均值显示：
+- 当时组均值显示：
   - `STEP_B4_blocks` 优于 `STEP_B0_base / STEP_B2_strong_delta`
   - `quality_step_v1` 单步主线优于 `quality_v3` 10-step 主线
 - 注意：这些结论来自短 horizon / 单步离线 eval。`quality_step_v1` 与 `quality_v3` 的 horizon 语义不同，
   不能据此判断 50s / 100s 长时长 autoregressive replay 稳定性；
   `STEP_B4_grouped_tb_blocks_seed10` 只是当前进入长时 replay 的优先候选。
 
+2026-05-02 服务器 50s replay-only 复核结论：
+
+- replay 阶段执行成功：
+  - `out/server_pipeline/replay_only_quality_step_8gpu_v2/phase_status.csv`
+  - `phase=replay, name=quality_step_v1_replay, status=ok, returncode=0`
+- 当前经 50s 长序列 autoregressive replay 验证后的默认 solver 候选：
+  - `StepBase s11`
+  - `step_b0_grouped_tb_seed11`
+  - `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B0_grouped_tb_seed11`
+- 模块组合：
+  - `S1Predictor`
+  - `pred_len = 1`
+  - `head_mode = grouped`
+  - `transition_balance`
+  - `thruster_lag / hydro_ssm / damping / uncertainty` blocks 均为 `enabled: false`
+- 主要证据：
+  - replay 排名：`out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/ranking.csv`
+  - replay 汇总：`out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/summary.csv`
+  - 最终选择表：`out/server_pipeline/replay_only_quality_step_8gpu_v2/final_selection.csv`
+  - replay 指标：`out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/runs/step_b0_grouped_tb_seed11/metrics.yaml`
+  - replay 训练配置快照：`out/server_pipeline/replay_only_quality_step_8gpu_v2/generated_replay_matrix/train_yamls/step_b0_grouped_tb_seed11.yaml`
+  - checkpoint：`out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B0_grouped_tb_seed11/best.pth`
+- 关键 replay 指标：
+  - `overall_rank = 1`
+  - `overall_rank_score = 1.823529`
+  - `rmse_global = 0.251959`
+  - `mae_global = 0.116145`
+  - `final_step_rmse_global_mean = 0.187319`
+  - `rmse_growth_p95 = 131.043153`
+  - `tail_abs_p95_global = 0.495928`
+  - `tail_abs_p99_global = 1.167350`
+  - `worst_abs_bias = 0.088167`
+  - `nonfinite_trigger_count = 0`
+- 对比图：
+  - `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_model_compare.png`
+  - `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_long_horizon_curves.png`
+- 解释：
+  - `StepDelta s11 / step_b2_grouped_tb_strong_delta_seed11` 的 `rmse_global = 0.189537`、
+    `mae_global = 0.093926`、`tail_abs_p95_global = 0.346427` 更低；
+  - 但其 `rmse_growth_p95 = 316.213403`，显著高于 `StepBase s11` 的 `131.043153`；
+  - 因此按当前 replay ranking 的综合选模协议，`StepBase s11` 更适合作为控制前状态转移求解器默认候选。
+
 当前阶段可下的结论：
 
 - 单步状态转移主线 `quality_step_v1` 明显优于 `quality_v3`。
-- `B4 + blocks` 在当前单步主线上仍是最值得继续推进的候选。
-- 下一轮正式训练应优先启动 `pooltest02_s1_kf_quality_step_8gpu_v2`，而不是默认重开 `quality_v3` 宽矩阵。
+- 短 horizon eval 曾推荐 `B4 + blocks / StepDyn` 进入 replay，但 50s replay 后默认候选已改为
+  `StepBase s11 / step_b0_grouped_tb_seed11`。
+- 下一步不应继续扩大结构搜索，应优先基于 `StepBase s11` 做最小 controller / RL wrapper smoke。
 - 最优 run 的 `resolved_train.yaml` 中 `_meta.runtime_device = cuda`，说明主结果确实来自 GPU 训练：
   - `out/ckpts/pooltest02_s1_kf_quality_step_7gpu_v2/STEP_B4_grouped_tb_blocks_seed9/resolved_train.yaml`
   - `out/ckpts/pooltest02_s1_kf_quality_7gpu_v2/QV3_B4_grouped_tb_blocks_seed8/resolved_train.yaml`
@@ -178,8 +226,8 @@
 
 补充说明：
 
-- 从当前离线结果看，`pred_len=1` 的单步主线已经优于 `pred_len=10` 质量上下文主线；
-- 但最终是否转正为控制或 RL 内核，仍需要 replay ranking、最小闭环 smoke 与在线时延证据闭环。
+- 从当前 50s replay 结果看，`pred_len=1` 的单步主线已经具备进入最小控制/仿真 wrapper 的候选；
+- 但 replay 仍是开环重放验证，不能直接表述为闭环可用或实机安全。
 
 ## 5. 当前可直接复用的产物
 
@@ -196,6 +244,8 @@
 - 8 GPU 矩阵：
   - `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml`
   - `configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml`
+- 8 GPU replay-only 复核：
+  - `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml`
 - 8 GPU 全流程：
   - `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
 - 7 GPU 矩阵：
@@ -221,22 +271,19 @@
 
 - 本轮 7 GPU 正式矩阵已跑通主体，但有 2+2 个候选失败，导致 phase 状态不是全绿
 - 历史 replay 结果若仍落在仓库外的 `/home/wys/replay_matrix/`，需要整理回 `out/replay_matrix/` 才适合长期引用
-- `final_selection.csv` 与 `paper_artifact_manifest.yaml` 尚未在当前本地 `out/server_pipeline/` 中落盘确认
-- 新图包尚未基于 replay ranking 做最终筛选
 - 若模型主体不进一步收口为一步转移器，长期自由递推能力仍可能不足
-- 当前尚未落盘 50s 级 replay matrix ranking；已有短期 eval 不能替代长时长自由递推验证
+- 50s replay ranking 已落盘，但仍需最小闭环 smoke 与推理时延证据
 - 当前 replay 仍属于开环重放验证，还不是闭环控制证明
 
 ## 7. 当前推荐动作
 
 当前建议严格按这个顺序推进：
 
-1. 在 8 卡服务器上重跑 `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
-2. replay 阶段使用 `min_seconds: 50 / max_seconds_per_segment: 50 / dt_s: 0.01`，不要再用 `min_steps: 50` 表达 50 秒
-3. 基于 `out/replay_matrix/*/ranking.csv` 判断哪套方案在长时长拟合中最稳
-4. 再基于 `step_with_feature_template()` 实现最小 controller / RL wrapper smoke
-5. 记录推理延迟、循环周期、失败步数与非有限值触发次数
-6. 整理 top2 图包，默认保持单图 3 到 4 个子窗，不恢复拥挤的短窗口样例图作为主图
+1. 固定 `StepBase s11 / step_b0_grouped_tb_seed11` 为当前默认 solver 候选
+2. 基于 `step_with_feature_template()` 实现最小 controller / RL wrapper smoke
+3. 记录推理延迟、循环周期、失败步数与非有限值触发次数
+4. 整理 `StepBase s11` 与 `StepDelta s11` 的 top2 对照图包
+5. 默认保持单图 3 到 4 个子窗，不恢复拥挤的短窗口样例图作为主图
 
 ## 8. 当前不建议的做法
 

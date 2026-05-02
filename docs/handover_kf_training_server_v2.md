@@ -1,22 +1,22 @@
 # KF 融合训练服务器迁移交接文档
 
-更新时间：2026-04-12  
+更新时间：2026-05-02
 当前工作分支：`feature/kf-preprocess-training-v1`
 
 ## 1. 迁移目标
 
 服务器上的目标不是恢复旧的 controller 验证流程，而是尽快把当前主线跑通：
 
-1. 生成新的 KF 融合基础表
-2. 构建新的 KF 数据集
-3. 单卡 smoke 验证训练链
-4. 优先启动 8 卡 `single-step` 矩阵
-5. 基于 replay / solver 结果决定是否补跑长期拟合对照
+1. 优先复用已完成的 8 卡 `single-step` 矩阵
+2. 直接运行 replay-only 复核当前最终 solver
+3. 固定 `StepBase s11 / step_b0_grouped_tb_seed11`
+4. 基于 50s replay / solver 结果进入最小 controller / RL wrapper smoke
+5. 只有训练产物或数据产物缺失时，才回退到 KF 融合、数据集构建和训练矩阵重建
 
 注意：
 
 - 当前文档里的“直接上服务器训练”顺序只在完成 Phase 1 修复后才成立。
-- 当前前两个基础阻塞已经收口，剩余主阻塞是一歩状态转移建模尚未完成。
+- 当前前两个基础阻塞已经收口，一步状态转移求解器已有候选；剩余主阻塞是最小闭环 wrapper 与时延证据。
 
 ## 2. 当前主线摘要
 
@@ -46,7 +46,10 @@
 
 当前仍未闭合的主阻塞是：
 
-3. 当前模型还是 `hist -> future block` 预测器，不是严格的一步状态转移算子。
+3. 当前 50s replay 只是开环重放验证，还不是闭环控制或 RL 环境证明。
+
+当前最终选型说明见
+[current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
 
 ## 3. 需要同步到服务器的核心路径
 
@@ -62,6 +65,7 @@
 - `configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml`
 - `configs/launch/pooltest02_s1_kf_quality_8gpu_v2.yaml`
 - `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2.yaml`
+- `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml`
 - `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
 - `configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml`
 - `configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml`
@@ -75,6 +79,7 @@
 - `docs/handover_kf_training_server_v2.md`
 - `docs/data_management.md`
 - `docs/reference/quick_commands.md`
+- `docs/design/current_transition_solver_selection.md`
 - `docs/design/kf_fusion_preprocess_training_v2.md`
 
 ## 3.1 下次进入服务器后的最小恢复动作
@@ -114,16 +119,38 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q \
 当前更推荐的顺序是：
 
 1. 先确认 Phase 1 自检通过
-2. 重建融合基础表与数据集
-3. 做单卡 smoke
-4. 再进入 8 卡服务器批次
+2. 如果 8 GPU 训练产物已存在，直接运行 replay-only 复核
+3. 检查 `final_selection.csv`、`ranking.csv` 和 compare 图
+4. 固定 `StepBase s11 / step_b0_grouped_tb_seed11` 为后续 wrapper 默认候选
+5. 只有产物缺失时，才重建融合基础表与数据集、做单卡 smoke、再进入 8 卡服务器批次
 
 一步状态转移训练配置仍是后续主线，不属于本页的已完成部分。
 
-### 4.2.1 一键全流程入口
+### 4.2.1 replay-only 复核入口
 
-如果服务器环境已经就绪，且 8 张卡都可用，
-当前更推荐直接使用 8 卡全流程总控入口：
+如果服务器上已经有 8 GPU 训练产物，当前优先执行：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml
+```
+
+重点查看：
+
+```text
+out/server_pipeline/replay_only_quality_step_8gpu_v2/phase_status.csv
+out/server_pipeline/replay_only_quality_step_8gpu_v2/final_selection.csv
+out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/ranking.csv
+out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_model_compare.png
+out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_long_horizon_curves.png
+```
+
+注意：`-c` 后必须是具体 YAML 文件，不能只给 `configs/launch/` 目录。
+
+### 4.2.2 一键全流程入口
+
+如果训练产物或数据产物缺失，且服务器环境已经就绪、8 张卡都可用，
+再使用 8 卡全流程总控入口：
 
 ```bash
 python -m uwnav_dynamics.cli.server_pipeline \
@@ -176,7 +203,7 @@ out/server_pipeline/pooltest02_kf_full_7gpu_v2/final_selection.csv
 out/server_pipeline/pooltest02_kf_full_7gpu_v2/paper_artifact_manifest.yaml
 ```
 
-### 4.2.2 本轮服务器执行记录（2026-04-11 7 GPU 基线批次）
+### 4.2.3 本轮服务器执行记录（2026-04-11 7 GPU 基线批次）
 
 本轮已确认：
 
@@ -196,22 +223,45 @@ out/server_pipeline/pooltest02_kf_full_7gpu_v2/paper_artifact_manifest.yaml
 - `out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/replay_quality_v3_replay.log`
 - `out/server_pipeline/pooltest02_kf_full_7gpu_v2/logs/replay_quality_step_v1_replay.log`
 
-当前离线最优候选：
+当前 50s replay-only 复核后的最优候选：
 
-- `quality_v3`：
-  - `QV3_B4_grouped_tb_blocks_seed8`
-  - `rmse_global = 0.05492`
-  - `mae_global = 0.01779`
 - `quality_step_v1`：
-  - `STEP_B4_grouped_tb_blocks_seed9`
-  - `rmse_global = 0.03635`
-  - `mae_global = 0.00690`
+  - `StepBase s11`
+  - `step_b0_grouped_tb_seed11`
+  - `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B0_grouped_tb_seed11`
+- 模块组合：
+  - `S1Predictor`
+  - `pred_len = 1`
+  - `head_mode = grouped`
+  - `transition_balance`
+  - `thruster_lag / hydro_ssm / damping / uncertainty` blocks 均关闭
+- 关键 replay 指标：
+  - `overall_rank = 1`
+  - `rmse_global = 0.251959`
+  - `mae_global = 0.116145`
+  - `final_step_rmse_global_mean = 0.187319`
+  - `rmse_growth_p95 = 131.043153`
+  - `tail_abs_p95_global = 0.495928`
+  - `tail_abs_p99_global = 1.167350`
+  - `worst_abs_bias = 0.088167`
+  - `nonfinite_trigger_count = 0`
 
 当前结论：
 
-- `quality_step_v1` 明显优于 `quality_v3`，是下一步状态转移求解器主候选。
-- 两个最优 run 都已确认 `runtime_device = cuda`，不是 CPU fallback。
+- `quality_step_v1` 是当前状态转移求解器主线。
+- 短 horizon eval 曾推荐 `StepDyn / B4 blocks` 进入 replay，但 50s replay 综合排序已改选 `StepBase s11`。
+- `StepDelta s11` 的全局误差更低，但 `rmse_growth_p95 = 316.213403`，长时增长风险高于 `StepBase s11`。
 - 服务器端 `fusion + dataset` 预处理阶段已经完成；若原始 CSV 与配置未变化，下次进入服务器默认不需要先重跑 `4.3 / 4.4`。
+
+证据入口：
+
+- `out/server_pipeline/replay_only_quality_step_8gpu_v2/phase_status.csv`
+- `out/server_pipeline/replay_only_quality_step_8gpu_v2/final_selection.csv`
+- `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/ranking.csv`
+- `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/summary.csv`
+- `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/runs/step_b0_grouped_tb_seed11/metrics.yaml`
+- `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_model_compare.png`
+- `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_long_horizon_curves.png`
 
 当前失败原因：
 
@@ -220,23 +270,24 @@ out/server_pipeline/pooltest02_kf_full_7gpu_v2/paper_artifact_manifest.yaml
 - `quality_step_v1` 的 `step_a0_joint_nll_seed8/9` 两个候选失败，原因是：
   - `loss.type=nll_diag` 与当前 `transition_balance` 字段组合不满足配置契约
 
-一个必须注意的路径问题：
+一个已修复的路径问题：
 
-- replay 日志显示结果写到了仓库外路径，而不是仓库内 `out/replay_matrix/`：
-  - `/home/wys/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2/`
-  - `/home/wys/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2/`
+- 旧 replay 配置曾因 `run.out_dir` 相对路径漂移导致 checkpoint 查找失败或结果落到仓库外。
+- 当前应使用 `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml`；
+  它会通过 server pipeline 生成稳定 replay train yaml，并显式绑定已有 checkpoint。
 
-所以下次接手时，优先先把这两个目录回收到仓库内，或者直接把其中的：
+### 4.2.4 当前更实用的命令行顺序：训练 -> 评估 -> 验证 -> 可视化 -> 保存
 
-- `summary.csv`
-- `ranking.csv`
-- 关键 run 目录
+如果服务器端预处理和训练产物仍然有效，当前更推荐直接从 replay-only 复核或最小闭环 smoke 开始。
 
-拷回 `out/replay_matrix/`，再做最终 solver 选型。
+0. 仅重跑 50s replay-only 复核
 
-### 4.2.3 当前更实用的命令行顺序：训练 -> 评估 -> 验证 -> 可视化 -> 保存
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml
+```
 
-如果服务器端预处理产物仍然有效，当前更推荐直接从网络训练开始：
+如果确实需要重新训练，再从下面步骤开始：
 
 1. 启动单步主线网络训练
 
@@ -303,7 +354,7 @@ cp -r "$RUN_DIR"/replay_test out/archive/step_transition_main/
 这里的 `RUN_DIR` 需要替换成真实运行目录，例如：
 
 ```text
-out/ckpts/pooltest02_s1_kf_quality_step_7gpu_v2/STEP_B4_grouped_tb_blocks_seed9
+out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B0_grouped_tb_seed11
 ```
 
 建议保存后至少复核：
@@ -370,11 +421,11 @@ python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
 ```
 
-如果只是接着今天的工作继续，不要先重跑整批；先回收 replay 结果并核对：
+如果只是接着当前工作继续，不要先重跑整批；先核对 replay-only 结果：
 
 ```bash
-ls -lah /home/wys/replay_matrix/pooltest02_s1_kf_quality_7gpu_v2
-ls -lah /home/wys/replay_matrix/pooltest02_s1_kf_quality_step_7gpu_v2
+ls -lah out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed
+cat out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/ranking.csv
 ```
 
 ## 5. 迁移后先检查什么

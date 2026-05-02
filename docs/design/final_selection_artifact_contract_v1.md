@@ -1,6 +1,11 @@
 # 最终选模与论文产物契约 V1
 
-更新时间：2026-04-11
+更新时间：2026-05-02
+
+当前最终选型已收口到 `StepBase s11 / step_b0_grouped_tb_seed11`。
+具体技术结论、指标和图表位置见
+[current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
+本文档只说明 `final_selection.csv` 与相关 artifact 的契约。
 
 ## 1. 目标
 
@@ -44,7 +49,8 @@ out/server_pipeline/<variant>/final_selection.csv
 注意：
 
 - 不同 `selection_scope` 之间不能直接做全局绝对排行；
-- 当前推荐仍以 `quality_step_v1` 对应 replay scope 的 winner 作为 solver 主候选。
+- 当前推荐以 `quality_step_v1` 对应 replay scope 的 winner 作为 solver 主候选；
+  2026-05-02 的 winner 是 `step_b0_grouped_tb_seed11`。
 
 ## 3. 代表性样例产物
 

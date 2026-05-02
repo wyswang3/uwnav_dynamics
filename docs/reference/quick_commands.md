@@ -7,7 +7,12 @@
 - 数据目录与 git 规则见 [data_management.md](/home/wys/uwnav_dynamics/docs/data_management.md)。
 - 当前命令分成两层：
   - 原始传感器重建链
-  - 当前正式训练主线
+  - 当前正式状态转移求解器验证链
+
+当前最终方案见
+[current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)：
+`StepBase s11 / step_b0_grouped_tb_seed11` 是 2026-05-02 replay-only
+验证后的默认状态转移求解器。
 
 ## 1. 环境
 
@@ -275,6 +280,28 @@ tail_error.abs_p99_global
 bias.worst_abs_bias
 ```
 
+## 8.6 当前最终方案 replay-only 复核
+
+如果服务器或本地已经有 8 GPU 训练产物，当前不需要再跑全流程训练，
+直接调用模型做 replay-only 评估即可：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml
+```
+
+重点检查：
+
+```text
+out/server_pipeline/replay_only_quality_step_8gpu_v2/phase_status.csv
+out/server_pipeline/replay_only_quality_step_8gpu_v2/final_selection.csv
+out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/ranking.csv
+out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_model_compare.png
+out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_long_horizon_curves.png
+```
+
+注意：`-c` 后必须给到具体 YAML 文件，不能只给 `configs/launch/` 目录。
+
 ## 9. 服务器重训
 
 说明：
@@ -284,6 +311,13 @@ bias.worst_abs_bias
 - `pred_len=10` 与 `pred_len=1` 分开跑，避免混入同一个 compare 链。
 
 ### 9.0 一键服务器全流程（8 卡优先）
+
+如果 8 GPU 训练产物已经存在，优先执行 replay-only 复核：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml
+```
 
 如果 8 张卡都可用，并希望从预处理一直跑到最终方案评估，直接执行：
 
@@ -452,17 +486,22 @@ run.out_dir/run.variant/eval_test/metrics.yaml
 
 ## 10. 最短推荐顺序
 
-如果上游原始预处理产物已经存在，当前最推荐顺序是：
+如果 8 GPU 训练产物已经存在，当前最短顺序是：
 
 1. 本地最小自检
-2. 运行对齐
-3. 运行 KF / ESKF 融合
-4. 构建 `quality_v3` 与 `quality_step_v1` 数据集
-5. 本地只做单卡 smoke
-6. 单次评估确认 `metrics.yaml` 与图包正常
-7. 服务器先跑 `pooltest02_s1_kf_quality_7gpu_v2`
-8. 再跑 `pooltest02_s1_kf_quality_step_7gpu_v2`
-9. 对各批次 top2 做正式评估与图包
+2. 执行 `pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml`
+3. 检查 `ranking.csv`、`final_selection.csv` 与 compare 图
+4. 固定 `StepBase s11 / step_b0_grouped_tb_seed11` 作为后续最小闭环默认候选
+
+只有当训练产物缺失或需要重建证据链时，才回到完整顺序：
+
+1. 运行对齐
+2. 运行 KF / ESKF 融合
+3. 构建 `quality_step_v1` 数据集
+4. 本地只做单卡 smoke
+5. 服务器跑 `pooltest02_s1_kf_quality_step_8gpu_v2`
+6. 执行 replay-only 复核
+7. 检查最终图表与指标
 
 如果要从原始传感器开始重建，则把第 `3` 节先跑完，再进入上述顺序。
 

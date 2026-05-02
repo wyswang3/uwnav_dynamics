@@ -1,6 +1,6 @@
 # 项目交接指南
 
-更新时间：2026-04-20
+更新时间：2026-05-02
 
 ## 1. 当前接手时先知道什么
 
@@ -20,11 +20,12 @@
 建议顺序：
 
 1. [README.md](/home/wys/uwnav_dynamics/docs/README.md)
-2. [transition_solver_phase1_upgrade.md](/home/wys/uwnav_dynamics/docs/design/transition_solver_phase1_upgrade.md)
-3. [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
-4. [kf_fusion_preprocess_training_v2.md](/home/wys/uwnav_dynamics/docs/design/kf_fusion_preprocess_training_v2.md)
-5. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
-6. [quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
+2. [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)
+3. [transition_solver_phase1_upgrade.md](/home/wys/uwnav_dynamics/docs/design/transition_solver_phase1_upgrade.md)
+4. [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
+5. [kf_fusion_preprocess_training_v2.md](/home/wys/uwnav_dynamics/docs/design/kf_fusion_preprocess_training_v2.md)
+6. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
+7. [quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
 
 如果只是要尽快恢复本地上下文，前 3 份足够。
 
@@ -40,11 +41,12 @@ export PYTHONPATH=src
 
 然后按这个顺序恢复上下文：
 
-1. 先看本文件第 `3.1` 节，确认当前 solver / replay / visualization 已完成内容。
-2. 再看 `docs/design/transition_solver_phase2_replay_upgrade.md`，确认状态求解器 replay 协议。
-3. 再看 `docs/handover_kf_training_server_v2.md` 第 `4.2` 节，确认服务器上的执行顺序。
-4. 需要查命令时，去 `docs/reference/quick_commands.md`，不要把它当主交接文档。
-5. 如果要继续修代码，优先从 `data_pipeline.py`、`s1_predictor.py`、`run_train.py` 三处开始。
+1. 先看 `docs/design/current_transition_solver_selection.md`，确认当前最终 solver 方案。
+2. 再看本文件第 `3.1` 节，确认当前 solver / replay / visualization 已完成内容。
+3. 再看 `docs/design/transition_solver_phase2_replay_upgrade.md`，确认状态求解器 replay 协议。
+4. 再看 `docs/handover_kf_training_server_v2.md` 第 `4.2` 节，确认服务器上的执行顺序。
+5. 需要查命令时，去 `docs/reference/quick_commands.md`，不要把它当主交接文档。
+6. 如果要继续修代码，优先从 `data_pipeline.py`、`s1_predictor.py`、`run_train.py` 三处开始。
 
 ## 3. 当前已经落地的事实
 
@@ -94,17 +96,48 @@ Phase 1 已完成并收口了前两个基础阻塞：
    当前已有 `step_with_feature_template()` 与 replay 验证，
    但尚未实现完整 `reset()/step()/reward()/done` 环境，也尚未完成闭环控制证明。
 
-补充：截至 2026-04-20，本地 `out/ckpts` 中已经保留多轮 7/8 GPU 评估结果。
+补充：截至 2026-05-02，本地 `out/ckpts` 与 `out/replay_matrix` 中已经保留 8 GPU 训练与 50s replay-only 复核结果。
 
-- 当前短 horizon / 单步 eval 的优先候选应先看：
+- 短 horizon / 单步 eval 曾经优先推荐：
   - `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B4_grouped_tb_blocks_seed10/eval_test`
   - `rmse_global_masked = 0.0341668`
   - `mae_global_masked = 0.0064416`
   - `tail_p95_masked = 0.0198636`
   - `tail_p99_masked = 0.1422205`
-- 当前组均值显示 `STEP_B4_blocks` 在短期 eval 中优于 `STEP_B0_base / STEP_B2_strong_delta / QV3_*`，更适合作为长时 replay 的优先候选。
+- 但 50s 长序列 replay-only 复核后，当前默认 solver 候选已经改为：
+  - `StepBase s11`
+  - `step_b0_grouped_tb_seed11`
+  - `out/ckpts/pooltest02_s1_kf_quality_step_8gpu_v2/STEP_B0_grouped_tb_seed11`
+- 该候选模块组合为：
+  - `S1Predictor`
+  - `pred_len = 1`
+  - `head_mode = grouped`
+  - `transition_balance`
+  - `thruster_lag / hydro_ssm / damping / uncertainty` blocks 均关闭
+- 50s replay 关键指标：
+  - `overall_rank = 1`
+  - `overall_rank_score = 1.823529`
+  - `rmse_global = 0.251959`
+  - `mae_global = 0.116145`
+  - `final_step_rmse_global_mean = 0.187319`
+  - `rmse_growth_p95 = 131.043153`
+  - `tail_abs_p95_global = 0.495928`
+  - `tail_abs_p99_global = 1.167350`
+  - `worst_abs_bias = 0.088167`
+  - `nonfinite_trigger_count = 0`
+- 核心证据文件：
+  - `out/server_pipeline/replay_only_quality_step_8gpu_v2/phase_status.csv`
+  - `out/server_pipeline/replay_only_quality_step_8gpu_v2/final_selection.csv`
+  - `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/ranking.csv`
+  - `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/summary.csv`
+  - `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/runs/step_b0_grouped_tb_seed11/metrics.yaml`
+- 图表位置：
+  - `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_model_compare.png`
+  - `out/replay_matrix/pooltest02_s1_kf_quality_step_8gpu_v2_fixed/compare_test/replay_long_horizon_curves.png`
+- 解释：`StepDelta s11` 的全局误差更低，但 `rmse_growth_p95 = 316.213403`，
+  长时误差增长风险高于 `StepBase s11`，所以综合 ranking 选择 `StepBase s11`。
 - 服务器侧 `fusion + dataset` 预处理阶段已经完成；若数据和配置未变化，下次进入服务器可直接从训练、评估和 replay 验证开始。
-- 下一轮正式工作优先顺序：先在 8 卡服务器上做 50s 长时长 autoregressive replay ranking，再基于排名做 controller wrapper smoke。
+- 下一轮正式工作优先顺序：基于 `StepBase s11` 做 controller / RL wrapper smoke，并记录推理延迟、循环周期和失败触发。
 
 ## 4. 当前最短工作流
 
@@ -204,6 +237,13 @@ python -m uwnav_dynamics.cli.train_matrix \
   -c configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml
 ```
 
+如果已有 8 GPU 训练矩阵产物，只需要重跑 50s replay 复核，不要重跑全流程：
+
+```bash
+PYTHONPATH=src python -m uwnav_dynamics.cli.server_pipeline \
+  -c configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml
+```
+
 6. 单次评估、可视化与 replay 验证
 
 ```bash
@@ -289,11 +329,10 @@ run 级筛选：
 
 下一步最合理的顺序是：
 
-1. 重新在 8 卡服务器上运行 `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml`
-2. 用 50s replay matrix 排名确认哪套方案长时长拟合最稳
-3. 基于 `step_with_feature_template()` 做最小 controller / RL wrapper smoke
-4. 记录推理延迟、循环周期、失败步数、非有限值触发次数
-5. 保持默认图表为 3 到 4 个子窗；长时序诊断优先使用 Acc/Gyro/Vel 三张 50s 三轴图
+1. 固定 `StepBase s11 / step_b0_grouped_tb_seed11` 为当前默认状态转移求解器候选
+2. 基于 `step_with_feature_template()` 做最小 controller / RL wrapper smoke
+3. 记录推理延迟、循环周期、失败步数、非有限值触发次数
+4. 保持默认图表为 3 到 4 个子窗；长时序诊断优先使用 replay compare 图和 Acc/Gyro/Vel 三轴图
 
 如果后续要继续扩展，应优先扩训练与评估链、求解器接口与最小 replay 验证，
 而不是重新打开旧阶段的大型验证壳层。

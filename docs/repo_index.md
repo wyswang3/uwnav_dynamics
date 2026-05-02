@@ -1,13 +1,14 @@
 # 仓库关键文件索引
 
-生成时间：2026-03-28
+生成时间：2026-05-02
 
 注意：
 
 - 本文是代码与文件定位索引，不是当前交接入口。
 - 初次接手请先读 [README.md](/home/wys/uwnav_dynamics/docs/README.md)、
   [handover_guide.md](/home/wys/uwnav_dynamics/docs/handover_guide.md)、
-  [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md) 和
+  [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)、
+  [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md) 和
   [ARCHITECTURE.md](/home/wys/uwnav_dynamics/ARCHITECTURE.md)。
 
 说明：以下索引按“入口脚本 / 模型 / 配置 / 解析逻辑 / rollout-evaluate-plot-viz”分组；每条包含 `路径 + 一句话职责 + 可能输入输出`。
@@ -75,7 +76,9 @@
 | `configs/train/pooltest02_s1_lstm_v0.yaml` | 历史训练总配置（run/data/model/rollout/loss/optim/train）。 | 输入：被 `train/config.py` 读取；输出：驱动历史 baseline 路线。 |
 | `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml` | 当前 KF 主线训练配置，启用 grouped head、transition_balance 与 `val_transition_score`。 | 输入：被 `train/config.py` 读取；输出：驱动当前长期拟合训练主线。 |
 | `configs/launch/replay_matrix_example.yaml` | replay 批量评估示例配置，演示如何比较 step 与 horizon 两类候选。 | 输入：被 `cli.transition_replay_matrix` 读取；输出：驱动 `summary.csv / ranking.csv` 生成。 |
-| `configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml` | 当前推荐的 7 GPU 服务器全流程配置，串联 fusion、dataset、smoke、train_matrix 与 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
+| `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml` | 当前最终方案 replay-only 复核配置，复用已有 8 GPU 训练产物并重跑 50 秒 replay 排名。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动 `replay_only_quality_step_8gpu_v2` 结果生成。 |
+| `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml` | 8 GPU 服务器全流程配置，在训练产物缺失时串联 fusion、dataset、smoke、train_matrix 与 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
+| `configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml` | 历史 7 GPU 服务器全流程配置，保留为资源受限回退方案。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
 | `configs/launch/pooltest02_paper_results_bundle_7gpu_v1.yaml` | 论文结果一键包 7 GPU 配置，串联传感器预处理/观测图、server pipeline 与论文汇总图导出。 | 输入：被 `cli.paper_results_bundle` 读取；输出：`out/paper_results_bundle/...`。 |
 | `configs/launch/pooltest02_paper_results_bundle_8gpu_v1.yaml` | 论文结果一键包 8 GPU 配置，复用 `8gpu_v2` 全流程并收口预处理图、训练图、路线对比图与 compare 导出。 | 输入：被 `cli.paper_results_bundle` 读取；输出：`out/paper_results_bundle/pooltest02_8gpu_v1/...`。 |
 | `configs/dataset/pooltest02.yaml` | 原始数据集规格（传感器文件选择、pwm_timebase、valid_window）。 | 输入：被 `DatasetSpec.load` 读取；输出：解析后的传感器路径与 reader kwargs。 |

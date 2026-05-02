@@ -1,5 +1,10 @@
 # 基于 7 GPU 结果的 8 GPU 实验方案（2026-04-11）
 
+> 历史说明：本文档是 2026-04-11 基于 7 GPU 结果制定 8 GPU 训练矩阵时的计划，
+> 不是当前最终选型结论。2026-05-02 replay-only 验证后，默认状态转移求解器
+> 已收口为 `StepBase s11 / step_b0_grouped_tb_seed11`。当前结论、指标和图表位置见
+> [current_transition_solver_selection.md](/home/wys/uwnav_dynamics/docs/design/current_transition_solver_selection.md)。
+
 ## 1. 任务目标
 
 当前 8 GPU 方案不再追求“把所有分支再跑一遍”，而是按当前阶段目标收口为两条线：
