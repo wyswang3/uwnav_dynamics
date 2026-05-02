@@ -5,7 +5,9 @@ apps/dev/test_power_plots.py
 
 功能：
   1) 从 dataset yaml 中读取 Volt32/motor 电机功率日志；
-  2) 生成论文主图所需的“总功率 + 8 电机功率”同步观测图；
+  2) 生成论文主图所需的 Push-machine excerpt 风格
+     “总功率 + 8 电机功率”同步观测图；
+     主图采用淡原始轨迹、平滑主线、面积填充和面板统计；
   3) 可选保留 8 个电机电流曲线（4×2 子图）作为 QA 图；
   4) 导出 8 路电机瞬时电功率数据 P = V * I 到 out/aux_power 下：
         - 尽可能完整保留原始时间戳列（MonoNS/EstNS/MonoS/EstS）
@@ -67,8 +69,8 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--window-s",
         type=float,
-        default=60.0,
-        help="Window length for auto excerpt selection in seconds (default: 60).",
+        default=600.0,
+        help="Window length for auto excerpt selection in seconds (default: 600).",
     )
     ap.add_argument(
         "--window-mode",
@@ -76,6 +78,12 @@ def _parse_args() -> argparse.Namespace:
         default="peak_total_power",
         choices=["full", "peak_total_power"],
         help="How to choose the overview figure window when --t-start/--t-end are not given.",
+    )
+    ap.add_argument(
+        "--smooth-s",
+        type=float,
+        default=12.0,
+        help="Moving-average window in seconds for plot foreground lines (default: 12.0; 0 disables).",
     )
     ap.add_argument(
         "--keep-current-qa",
@@ -136,6 +144,7 @@ def main() -> int:
         use_rel_time=args.rel_time,
         t_start=win_lo,
         t_end=win_hi,
+        smooth_s=float(args.smooth_s),
     )
     print(
         "[TEST] selected overview window:\n"
