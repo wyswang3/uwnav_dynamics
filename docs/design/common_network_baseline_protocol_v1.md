@@ -29,10 +29,15 @@ baseline_transformer
 已新增普通监督目标：
 loss.type = state_mse
 loss.type = state_huber
+loss.type = nll_final
 
-尚未新增正式 launch 配置：
-configs/launch/pooltest02_common_network_baselines_8gpu_v1.yaml
+已新增训练目标消融 launch：
 configs/launch/pooltest02_training_objective_ablation_8gpu_v1.yaml
+configs/launch/pooltest02_training_objective_ablation_8gpu_v1_replay_only.yaml
+
+尚未新增常见网络结构 launch：
+configs/launch/pooltest02_common_network_baselines_8gpu_v1.yaml
+configs/launch/pooltest02_common_network_baselines_8gpu_v1_replay_only.yaml
 ```
 
 ---
@@ -392,17 +397,20 @@ tail_abs_p99_global 为 NaN/Inf
 
 ---
 
-## 6. 计划新增配置
+## 6. 配置落地状态
 
-本节列出后续应新增的配置文件。当前尚未落地，不要把它们当作已存在文件引用。
+已落地训练目标消融配置：
 
-建议新增：
+```text
+configs/launch/pooltest02_training_objective_ablation_8gpu_v1.yaml
+configs/launch/pooltest02_training_objective_ablation_8gpu_v1_replay_only.yaml
+```
+
+仍建议后续新增常见网络结构配置：
 
 ```text
 configs/launch/pooltest02_common_network_baselines_8gpu_v1.yaml
-configs/launch/pooltest02_training_objective_ablation_8gpu_v1.yaml
 configs/launch/pooltest02_common_network_baselines_8gpu_v1_replay_only.yaml
-configs/launch/pooltest02_training_objective_ablation_8gpu_v1_replay_only.yaml
 ```
 
 如果需要新增模型实现，建议位置：

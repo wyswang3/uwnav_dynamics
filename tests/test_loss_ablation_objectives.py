@@ -2,13 +2,13 @@
 模块名称：训练目标消融测试
 
 模块职责：
-验证普通监督目标 baseline 所需的 `state_mse` 与 `state_huber`
+验证训练目标消融所需的 `state_mse`、`state_huber` 与 `nll_final`
 能够通过 canonical parser 和训练损失构造入口。
 
 主要功能：
-1. 验证 `loss.type=state_mse/state_huber` 能被配置解析。
-2. 验证两类 loss 保持现有 `model -> dY/logvar -> rollout` 数据流。
-3. 验证普通监督目标不依赖 transition_balance 的额外权重字段。
+1. 验证 `loss.type=state_mse/state_huber/nll_final` 能被配置解析。
+2. 验证三类 loss 保持现有 `model -> dY/logvar -> rollout` 数据流。
+3. 验证普通监督目标和 `nll_final` 不依赖 transition_balance 的额外权重字段。
 
 数据流：
 train yaml dict
@@ -136,4 +136,39 @@ def test_plain_state_loss_rejects_transition_balance_weights() -> None:
     payload["loss"]["state_final_weight"] = 0.5
 
     with pytest.raises(ValueError, match="transition_balance fields"):
+        build_from_dict(payload)
+
+
+def test_nll_final_loss_type_adds_final_step_penalty() -> None:
+    payload = _loss_ablation_yaml_dict("nll_final")
+    payload["loss"]["state_final_weight"] = 0.8
+    cfg = build_from_dict(payload)
+
+    assert cfg.loss.type == "nll_final"
+    assert cfg.loss.state_final_weight == 0.8
+
+    loss_fn = build_loss_fn(
+        loss_type=cfg.loss.type,
+        logvar_clip_min=cfg.loss.logvar_clip_min,
+        logvar_clip_max=cfg.loss.logvar_clip_max,
+        y_in_idx=cfg.model.y_in_idx,
+        dout=cfg.model.dout,
+        state_huber_delta=cfg.loss.state_huber_delta,
+        state_final_weight=cfg.loss.state_final_weight,
+    )
+    model = _ZeroDeltaModel(pred_len=cfg.model.pred_len, dout=cfg.model.dout)
+    x = torch.zeros(4, 6, cfg.model.din)
+    y = torch.ones(4, cfg.model.pred_len, cfg.model.dout)
+
+    loss = loss_fn(model, x, y)
+
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+    assert float(loss) > 0.0
+
+
+def test_nll_final_requires_positive_final_weight() -> None:
+    payload = _loss_ablation_yaml_dict("nll_final")
+
+    with pytest.raises(ValueError, match="state_final_weight"):
         build_from_dict(payload)

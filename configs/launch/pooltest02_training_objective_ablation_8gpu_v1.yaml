@@ -1,0 +1,176 @@
+# 训练目标消融 8GPU 第一轮矩阵。
+#
+# 设计原则：
+# - 固定网络架构：S1Predictor + LSTM + grouped head。
+# - 固定数据路线：quality_step_v1。
+# - 只改变 loss.type / loss 组成，用于论证 transition_balance 的训练思路贡献。
+# - 不在本轮引入新网络结构，避免结构差异和训练目标差异混在一起。
+
+base_train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_training_objective_ablation_8gpu_v1
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 2048
+  plots: true
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_training_objective_ablation_8gpu_v1
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_step_v1
+    batch_size: 1024
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: loss_state_mse_seed10
+    label: MSE s10
+    role: baseline
+    overrides:
+      run:
+        seed: 10
+        variant: LOSS_state_mse_seed10
+      loss:
+        type: state_mse
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_state_huber_seed10
+    label: Huber s10
+    role: baseline
+    overrides:
+      run:
+        seed: 10
+        variant: LOSS_state_huber_seed10
+      loss:
+        type: state_huber
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_nll_diag_seed10
+    label: NLL s10
+    role: baseline
+    overrides:
+      run:
+        seed: 10
+        variant: LOSS_nll_diag_seed10
+      loss:
+        type: nll_diag
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_nll_final_seed10
+    label: NLLFinal s10
+    role: ablation
+    overrides:
+      run:
+        seed: 10
+        variant: LOSS_nll_final_seed10
+      loss:
+        type: nll_final
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.8
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_transition_balance_seed10
+    label: TB s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: LOSS_transition_balance_seed10
+
+  - name: loss_transition_balance_seed11
+    label: TB s11
+    role: primary
+    overrides:
+      run:
+        seed: 11
+        variant: LOSS_transition_balance_seed11
+
+  - name: loss_transition_balance_seed12
+    label: TB s12
+    role: primary
+    overrides:
+      run:
+        seed: 12
+        variant: LOSS_transition_balance_seed12
+
+  - name: loss_transition_balance_seed13
+    label: TB s13
+    role: primary
+    overrides:
+      run:
+        seed: 13
+        variant: LOSS_transition_balance_seed13

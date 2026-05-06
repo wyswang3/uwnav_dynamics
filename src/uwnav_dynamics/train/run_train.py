@@ -359,18 +359,19 @@ def build_loss_fn(
     状态转移训练损失：
       1) `nll_diag`：保持旧路径不变
          model -> dY/logvar -> rollout_from_delta -> dense/masked NLL
-      2) `state_mse` / `state_huber`：普通监督目标 baseline
-      3) `transition_balance`：在 NLL 之外加入
+      2) `nll_final`：NLL + 末步 Huber 约束
+      3) `state_mse` / `state_huber`：普通监督目标 baseline
+      4) `transition_balance`：在 NLL 之外加入
          - 语义组加权
          - horizon 尾部加权
          - rollout state MSE
          - rollout state Huber
          - delta transition Huber
          - 正向 logvar 正则
-      4) 若启用 dvl_obs 辅助头：
+      5) 若启用 dvl_obs 辅助头：
          只在 velocity semantic group 上计算 masked Huber auxiliary loss
     """
-    if str(loss_type) not in {"nll_diag", "state_mse", "state_huber", "transition_balance"}:
+    if str(loss_type) not in {"nll_diag", "nll_final", "state_mse", "state_huber", "transition_balance"}:
         raise ValueError(f"Unsupported loss_type={loss_type!r}")
     vel_idx_cpu = torch.as_tensor(
         list(canonical_semantic_output_layout(dout).group_indices["vel"]),
@@ -393,6 +394,19 @@ def build_loss_fn(
                 state_loss = gaussian_nll_diag_masked(y_hat, Y, logvar, target_mask)
             else:
                 state_loss = gaussian_nll_diag(y_hat, Y, logvar)
+        elif str(loss_type) == "nll_final":
+            if target_mask is not None:
+                state_loss = gaussian_nll_diag_masked(y_hat, Y, logvar, target_mask)
+                final_mask = target_mask[:, -1:, :]
+            else:
+                state_loss = gaussian_nll_diag(y_hat, Y, logvar)
+                final_mask = None
+            state_loss = state_loss + float(state_final_weight) * masked_weighted_huber_loss(
+                y_hat[:, -1:, :],
+                Y[:, -1:, :],
+                target_mask=final_mask,
+                delta=float(state_huber_delta),
+            )
         elif str(loss_type) == "state_mse":
             state_loss = masked_weighted_mse_loss(y_hat, Y, target_mask=target_mask)
         elif str(loss_type) == "state_huber":

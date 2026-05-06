@@ -630,10 +630,11 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     )
 
     loss_type = str(loss_d.get("type", "nll_diag"))
-    if loss_type not in {"nll_diag", "state_mse", "state_huber", "transition_balance"}:
+    if loss_type not in {"nll_diag", "nll_final", "state_mse", "state_huber", "transition_balance"}:
         raise ValueError(
             f"Unsupported loss.type={loss_type!r} "
-            "(current parser supports 'nll_diag', 'state_mse', 'state_huber' or 'transition_balance')"
+            "(current parser supports 'nll_diag', 'nll_final', 'state_mse', "
+            "'state_huber' or 'transition_balance')"
         )
 
     clip = loss_d.get("logvar_clip", [-10.0, 6.0])
@@ -708,6 +709,23 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             raise ValueError(
                 "loss.type='nll_diag' must keep transition_balance fields at defaults; "
                 "set loss.type='transition_balance' for grouped/tail/delta reweighting"
+            )
+    elif loss_type == "nll_final":
+        if (
+            state_final_weight <= 0.0
+            or state_mse_weight != 0.0
+            or state_huber_weight != 0.0
+            or late_horizon_weight != 0.0
+            or delta_huber_weight != 0.0
+            or logvar_reg_weight != 0.0
+            or tail_weight_power != 0.0
+            or acc_weight != 1.0
+            or gyro_weight != 1.0
+            or vel_weight != 1.0
+        ):
+            raise ValueError(
+                "loss.type='nll_final' requires state_final_weight > 0 and must keep "
+                "other transition_balance fields at defaults"
             )
     elif loss_type in {"state_mse", "state_huber"}:
         if (

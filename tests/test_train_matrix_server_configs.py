@@ -96,3 +96,37 @@ def test_stable_transition_core_replay_only_pipeline_points_to_matrix_summary() 
     assert str(replay.work_dir) == "out/replay_matrix/pooltest02_stable_transition_core_8gpu_v1"
     assert replay.min_seconds == 50.0
     assert replay.include_statuses == ("ok",)
+
+
+def test_training_objective_ablation_8gpu_matrix_yaml_parses_as_8_run_batch() -> None:
+    cfg = load_matrix_launcher_config("configs/launch/pooltest02_training_objective_ablation_8gpu_v1.yaml")
+
+    assert str(cfg.base_train_yaml) == "configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml"
+    assert str(cfg.work_dir) == "out/train_matrix/pooltest02_training_objective_ablation_8gpu_v1"
+    assert cfg.max_parallel == 8
+    assert cfg.gpus == ("0", "1", "2", "3", "4", "5", "6", "7")
+    assert cfg.run_eval is True
+    assert cfg.compare is True
+    assert cfg.eval_batch_size == 2048
+    assert len(cfg.runs) == 8
+
+    run_names = {run.name for run in cfg.runs}
+    assert "loss_state_mse_seed10" in run_names
+    assert "loss_state_huber_seed10" in run_names
+    assert "loss_nll_diag_seed10" in run_names
+    assert "loss_nll_final_seed10" in run_names
+    assert len([name for name in run_names if name.startswith("loss_transition_balance_")]) == 4
+
+
+def test_training_objective_ablation_replay_only_pipeline_points_to_matrix_summary() -> None:
+    cfg = load_server_pipeline_config("configs/launch/pooltest02_training_objective_ablation_8gpu_v1_replay_only.yaml")
+
+    assert str(cfg.work_dir) == "out/server_pipeline/replay_only_training_objective_ablation_8gpu_v1"
+    assert len(cfg.train_matrix_configs) == 0
+    assert len(cfg.replay_jobs) == 1
+    replay = cfg.replay_jobs[0]
+    assert replay.name == "training_objective_ablation_v1_replay"
+    assert str(replay.source_summary_csv) == "out/train_matrix/pooltest02_training_objective_ablation_8gpu_v1/summary.csv"
+    assert str(replay.work_dir) == "out/replay_matrix/pooltest02_training_objective_ablation_8gpu_v1"
+    assert replay.min_seconds == 50.0
+    assert replay.include_statuses == ("ok",)

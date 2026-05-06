@@ -79,6 +79,8 @@
 | `configs/train/pooltest02_s1_kf_ctx_transition_balance_v2.yaml` | 当前 KF 主线训练配置，启用 grouped head、transition_balance 与 `val_transition_score`。 | 输入：被 `train/config.py` 读取；输出：驱动当前长期拟合训练主线。 |
 | `configs/launch/replay_matrix_example.yaml` | replay 批量评估示例配置，演示如何比较 step 与 horizon 两类候选。 | 输入：被 `cli.transition_replay_matrix` 读取；输出：驱动 `summary.csv / ranking.csv` 生成。 |
 | `configs/launch/pooltest02_s1_kf_quality_step_8gpu_v2_replay_only.yaml` | 当前最终方案 replay-only 复核配置，复用已有 8 GPU 训练产物并重跑 50 秒 replay 排名。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动 `replay_only_quality_step_8gpu_v2` 结果生成。 |
+| `configs/launch/pooltest02_training_objective_ablation_8gpu_v1.yaml` | 训练目标消融 8GPU 矩阵，固定 LSTM grouped 架构并比较 MSE、Huber、NLL、NLL+final 与 transition_balance。 | 输入：被 `cli.train_matrix` 读取；输出：驱动训练目标对照 `summary.csv` 与 compare 图生成。 |
+| `configs/launch/pooltest02_training_objective_ablation_8gpu_v1_replay_only.yaml` | 训练目标消融 replay-only 复核配置，从消融矩阵 `summary.csv` 自动挑选 `status=ok` 候选做 50 秒 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动训练目标对照 replay ranking 与 final selection 生成。 |
 | `configs/launch/pooltest02_server_full_pipeline_8gpu_v2.yaml` | 8 GPU 服务器全流程配置，在训练产物缺失时串联 fusion、dataset、smoke、train_matrix 与 replay。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
 | `configs/launch/pooltest02_server_full_pipeline_7gpu_v2.yaml` | 历史 7 GPU 服务器全流程配置，保留为资源受限回退方案。 | 输入：被 `cli.server_pipeline` 读取；输出：驱动服务器侧一键全流程运行。 |
 | `configs/launch/pooltest02_paper_results_bundle_7gpu_v1.yaml` | 论文结果一键包 7 GPU 配置，串联传感器预处理/观测图、server pipeline 与论文汇总图导出。 | 输入：被 `cli.paper_results_bundle` 读取；输出：`out/paper_results_bundle/...`。 |

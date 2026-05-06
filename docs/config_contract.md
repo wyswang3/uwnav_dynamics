@@ -79,6 +79,7 @@ baseline_transformer
 
 ```text
 nll_diag
+nll_final
 state_mse
 state_huber
 transition_balance
@@ -87,6 +88,7 @@ transition_balance
 其中：
 
 - `state_mse` / `state_huber` 服务训练目标消融，用于普通监督目标 baseline；
+- `nll_final` 服务训练目标消融，表示 Gaussian NLL 加末步 Huber 约束；
 - `transition_balance` 服务当前主线，包含 final / late horizon / delta / group weight / logvar regularization 等状态转移约束；
 - 普通监督目标不得同时启用 transition_balance 专属权重字段。
 
