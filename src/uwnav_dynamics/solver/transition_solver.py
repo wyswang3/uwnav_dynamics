@@ -2,7 +2,7 @@
 模块名称：经验型状态转移求解器
 
 模块职责：
-把训练后的 `S1Predictor` 封装为可递推的经验型状态求解器，
+把训练后的状态预测模型封装为可递推的经验型状态求解器，
 为单步状态预测、长序列 autoregressive replay 与后续控制接口提供统一入口。
 
 主要功能：
@@ -17,7 +17,7 @@ train yaml + ckpt + x/y scaler
     ↓
 history window (physical feature space)
     ↓
-model forward in z-space
+build_state_predictor() -> model forward in z-space
     ↓
 next-state prediction (physical state space)
     ↓
@@ -29,6 +29,7 @@ autoregressive replay / future controller integration
 - uwnav_dynamics.cli.utils
 - uwnav_dynamics.dataset.normalize
 - uwnav_dynamics.experiment.layout
+- uwnav_dynamics.models.nets.factory
 - uwnav_dynamics.models.nets.s1_predictor
 - uwnav_dynamics.models.utils.execution_layout
 - uwnav_dynamics.models.utils.rollout
@@ -53,7 +54,8 @@ from uwnav_dynamics.cli.utils import pick_ckpt
 from uwnav_dynamics.dataset.normalize import inverse_transform, load_scaler, transform
 from uwnav_dynamics.experiment.layout import RunLayout, run_layout_from_train_yaml
 from uwnav_dynamics.experiment.paths import infer_repo_root, resolve_repo_output_path
-from uwnav_dynamics.models.nets.s1_predictor import S1Predictor, S1PredictorConfig
+from uwnav_dynamics.models.nets.factory import build_state_predictor
+from uwnav_dynamics.models.nets.s1_predictor import S1PredictorConfig
 from uwnav_dynamics.models.utils.execution_layout import extract_y0_from_x_last
 from uwnav_dynamics.models.utils.rollout import rollout_from_delta
 from uwnav_dynamics.train.config import TrainYamlConfig, load_train_config
@@ -278,7 +280,7 @@ def load_trained_transition_solver(
     if runtime_device.type.startswith("cuda") and not torch.cuda.is_available():
         runtime_device = torch.device("cpu")
 
-    model = S1Predictor(cfg_train.model).to(runtime_device)
+    model = build_state_predictor(cfg_train.model).to(runtime_device)
     ckpt_obj = torch.load(ckpt_path, map_location=runtime_device)
     state_dict = ckpt_obj["model"] if isinstance(ckpt_obj, dict) and "model" in ckpt_obj else ckpt_obj
     model.load_state_dict(state_dict, strict=True)

@@ -1,0 +1,241 @@
+# StableTransitionCore 8GPU 第一轮筛选矩阵。
+#
+# 设计原则：
+# - 前 5 个 run 比较新稳定内核结构，seed 固定为 10，先看结构差异。
+# - 后 3 个 run 复跑当前主线 StepBase，作为同批次环境噪声与基线锚点。
+# - 若第一轮新内核通过阈值，再进入 Top-K 多 seed replay 确认。
+
+base_train_yaml: configs/train/pooltest02_stable_transition_core_step_v1.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_stable_transition_core_8gpu_v1
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 2048
+  plots: true
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_stable_transition_core_8gpu_v1
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_step_v1
+    batch_size: 1024
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: stc_diag_seed10
+    label: STC-Diag s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: STC_diag_damp_seed10
+      model:
+        core_type: stable_diag_damp
+        core_hidden: 192
+        residual_bound: 0.25
+        damping_max: 20.0
+        control_bound: 3.0
+
+  - name: stc_implicit_seed10
+    label: STC-Implicit s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: STC_implicit_euler_seed10
+      model:
+        core_type: implicit_euler
+        core_hidden: 192
+        residual_bound: 0.25
+        damping_max: 20.0
+        control_bound: 3.0
+
+  - name: stc_control_affine_seed10
+    label: STC-Affine s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: STC_control_affine_seed10
+      model:
+        core_type: control_affine
+        core_hidden: 192
+        residual_bound: 0.25
+        damping_max: 20.0
+        control_bound: 3.0
+
+  - name: stc_residual_budget_seed10
+    label: STC-ResBudget s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: STC_residual_budget_seed10
+      model:
+        core_type: residual_budget
+        core_hidden: 192
+        residual_bound: 0.25
+        damping_max: 20.0
+        control_bound: 3.0
+
+  - name: stc_energy_budget_seed10
+    label: STC-Energy s10
+    role: primary
+    overrides:
+      run:
+        seed: 10
+        variant: STC_energy_budget_seed10
+      model:
+        core_type: energy_budget
+        core_hidden: 192
+        residual_bound: 0.25
+        damping_max: 20.0
+        control_bound: 3.0
+
+  - name: step_base_seed10
+    label: StepBase s10
+    role: baseline
+    overrides:
+      run:
+        seed: 10
+        variant: StepBase_seed10_anchor
+      model:
+        name: s1_predictor
+        head_mode: grouped
+        group_head_hidden: 160
+        blocks:
+          thruster_lag:
+            enabled: false
+            normalize_input: true
+            pwm_center: 7.5
+            pwm_half_range: 2.5
+            deadzone: 0.05
+            sat_gain: 2.0
+            learn_tau: true
+            tau_init: 0.08
+            tau_min: 0.01
+            per_channel_tau: true
+            dt: 0.01
+          hydro_ssm:
+            enabled: false
+            hidden_dim: 64
+            lambda_init: 0.85
+            act: tanh
+            per_dim_lambda: true
+          damping:
+            enabled: false
+            v_start: 6
+            v_dim: 3
+            mode: simple
+            d_init: 0.5
+            mlp_hidden: 16
+          uncertainty:
+            enabled: false
+            feat_dim: 128
+            hidden: 64
+            logvar_min: -10.0
+            logvar_max: 6.0
+
+  - name: step_base_seed11
+    label: StepBase s11
+    role: baseline
+    overrides:
+      run:
+        seed: 11
+        variant: StepBase_seed11_anchor
+      model:
+        name: s1_predictor
+        head_mode: grouped
+        group_head_hidden: 160
+        blocks:
+          thruster_lag:
+            enabled: false
+            normalize_input: true
+            pwm_center: 7.5
+            pwm_half_range: 2.5
+            deadzone: 0.05
+            sat_gain: 2.0
+            learn_tau: true
+            tau_init: 0.08
+            tau_min: 0.01
+            per_channel_tau: true
+            dt: 0.01
+          hydro_ssm:
+            enabled: false
+            hidden_dim: 64
+            lambda_init: 0.85
+            act: tanh
+            per_dim_lambda: true
+          damping:
+            enabled: false
+            v_start: 6
+            v_dim: 3
+            mode: simple
+            d_init: 0.5
+            mlp_hidden: 16
+          uncertainty:
+            enabled: false
+            feat_dim: 128
+            hidden: 64
+            logvar_min: -10.0
+            logvar_max: 6.0
+
+  - name: step_base_seed12
+    label: StepBase s12
+    role: baseline
+    overrides:
+      run:
+        seed: 12
+        variant: StepBase_seed12_anchor
+      model:
+        name: s1_predictor
+        head_mode: grouped
+        group_head_hidden: 160
+        blocks:
+          thruster_lag:
+            enabled: false
+            normalize_input: true
+            pwm_center: 7.5
+            pwm_half_range: 2.5
+            deadzone: 0.05
+            sat_gain: 2.0
+            learn_tau: true
+            tau_init: 0.08
+            tau_min: 0.01
+            per_channel_tau: true
+            dt: 0.01
+          hydro_ssm:
+            enabled: false
+            hidden_dim: 64
+            lambda_init: 0.85
+            act: tanh
+            per_dim_lambda: true
+          damping:
+            enabled: false
+            v_start: 6
+            v_dim: 3
+            mode: simple
+            d_init: 0.5
+            mlp_hidden: 16
+          uncertainty:
+            enabled: false
+            feat_dim: 128
+            hidden: 64
+            logvar_min: -10.0
+            logvar_max: 6.0

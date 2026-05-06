@@ -1,0 +1,94 @@
+# StableTransitionCore 单步状态转移基础配置。
+#
+# 设计目的：
+# - 使用 quality_step_v1 数据路线，与当前 StepBase s11 最终候选保持数据契约一致。
+# - 不写旧 optional blocks，避免新稳定内核实验继续依赖 S1Predictor blocks 组合。
+# - 保持现有 transition_balance loss 与 y_hat = y0 + cumsum(dY) rollout 契约，便于复用 train/eval/replay。
+
+run:
+  name: stable_transition_core_step_v1
+  seed: 10
+  device: cuda
+  amp: true
+  out_dir: out/ckpts/pooltest02_stable_transition_core_step_v1
+  variant: STC_stable_diag_damp_seed10
+
+data:
+  data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_step_v1
+  batch_size: 1024
+  num_workers: 4
+  pin_memory: true
+  split:
+    train_ratio: 0.7
+    val_ratio: 0.15
+
+model:
+  name: stable_transition_core
+  din: 34
+  dout: 9
+  pred_len: 1
+  rnn_hidden: 320
+  rnn_layers: 2
+  dropout: 0.0
+  u_in_idx: [0, 1, 2, 3, 4, 5, 6, 7]
+  y_in_idx: [8, 9, 10, 11, 12, 13, 14, 15, 16]
+  use_thruster_as_replacement: true
+  use_hydro_feat: true
+  head_mode: grouped
+  group_head_hidden: 160
+  aux_heads:
+    dvl_obs:
+      enabled: false
+      hidden: 96
+  core_type: stable_diag_damp
+  core_hidden: 192
+  residual_bound: 0.25
+  damping_min: 0.0001
+  damping_max: 20.0
+  control_bound: 3.0
+  dt: 0.01
+  num_modes: 4
+
+rollout:
+  y0_source: x_last_state
+  mode: delta_cumsum
+
+loss:
+  type: transition_balance
+  logvar_clip: [-10.0, 6.0]
+  state_mse_weight: 0.25
+  state_huber_weight: 1.0
+  state_huber_delta: 1.0
+  state_final_weight: 0.8
+  late_horizon_weight: 0.4
+  late_horizon_fraction: 0.4
+  delta_huber_weight: 1.0
+  delta_huber_delta: 1.0
+  logvar_reg_weight: 0.02
+  tail_weight_power: 0.0
+  acc_weight: 3.0
+  gyro_weight: 2.0
+  vel_weight: 2.0
+  dvl_obs_weight: 0.0
+  dvl_obs_delta: 1.0
+
+optim:
+  name: adamw
+  lr: 0.001
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  scheduler:
+    name: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1.0e-05
+
+train:
+  epochs: 120
+  eval_every: 1
+  save_best: true
+  save_last: true
+  metric: val_transition_score
+  early_stopping:
+    patience: 12
+    min_delta: 0.0001

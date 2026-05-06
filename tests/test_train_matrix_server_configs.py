@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from uwnav_dynamics.cli.train_matrix import load_matrix_launcher_config
 from uwnav_dynamics.cli.server_pipeline import load_server_pipeline_config
+from uwnav_dynamics.train.config import load_train_config
 
 
 def test_quality_7gpu_matrix_yaml_parses_as_8_run_server_batch() -> None:
@@ -50,3 +51,34 @@ def test_server_pipeline_7gpu_v2_points_to_new_matrix_batches() -> None:
     assert str(cfg.train_matrix_configs[0]) == "configs/launch/pooltest02_s1_kf_quality_7gpu_v2.yaml"
     assert str(cfg.train_matrix_configs[1]) == "configs/launch/pooltest02_s1_kf_quality_step_7gpu_v2.yaml"
     assert len(cfg.replay_jobs) == 2
+
+
+def test_stable_transition_core_8gpu_matrix_yaml_parses_as_5_core_plus_3_anchor_batch() -> None:
+    cfg = load_matrix_launcher_config("configs/launch/pooltest02_stable_transition_core_8gpu_v1.yaml")
+
+    assert str(cfg.base_train_yaml) == "configs/train/pooltest02_stable_transition_core_step_v1.yaml"
+    assert str(cfg.work_dir) == "out/train_matrix/pooltest02_stable_transition_core_8gpu_v1"
+    assert cfg.max_parallel == 8
+    assert cfg.gpus == ("0", "1", "2", "3", "4", "5", "6", "7")
+    assert cfg.run_eval is True
+    assert cfg.compare is True
+    assert cfg.eval_batch_size == 2048
+    assert len(cfg.runs) == 8
+
+    core_runs = [run for run in cfg.runs if run.name.startswith("stc_")]
+    anchor_runs = [run for run in cfg.runs if run.name.startswith("step_base_")]
+    assert len(core_runs) == 5
+    assert len(anchor_runs) == 3
+
+
+def test_stable_transition_core_base_train_yaml_uses_new_model_without_legacy_blocks() -> None:
+    cfg = load_train_config("configs/train/pooltest02_stable_transition_core_step_v1.yaml")
+
+    assert cfg.model.name == "stable_transition_core"
+    assert cfg.model.core_type == "stable_diag_damp"
+    assert cfg.model.pred_len == 1
+    assert cfg.model.dout == 9
+    assert cfg.model.blocks.thruster_lag.enabled is False
+    assert cfg.model.blocks.hydro_ssm.enabled is False
+    assert cfg.model.blocks.damping.enabled is False
+    assert cfg.model.blocks.uncertainty.enabled is False

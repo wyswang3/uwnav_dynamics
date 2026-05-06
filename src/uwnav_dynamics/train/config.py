@@ -449,8 +449,9 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         raise TypeError("model must be a dict")
 
     model_name = str(model_d.get("name", "s1_predictor"))
-    if model_name != "s1_predictor":
-        raise ValueError(f"Unsupported model.name={model_name!r} (v0 only supports 's1_predictor')")
+    supported_models = {"s1_predictor", "stable_transition_core"}
+    if model_name not in supported_models:
+        raise ValueError(f"Unsupported model.name={model_name!r}; supported={sorted(supported_models)}")
 
     _check_no_unknown_keys(
         model_d,
@@ -470,15 +471,30 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             "group_head_hidden",
             "aux_heads",
             "blocks",
+            "core_type",
+            "core_hidden",
+            "residual_bound",
+            "damping_min",
+            "damping_max",
+            "control_bound",
+            "dt",
+            "num_modes",
         ],
         where="model",
     )
 
     # blocks 必须显式写全，防止“默认值悄悄生效”导致实验不可审计。
-    blocks = _parse_blocks(model_d, where="model")
+    if model_name == "s1_predictor":
+        blocks = _parse_blocks(model_d, where="model")
+    else:
+        if "blocks" in model_d:
+            blocks = _parse_blocks(model_d, where="model")
+        else:
+            blocks = BlocksConfig()
     model_aux_heads = _parse_model_aux_heads(model_d, where="model")
 
     model = S1PredictorConfig(
+        name=model_name,
         din=int(model_d.get("din", 25)),
         dout=int(model_d.get("dout", 9)),
         pred_len=int(model_d.get("pred_len", 10)),
@@ -494,13 +510,51 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         head_mode=_as_str(model_d.get("head_mode", "joint"), where="model.head_mode"),
         group_head_hidden=_as_int(model_d.get("group_head_hidden", 128), where="model.group_head_hidden"),
         blocks=blocks,
+        core_type=_as_str(model_d.get("core_type", "stable_diag_damp"), where="model.core_type"),
+        core_hidden=_as_int(model_d.get("core_hidden", 160), where="model.core_hidden"),
+        residual_bound=_as_float(model_d.get("residual_bound", 0.25), where="model.residual_bound"),
+        damping_min=_as_float(model_d.get("damping_min", 1.0e-4), where="model.damping_min"),
+        damping_max=_as_float(model_d.get("damping_max", 20.0), where="model.damping_max"),
+        control_bound=_as_float(model_d.get("control_bound", 3.0), where="model.control_bound"),
+        dt=_as_float(model_d.get("dt", 0.01), where="model.dt"),
+        num_modes=_as_int(model_d.get("num_modes", 4), where="model.num_modes"),
     )
     validate_feature_indices(model.u_in_idx, upper_bound=model.din, name="model.u_in_idx")
     validate_execution_layout(model.y_in_idx, din=model.din, dout=model.dout)
-    if model.head_mode not in {"joint", "grouped"}:
+    if model.name == "s1_predictor" and model.head_mode not in {"joint", "grouped"}:
         raise ValueError(f"Unsupported model.head_mode={model.head_mode!r} (expect 'joint' or 'grouped')")
     if model.group_head_hidden <= 0:
         raise ValueError(f"model.group_head_hidden must be > 0, got {model.group_head_hidden}")
+    if model.name == "stable_transition_core":
+        supported_core_types = {
+            "stable_diag_damp",
+            "implicit_euler",
+            "control_affine",
+            "residual_budget",
+            "energy_budget",
+        }
+        if model.core_type not in supported_core_types:
+            raise ValueError(
+                f"Unsupported model.core_type={model.core_type!r}; "
+                f"supported={sorted(supported_core_types)}"
+            )
+        if model.dout != 9:
+            raise ValueError(f"stable_transition_core expects model.dout=9, got {model.dout}")
+        if model.core_hidden <= 0:
+            raise ValueError(f"model.core_hidden must be > 0, got {model.core_hidden}")
+        if model.residual_bound <= 0.0:
+            raise ValueError(f"model.residual_bound must be > 0, got {model.residual_bound}")
+        if model.control_bound <= 0.0:
+            raise ValueError(f"model.control_bound must be > 0, got {model.control_bound}")
+        if model.dt <= 0.0:
+            raise ValueError(f"model.dt must be > 0, got {model.dt}")
+        if model.damping_min < 0.0 or model.damping_max <= model.damping_min:
+            raise ValueError(
+                "model.damping_min/max must satisfy 0 <= min < max, "
+                f"got {model.damping_min}/{model.damping_max}"
+            )
+        if model.num_modes <= 0:
+            raise ValueError(f"model.num_modes must be > 0, got {model.num_modes}")
 
     # rollout 契约目前只支持一条执行路径；
     # parser 在这里提前收口，后面的 train / eval 就不再分叉解释。

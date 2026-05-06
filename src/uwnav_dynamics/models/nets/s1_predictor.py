@@ -116,6 +116,7 @@ class S1PredictorConfig:
       - use_hydro_feat: 是否将 hydro 的 h_last 拼进 head 特征
       - blocks: 四个模块的配置集合
     """
+    name: str = "s1_predictor"
     din: int = 25
     dout: int = 9
     pred_len: int = 10  # H
@@ -144,6 +145,18 @@ class S1PredictorConfig:
 
     # ---- blocks ----
     blocks: S1BlocksConfig = field(default_factory=S1BlocksConfig)
+
+    # ---- StableTransitionCore v1 ----
+    # 这些字段仅供 `model.name=stable_transition_core` 使用；
+    # `S1Predictor` 保留旧行为，不读取这些稳定内核参数。
+    core_type: str = "stable_diag_damp"
+    core_hidden: int = 160
+    residual_bound: float = 0.25
+    damping_min: float = 1.0e-4
+    damping_max: float = 20.0
+    control_bound: float = 3.0
+    dt: float = 0.01
+    num_modes: int = 4
 
 
 # Backward-compatible aliases for existing config loaders.

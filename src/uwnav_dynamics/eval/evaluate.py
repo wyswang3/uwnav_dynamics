@@ -20,7 +20,7 @@
 数据流：
 train yaml + checkpoint + run_dir artifacts
     ↓
-EvalConfig / S1PredictorConfig
+EvalConfig / model config
     ↓
 加载 features.npz / labels.npz / split_indices.npz / scalers
     ↓
@@ -39,6 +39,7 @@ cli/eval.py 或 cli/pipeline.py 再调起 viz 层出图
 - uwnav_dynamics.eval.config
 - uwnav_dynamics.dataset.normalize
 - uwnav_dynamics.dataset.split
+- uwnav_dynamics.models.nets.factory
 - uwnav_dynamics.models.nets.s1_predictor
 - uwnav_dynamics.models.losses.state_transition
 
@@ -75,7 +76,8 @@ from uwnav_dynamics.dataset.split import load_split_indices
 from uwnav_dynamics.eval.config import EvalConfig, build_eval_config
 from uwnav_dynamics.experiment.representative import RepresentativeRule, select_representative_rows
 from uwnav_dynamics.experiment.paths import infer_repo_root, relative_path_str, to_snapshot_value
-from uwnav_dynamics.models.nets.s1_predictor import S1Predictor, S1PredictorConfig
+from uwnav_dynamics.models.nets.factory import build_state_predictor
+from uwnav_dynamics.models.nets.s1_predictor import S1PredictorConfig
 from uwnav_dynamics.models.utils.execution_layout import (
     build_execution_layout_metadata,
     extract_y0_from_x_last,
@@ -1203,7 +1205,7 @@ def evaluate_once(*, cfg_eval: EvalConfig, cfg_model: S1PredictorConfig) -> Dict
     loaded = load_eval_artifacts(cfg_eval=cfg_eval, cfg_model=cfg_model)
     split_artifacts = slice_eval_artifacts(loaded, split_name=cfg_eval.split_name)
 
-    model = S1Predictor(cfg_model).to(device)
+    model = build_state_predictor(cfg_model).to(device)
     ckpt = _load_checkpoint(cfg_eval.ckpt, device)
     model.load_state_dict(ckpt["model"], strict=True)
     model.eval()

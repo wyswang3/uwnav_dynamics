@@ -22,8 +22,7 @@ train yaml + CLI override
 TrainYamlConfig / resolved_train.yaml
     ↓
 prepare_train_data()
-    ↓
-S1Predictor + rollout loss
+build_state_predictor() -> S1Predictor / StableTransitionCore + rollout loss
     ↓
 fit()
     ↓
@@ -32,6 +31,7 @@ best.pth / last.pth / train_summary.yaml / train_history.csv / train_plots/*
 依赖模块：
 - uwnav_dynamics.train.config
 - uwnav_dynamics.train.data_pipeline
+- uwnav_dynamics.models.nets.factory
 - uwnav_dynamics.models.utils.execution_layout
 - uwnav_dynamics.models.utils.rollout
 - uwnav_dynamics.models.utils.semantic_output_layout
@@ -71,7 +71,7 @@ from uwnav_dynamics.train.runtime import (
 )
 from uwnav_dynamics.train.trainer import fit
 from uwnav_dynamics.viz.train.plot_training_history import plot_training_artifacts
-from uwnav_dynamics.models.nets.s1_predictor import S1Predictor
+from uwnav_dynamics.models.nets.factory import build_state_predictor
 from uwnav_dynamics.models.utils.execution_layout import extract_y0_from_x_last
 from uwnav_dynamics.models.utils.rollout import rollout_from_delta
 from uwnav_dynamics.models.utils.semantic_output_layout import canonical_semantic_output_layout
@@ -616,7 +616,7 @@ def main() -> int:
         path_root=repo_root,
     )
 
-    model = S1Predictor(cfg)
+    model = build_state_predictor(cfg)
 
     loss_fn = build_loss_fn(
         cfg.loss.logvar_clip_min,
