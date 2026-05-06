@@ -158,6 +158,12 @@ class S1PredictorConfig:
     dt: float = 0.01
     num_modes: int = 4
 
+    # ---- Common baseline v1 ----
+    # 这些字段仅供常见网络对照模型使用；
+    # `S1Predictor` 保留旧行为，不读取这些 baseline 参数。
+    tcn_kernel_size: int = 3
+    transformer_heads: int = 4
+
 
 # Backward-compatible aliases for existing config loaders.
 BlocksConfig = S1BlocksConfig

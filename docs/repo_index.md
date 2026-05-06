@@ -55,6 +55,8 @@
 | 路径 | 一句话职责 | 可能输入输出 |
 |---|---|---|
 | `src/uwnav_dynamics/models/nets/s1_predictor.py` | S1 主模型定义，融合 LSTM backbone 与可选 blocks。 | 输入：`x:(B,L,Din)`；输出：`dY:(B,H,Dout)`、`logvar:(B,H,Dout)`。 |
+| `src/uwnav_dynamics/models/nets/common_baselines.py` | 常见网络对照模型，提供 MLP pooling、GRU、TCN 与 Transformer baseline。 | 输入：`x:(B,L,Din)`；输出：`dY:(B,H,Dout)`、`logvar:(B,H,Dout)`、`aux["dvl_obs"]=None`。 |
+| `src/uwnav_dynamics/models/nets/factory.py` | 状态预测模型工厂，按 `model.name` 构造主模型、STC 或常见 baseline。 | 输入：`TrainYamlConfig` 或 model config；输出：对应 `nn.Module`。 |
 | `src/uwnav_dynamics/models/blocks/thruster_lag.py` | 推进器输入先验模块，建模 deadzone/saturation/一阶滞后。 | 输入：`u_seq:(B,L,8)`；输出：`u_eff:(B,L,8)`。 |
 | `src/uwnav_dynamics/models/blocks/hydro_ssm_cell.py` | Hydro-SSM 稳定递推隐状态模块，建模流体记忆效应。 | 输入：`u_eff_seq` 与 `y_seq`；输出：`h_seq`、`h_last`。 |
 | `src/uwnav_dynamics/models/blocks/damping_head.py` | 阻尼先验输出头，生成速度维的显式耗散增量。 | 输入：`y_last:(B,9)`；输出：`dY_damp:(B,H,9)`。 |
@@ -88,6 +90,12 @@
 | `configs/fusion/pooltest02_kf_eskf_v2.yaml` | KF/ESKF 融合参数与输入输出路径配置。 | 输入：被 `cli_fuse_train_base.py` 读取；输出：决定 `train_base_kf_v2.csv` 生成策略。 |
 | `configs/preprocess/imu.yaml` | IMU 预处理策略文档化配置（时间列优先级、列映射、单位与 QA）。 | 输入：当前主要作规范参考；输出：为 IMU 预处理参数提供模板。 |
 | `configs/model/s1_u1_hyrossm.yaml` | 模型配置占位文件。 | 输入：当前为空文件；输出：暂无（待补充）。 |
+
+## 6) 设计文档补充
+
+| 路径 | 一句话职责 | 可能输入输出 |
+|---|---|---|
+| `docs/design/common_network_baseline_protocol_v1.md` | 常见网络 baseline 与训练目标消融协议，定义后续论文对照实验的分层、指标和判定口径。 | 输入：当前 StepBase / STC 结果事实；输出：后续 `common_network_baselines` 与 `training_objective_ablation` 配置设计依据。 |
 | `configs/dataset/pooltest01.yaml` | 数据集配置占位文件。 | 输入：当前为空文件；输出：暂无（待补充）。 |
 
 ## 6) 包含 Config/dataclass/yaml 解析逻辑的关键文件

@@ -24,8 +24,9 @@
 3. [transition_solver_phase1_upgrade.md](/home/wys/uwnav_dynamics/docs/design/transition_solver_phase1_upgrade.md)
 4. [handover_kf_training_server_v2.md](/home/wys/uwnav_dynamics/docs/handover_kf_training_server_v2.md)
 5. [kf_fusion_preprocess_training_v2.md](/home/wys/uwnav_dynamics/docs/design/kf_fusion_preprocess_training_v2.md)
-6. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
-7. [quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
+6. [common_network_baseline_protocol_v1.md](/home/wys/uwnav_dynamics/docs/design/common_network_baseline_protocol_v1.md)
+7. [project_status.md](/home/wys/uwnav_dynamics/docs/project_status.md)
+8. [quick_commands.md](/home/wys/uwnav_dynamics/docs/reference/quick_commands.md)
 
 如果只是要尽快恢复本地上下文，前 3 份足够。
 
@@ -45,8 +46,9 @@ export PYTHONPATH=src
 2. 再看本文件第 `3.1` 节，确认当前 solver / replay / visualization 已完成内容。
 3. 再看 `docs/design/transition_solver_phase2_replay_upgrade.md`，确认状态求解器 replay 协议。
 4. 再看 `docs/handover_kf_training_server_v2.md` 第 `4.2` 节，确认服务器上的执行顺序。
-5. 需要查命令时，去 `docs/reference/quick_commands.md`，不要把它当主交接文档。
-6. 如果要继续修代码，优先从 `data_pipeline.py`、`s1_predictor.py`、`run_train.py` 三处开始。
+5. 若要做论文网络对照，先看 `docs/design/common_network_baseline_protocol_v1.md`，不要直接重开无约束搜索。
+6. 需要查命令时，去 `docs/reference/quick_commands.md`，不要把它当主交接文档。
+7. 如果要继续修代码，优先从 `data_pipeline.py`、`s1_predictor.py`、`run_train.py` 三处开始。
 
 ## 3. 当前已经落地的事实
 

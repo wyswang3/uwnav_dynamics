@@ -449,7 +449,14 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         raise TypeError("model must be a dict")
 
     model_name = str(model_d.get("name", "s1_predictor"))
-    supported_models = {"s1_predictor", "stable_transition_core"}
+    supported_models = {
+        "s1_predictor",
+        "stable_transition_core",
+        "baseline_mlp",
+        "baseline_gru",
+        "baseline_tcn",
+        "baseline_transformer",
+    }
     if model_name not in supported_models:
         raise ValueError(f"Unsupported model.name={model_name!r}; supported={sorted(supported_models)}")
 
@@ -479,6 +486,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             "control_bound",
             "dt",
             "num_modes",
+            "tcn_kernel_size",
+            "transformer_heads",
         ],
         where="model",
     )
@@ -518,6 +527,8 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
         control_bound=_as_float(model_d.get("control_bound", 3.0), where="model.control_bound"),
         dt=_as_float(model_d.get("dt", 0.01), where="model.dt"),
         num_modes=_as_int(model_d.get("num_modes", 4), where="model.num_modes"),
+        tcn_kernel_size=_as_int(model_d.get("tcn_kernel_size", 3), where="model.tcn_kernel_size"),
+        transformer_heads=_as_int(model_d.get("transformer_heads", 4), where="model.transformer_heads"),
     )
     validate_feature_indices(model.u_in_idx, upper_bound=model.din, name="model.u_in_idx")
     validate_execution_layout(model.y_in_idx, din=model.din, dout=model.dout)
@@ -555,6 +566,22 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             )
         if model.num_modes <= 0:
             raise ValueError(f"model.num_modes must be > 0, got {model.num_modes}")
+    if model.name in {"baseline_mlp", "baseline_gru", "baseline_tcn", "baseline_transformer"}:
+        if model.rnn_hidden <= 0 or model.rnn_layers <= 0:
+            raise ValueError(
+                "baseline models require model.rnn_hidden/rnn_layers > 0, "
+                f"got {model.rnn_hidden}/{model.rnn_layers}"
+            )
+        if model.name == "baseline_tcn" and (model.tcn_kernel_size <= 0 or model.tcn_kernel_size % 2 == 0):
+            raise ValueError(f"model.tcn_kernel_size must be positive odd, got {model.tcn_kernel_size}")
+        if model.name == "baseline_transformer":
+            if model.transformer_heads <= 0:
+                raise ValueError(f"model.transformer_heads must be > 0, got {model.transformer_heads}")
+            if model.rnn_hidden % model.transformer_heads != 0:
+                raise ValueError(
+                    "model.rnn_hidden must be divisible by model.transformer_heads, "
+                    f"got {model.rnn_hidden}/{model.transformer_heads}"
+                )
 
     # rollout 契约目前只支持一条执行路径；
     # parser 在这里提前收口，后面的 train / eval 就不再分叉解释。
@@ -603,10 +630,10 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
     )
 
     loss_type = str(loss_d.get("type", "nll_diag"))
-    if loss_type not in {"nll_diag", "transition_balance"}:
+    if loss_type not in {"nll_diag", "state_mse", "state_huber", "transition_balance"}:
         raise ValueError(
             f"Unsupported loss.type={loss_type!r} "
-            "(current parser supports 'nll_diag' or 'transition_balance')"
+            "(current parser supports 'nll_diag', 'state_mse', 'state_huber' or 'transition_balance')"
         )
 
     clip = loss_d.get("logvar_clip", [-10.0, 6.0])
@@ -681,6 +708,23 @@ def build_from_dict(d: Dict[str, Any]) -> TrainYamlConfig:
             raise ValueError(
                 "loss.type='nll_diag' must keep transition_balance fields at defaults; "
                 "set loss.type='transition_balance' for grouped/tail/delta reweighting"
+            )
+    elif loss_type in {"state_mse", "state_huber"}:
+        if (
+            state_mse_weight != 0.0
+            or state_huber_weight != 0.0
+            or state_final_weight != 0.0
+            or late_horizon_weight != 0.0
+            or delta_huber_weight != 0.0
+            or logvar_reg_weight != 0.0
+            or tail_weight_power != 0.0
+            or acc_weight != 1.0
+            or gyro_weight != 1.0
+            or vel_weight != 1.0
+        ):
+            raise ValueError(
+                f"loss.type={loss_type!r} must keep transition_balance fields at defaults; "
+                "use loss.type='transition_balance' for grouped/tail/delta/final reweighting"
             )
     else:
         if (

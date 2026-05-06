@@ -58,6 +58,38 @@
 
 这些逻辑分别由 runtime 或 eval 侧处理。
 
+当前 `model.name` 支持：
+
+```text
+s1_predictor
+stable_transition_core
+baseline_mlp
+baseline_gru
+baseline_tcn
+baseline_transformer
+```
+
+其中：
+
+- `s1_predictor` 仍要求 YAML 显式写全 `blocks`，避免旧模块默认值造成 silent bug；
+- `stable_transition_core` 与常见 baseline 可省略 `blocks`，parser 会生成全 disabled 的 `BlocksConfig`；
+- 所有模型必须保持 `(dY, logvar)` 或 `(dY, logvar, aux)` 输出契约。
+
+当前 `loss.type` 支持：
+
+```text
+nll_diag
+state_mse
+state_huber
+transition_balance
+```
+
+其中：
+
+- `state_mse` / `state_huber` 服务训练目标消融，用于普通监督目标 baseline；
+- `transition_balance` 服务当前主线，包含 final / late horizon / delta / group weight / logvar regularization 等状态转移约束；
+- 普通监督目标不得同时启用 transition_balance 专属权重字段。
+
 其中需要额外强调的是：
 - `eval/config.py` 只负责数值评估运行时；
 - `cli/eval.py` / `cli/pipeline.py` 负责是否进入 viz 阶段的 orchestration；
