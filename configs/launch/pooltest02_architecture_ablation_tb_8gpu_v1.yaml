@@ -1,0 +1,153 @@
+# 固定 transition_balance 的网络结构对照 8GPU 第一轮矩阵。
+#
+# 设计原则：
+# - 固定数据路线：quality_step_v1。
+# - 固定训练目标：transition_balance。
+# - 只改变 model.name / 结构参数，用于比较常见网络 baseline、S1 主线和物理稳定内核。
+# - 本轮先用同一 seed 做结构筛选；胜出的 2-3 个结构再进入多 seed 与更长 replay。
+
+base_train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_architecture_ablation_tb_8gpu_v1
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 2048
+  plots: true
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_architecture_ablation_tb_8gpu_v1
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_step_v1
+    batch_size: 1024
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: arch_s1_lstm_grouped_seed11
+    label: S1-LSTM s11
+    role: primary
+    overrides:
+      run:
+        seed: 11
+        variant: ARCH_s1_lstm_grouped_seed11
+      model:
+        name: s1_predictor
+        rnn_hidden: 320
+        rnn_layers: 2
+        head_mode: grouped
+        group_head_hidden: 160
+
+  - name: arch_baseline_mlp_seed11
+    label: MLP s11
+    role: baseline
+    overrides:
+      run:
+        seed: 11
+        variant: ARCH_baseline_mlp_seed11
+      model:
+        name: baseline_mlp
+        rnn_hidden: 320
+        rnn_layers: 2
+        dropout: 0.0
+
+  - name: arch_baseline_gru_seed11
+    label: GRU s11
+    role: baseline
+    overrides:
+      run:
+        seed: 11
+        variant: ARCH_baseline_gru_seed11
+      model:
+        name: baseline_gru
+        rnn_hidden: 320
+        rnn_layers: 2
+        dropout: 0.0
+
+  - name: arch_baseline_tcn_seed11
+    label: TCN s11
+    role: baseline
+    overrides:
+      run:
+        seed: 11
+        variant: ARCH_baseline_tcn_seed11
+      model:
+        name: baseline_tcn
+        rnn_hidden: 320
+        rnn_layers: 2
+        dropout: 0.0
+        tcn_kernel_size: 3
+
+  - name: arch_baseline_transformer_seed11
+    label: Transformer s11
+    role: baseline
+    overrides:
+      run:
+        seed: 11
+        variant: ARCH_baseline_transformer_seed11
+      model:
+        name: baseline_transformer
+        rnn_hidden: 320
+        rnn_layers: 2
+        dropout: 0.0
+        transformer_heads: 4
+
+  - name: arch_stc_diag_seed11
+    label: STC-Diag s11
+    role: ablation
+    overrides:
+      run:
+        seed: 11
+        variant: ARCH_stc_diag_seed11
+      model:
+        name: stable_transition_core
+        core_type: stable_diag_damp
+        core_hidden: 192
+        residual_bound: 0.25
+        damping_max: 20.0
+        control_bound: 3.0
+
+  - name: arch_stc_control_affine_seed11
+    label: STC-Affine s11
+    role: ablation
+    overrides:
+      run:
+        seed: 11
+        variant: ARCH_stc_control_affine_seed11
+      model:
+        name: stable_transition_core
+        core_type: control_affine
+        core_hidden: 192
+        residual_bound: 0.25
+        damping_max: 20.0
+        control_bound: 3.0
+
+  - name: arch_stc_energy_budget_seed11
+    label: STC-Energy s11
+    role: ablation
+    overrides:
+      run:
+        seed: 11
+        variant: ARCH_stc_energy_budget_seed11
+      model:
+        name: stable_transition_core
+        core_type: energy_budget
+        core_hidden: 192
+        residual_bound: 0.25
+        damping_max: 20.0
+        control_bound: 3.0

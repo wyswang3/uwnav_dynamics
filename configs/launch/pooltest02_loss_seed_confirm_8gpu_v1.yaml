@@ -1,0 +1,217 @@
+# 损失函数多 seed 定版复核矩阵。
+#
+# 设计原则：
+# - 固定网络架构：S1Predictor + LSTM + grouped head。
+# - 固定数据路线：quality_step_v1。
+# - 用 8GPU 补齐 MSE / Huber 的多 seed 证据，并复核当前 replay 胜出项 TB s11。
+# - 本轮只判断训练目标稳定性，不改变网络结构。
+#
+# 背景：
+# - pooltest02_training_objective_ablation_8gpu_v1 中，MSE/Huber 的一步评估较好；
+# - 但 50s replay 中 TB s11 综合排名第一，尤其 worst_abs_bias 明显更稳；
+# - 因此本矩阵只做最小复核，避免继续扩大损失函数搜索。
+
+base_train_yaml: configs/train/pooltest02_s1_kf_ctx_quality_step_transition_v1.yaml
+
+launcher:
+  work_dir: out/train_matrix/pooltest02_loss_seed_confirm_8gpu_v1
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  max_parallel: 8
+  run_eval: true
+  eval_split: test
+  eval_device: cuda
+  eval_batch_size: 2048
+  plots: true
+  plot_fmt: png
+  dt: 0.01
+  x_axis: sec
+  n_plot_samples: 8
+  compare: true
+  compare_metrics: [rmse, mae]
+  fail_fast: false
+
+common_overrides:
+  run:
+    device: cuda
+    amp: true
+    out_dir: out/ckpts/pooltest02_loss_seed_confirm_8gpu_v1
+  data:
+    data_dir: data/processed/2026-01-10_pooltest02_s1_kf_ctx_quality_step_v1
+    batch_size: 1024
+    num_workers: 4
+    pin_memory: true
+  train:
+    epochs: 120
+
+runs:
+  - name: loss_state_mse_seed11
+    label: MSE s11
+    role: baseline
+    overrides:
+      run:
+        seed: 11
+        variant: LOSS_state_mse_seed11
+      loss:
+        type: state_mse
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_state_mse_seed12
+    label: MSE s12
+    role: baseline
+    overrides:
+      run:
+        seed: 12
+        variant: LOSS_state_mse_seed12
+      loss:
+        type: state_mse
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_state_mse_seed13
+    label: MSE s13
+    role: baseline
+    overrides:
+      run:
+        seed: 13
+        variant: LOSS_state_mse_seed13
+      loss:
+        type: state_mse
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_state_huber_seed11
+    label: Huber s11
+    role: baseline
+    overrides:
+      run:
+        seed: 11
+        variant: LOSS_state_huber_seed11
+      loss:
+        type: state_huber
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_state_huber_seed12
+    label: Huber s12
+    role: baseline
+    overrides:
+      run:
+        seed: 12
+        variant: LOSS_state_huber_seed12
+      loss:
+        type: state_huber
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_state_huber_seed13
+    label: Huber s13
+    role: baseline
+    overrides:
+      run:
+        seed: 13
+        variant: LOSS_state_huber_seed13
+      loss:
+        type: state_huber
+        logvar_clip: [-10.0, 6.0]
+        state_mse_weight: 0.0
+        state_huber_weight: 0.0
+        state_huber_delta: 1.0
+        state_final_weight: 0.0
+        late_horizon_weight: 0.0
+        late_horizon_fraction: 0.4
+        delta_huber_weight: 0.0
+        delta_huber_delta: 1.0
+        logvar_reg_weight: 0.0
+        tail_weight_power: 0.0
+        acc_weight: 1.0
+        gyro_weight: 1.0
+        vel_weight: 1.0
+        dvl_obs_weight: 0.0
+        dvl_obs_delta: 1.0
+
+  - name: loss_transition_balance_seed11
+    label: TB s11
+    role: primary
+    overrides:
+      run:
+        seed: 11
+        variant: LOSS_transition_balance_seed11
+
+  - name: loss_transition_balance_seed14
+    label: TB s14
+    role: primary
+    overrides:
+      run:
+        seed: 14
+        variant: LOSS_transition_balance_seed14
