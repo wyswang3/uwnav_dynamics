@@ -159,10 +159,13 @@ class StableTransitionCore(nn.Module):
         return torch.cat([y[:, self._gyro_idx], y[:, self._vel_idx]], dim=-1)
 
     def _assemble_y(self, acc_next: torch.Tensor, z_next: torch.Tensor) -> torch.Tensor:
+        out_dtype = torch.promote_types(acc_next.dtype, z_next.dtype)
+        acc_next = acc_next.to(dtype=out_dtype)
+        z_next = z_next.to(dtype=out_dtype)
         y_next = torch.empty(
             (acc_next.shape[0], int(self.cfg.dout)),
             device=acc_next.device,
-            dtype=acc_next.dtype,
+            dtype=out_dtype,
         )
         y_next[:, self._acc_idx] = acc_next
         y_next[:, self._gyro_idx] = z_next[:, :3]

@@ -151,3 +151,17 @@ def test_stable_transition_core_supports_first_round_core_types():
         assert logvar.shape == dY.shape
         assert torch.isfinite(dY).all()
         assert torch.isfinite(logvar).all()
+
+
+def test_stable_transition_core_assemble_y_promotes_mixed_amp_dtypes():
+    cfg = build_from_dict(_stable_train_yaml_dict("stable_diag_damp"))
+    model = build_state_predictor(cfg).eval()
+
+    acc_next = torch.randn(3, 3, dtype=torch.float32)
+    z_next = torch.randn(3, 6, dtype=torch.float16)
+
+    y_next = model._assemble_y(acc_next, z_next)
+
+    assert y_next.dtype == torch.float32
+    assert y_next.shape == (3, cfg.model.dout)
+    assert torch.isfinite(y_next).all()

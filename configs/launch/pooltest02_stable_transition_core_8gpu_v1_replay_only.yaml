@@ -1,0 +1,29 @@
+# StableTransitionCore 第一轮矩阵的 50s replay-only 复核。
+#
+# 使用方式：
+# 1. 先运行 configs/launch/pooltest02_stable_transition_core_8gpu_v1.yaml 完成 train/eval。
+# 2. 再运行本配置，从 summary.csv 自动挑选 status=ok 的候选做 50s autoregressive replay。
+
+launcher:
+  work_dir: out/server_pipeline/replay_only_stable_transition_core_8gpu_v1
+  fail_fast: false
+
+preprocess:
+  fusion_yamls: []
+  dataset_yamls: []
+
+smoke: []
+
+train_matrix: []
+
+replay:
+  - name: stable_transition_core_v1_replay
+    source_summary_csv: out/train_matrix/pooltest02_stable_transition_core_8gpu_v1/summary.csv
+    work_dir: out/replay_matrix/pooltest02_stable_transition_core_8gpu_v1
+    split: test
+    device: cuda
+    min_seconds: 50
+    max_seconds_per_segment: 50
+    dt_s: 0.01
+    save_samples: 8
+    include_statuses: [ok]

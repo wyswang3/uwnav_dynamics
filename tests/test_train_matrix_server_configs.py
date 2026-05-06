@@ -82,3 +82,17 @@ def test_stable_transition_core_base_train_yaml_uses_new_model_without_legacy_bl
     assert cfg.model.blocks.hydro_ssm.enabled is False
     assert cfg.model.blocks.damping.enabled is False
     assert cfg.model.blocks.uncertainty.enabled is False
+
+
+def test_stable_transition_core_replay_only_pipeline_points_to_matrix_summary() -> None:
+    cfg = load_server_pipeline_config("configs/launch/pooltest02_stable_transition_core_8gpu_v1_replay_only.yaml")
+
+    assert str(cfg.work_dir) == "out/server_pipeline/replay_only_stable_transition_core_8gpu_v1"
+    assert len(cfg.train_matrix_configs) == 0
+    assert len(cfg.replay_jobs) == 1
+    replay = cfg.replay_jobs[0]
+    assert replay.name == "stable_transition_core_v1_replay"
+    assert str(replay.source_summary_csv) == "out/train_matrix/pooltest02_stable_transition_core_8gpu_v1/summary.csv"
+    assert str(replay.work_dir) == "out/replay_matrix/pooltest02_stable_transition_core_8gpu_v1"
+    assert replay.min_seconds == 50.0
+    assert replay.include_statuses == ("ok",)
